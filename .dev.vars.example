@@ -1,0 +1,4 @@
+ADMIN_PASSWORD=change-me
+ADMIN_NOTIFY_EMAIL=you@example.com
+EMAIL_WEBAPP_URL=https://script.google.com/macros/s/XXXXXXXX/exec
+EMAIL_SHARED_SECRET=change-me-too

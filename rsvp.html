@@ -1,0 +1,1010 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>RSVP</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,500&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+
+/* =========================================================
+   CONFIG-DRIVEN DESIGN TOKENS
+   ========================================================= */
+:root{
+  --ink:      #202B22;   /* deep forest-ink, hero bg / headings */
+  --ink-soft: #4A5148;   /* secondary text on paper */
+  --paper:    #FBF7EF;   /* warm ivory card stock */
+  --paper-2:  #F3EDDF;   /* slightly deeper ivory for panels */
+  --gold:     #A9814C;   /* antique gold, hairlines / accents */
+  --gold-soft:#D8C8A5;
+  --sage:     #6E7F63;   /* muted sage, primary buttons */
+  --sage-dark:#57654E;
+  --rose:     #C98F86;   /* dusty rose, tags */
+  --error:    #B6503F;
+  --shadow:   0 18px 40px -20px rgba(32,43,34,0.35);
+
+  --display: 'Cormorant Garamond', serif;
+  --body: 'Work Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:var(--body);
+  color:var(--ink);
+  background:var(--paper);
+  -webkit-font-smoothing:antialiased;
+}
+#app{min-height:100vh;}
+button{font-family:inherit;cursor:pointer;}
+input,textarea{font-family:inherit;}
+
+.eyebrow{
+  font-family:var(--body);
+  font-size:11px;
+  letter-spacing:0.22em;
+  text-transform:uppercase;
+  font-weight:600;
+}
+
+/* ---------- HERO / SEAL ---------- */
+.hero{
+  min-height:100vh;
+  background:
+    radial-gradient(ellipse at 50% -10%, rgba(169,129,76,0.18), transparent 60%),
+    var(--ink);
+  color:var(--paper);
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  padding:32px 20px;
+  position:relative;
+  overflow:hidden;
+}
+.hero::before{
+  content:"";
+  position:absolute;
+  inset:18px;
+  border:1px solid rgba(216,200,165,0.35);
+  pointer-events:none;
+}
+.hero .eyebrow{color:var(--gold-soft);margin-bottom:18px;opacity:0;animation:riseIn .8s ease forwards .1s;}
+.hero h1{
+  font-family:var(--display);
+  font-weight:500;
+  font-size:clamp(40px,8vw,76px);
+  line-height:1.05;
+  margin:0 0 10px;
+  letter-spacing:0.01em;
+  opacity:0;animation:riseIn .8s ease forwards .25s;
+}
+.hero .sub{
+  font-family:var(--display);
+  font-style:italic;
+  font-size:clamp(16px,3vw,20px);
+  color:var(--gold-soft);
+  margin:0 0 46px;
+  opacity:0;animation:riseIn .8s ease forwards .4s;
+}
+@keyframes riseIn{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
+@media (prefers-reduced-motion:reduce){
+  .hero .eyebrow,.hero h1,.hero .sub,.seal{animation:none !important;opacity:1 !important;}
+}
+
+.seal-wrap{opacity:0;animation:riseIn .8s ease forwards .55s;}
+.seal{
+  width:112px;height:112px;border-radius:50%;
+  background:radial-gradient(circle at 35% 30%, #C79A5E, var(--gold) 55%, #8A6636 100%);
+  border:none;
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--display);font-size:34px;color:var(--ink);
+  box-shadow:0 10px 30px -8px rgba(0,0,0,0.55), inset 0 2px 4px rgba(255,255,255,0.35);
+  transition:transform .35s cubic-bezier(.34,1.56,.64,1);
+  position:relative;
+}
+.seal:hover{transform:scale(1.06) rotate(-3deg);}
+.seal:active{transform:scale(0.94) rotate(2deg);}
+.seal.breaking{animation:sealBreak .55s ease forwards;}
+@keyframes sealBreak{
+  0%{transform:scale(1) rotate(0deg);}
+  40%{transform:scale(1.18) rotate(-8deg);}
+  100%{transform:scale(0) rotate(24deg);opacity:0;}
+}
+.seal-caption{
+  margin-top:16px;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;
+  color:var(--gold-soft);font-weight:500;
+}
+
+/* ---------- CARD / FORM ---------- */
+.stage{
+  min-height:100vh;
+  background:
+    linear-gradient(180deg, var(--ink) 0px, var(--ink) 120px, var(--paper) 120px);
+  display:flex;justify-content:center;
+  padding:36px 16px 80px;
+}
+.card{
+  width:100%;max-width:620px;
+  background:var(--paper);
+  border:1px solid var(--gold-soft);
+  box-shadow:var(--shadow);
+  position:relative;
+  animation:cardIn .5s ease;
+}
+@keyframes cardIn{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}}
+.card::before{
+  content:"";position:absolute;inset:8px;border:1px solid rgba(169,129,76,0.35);pointer-events:none;
+}
+.card-inner{padding:38px 30px 32px;}
+@media(min-width:560px){.card-inner{padding:52px 56px 44px;}}
+
+.card-eyebrow{color:var(--gold);text-align:center;margin-bottom:6px;}
+.card h2{
+  font-family:var(--display);font-weight:500;font-size:clamp(26px,4.5vw,34px);
+  text-align:center;margin:0 0 6px;color:var(--ink);
+}
+.card .lede{
+  text-align:center;color:var(--ink-soft);font-size:14.5px;margin:0 0 28px;line-height:1.55;
+}
+hr.rule{border:none;border-top:1px solid var(--gold-soft);margin:26px 0;}
+
+/* ---------- STEP DOTS (real sequence, so numbering is meaningful) ---------- */
+.steps{display:flex;justify-content:center;gap:10px;margin-bottom:30px;}
+.step-dot{
+  width:30px;height:30px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--display);font-size:14px;font-weight:600;
+  border:1px solid var(--gold-soft);color:var(--ink-soft);background:transparent;
+  transition:all .25s ease;position:relative;
+}
+.step-dot.active{background:var(--sage);border-color:var(--sage);color:var(--paper);}
+.step-dot.done{background:var(--gold);border-color:var(--gold);color:var(--ink);}
+.step-line{width:26px;height:1px;background:var(--gold-soft);align-self:center;margin-top:15px;}
+
+/* ---------- FORM ELEMENTS ---------- */
+.field{margin-bottom:20px;}
+.field label{
+  display:block;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;
+  font-weight:600;color:var(--ink-soft);margin-bottom:7px;
+}
+.field input[type=text],.field input[type=email],.field input[type=tel],.field textarea{
+  width:100%;padding:12px 13px;border:1px solid var(--gold-soft);background:#fff;
+  font-size:15.5px;color:var(--ink);border-radius:2px;
+}
+.field input:focus,.field textarea:focus{
+  outline:none;border-color:var(--sage);box-shadow:0 0 0 3px rgba(110,127,99,0.15);
+}
+.field textarea{resize:vertical;min-height:78px;}
+.field .err{color:var(--error);font-size:12.5px;margin-top:6px;}
+.field.has-err input,.field.has-err textarea{border-color:var(--error);}
+
+.helptext{font-size:13px;color:var(--ink-soft);margin:-10px 0 18px;}
+
+/* attendance toggle pair */
+.attend-grid{display:grid;gap:10px;}
+.attend-row{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:12px 14px;border:1px solid var(--gold-soft);background:#fff;
+}
+.attend-row .ev-name{font-size:14.5px;font-weight:500;}
+.attend-row .ev-meta{font-size:12px;color:var(--ink-soft);margin-top:2px;}
+.toggle-pair{display:flex;border:1px solid var(--gold-soft);border-radius:20px;overflow:hidden;flex-shrink:0;}
+.toggle-btn{
+  padding:7px 15px;font-size:12.5px;font-weight:600;background:#fff;border:none;color:var(--ink-soft);
+  letter-spacing:0.03em;
+}
+.toggle-btn.yes.on{background:var(--sage);color:#fff;}
+.toggle-btn.no.on{background:#EADEDA;color:var(--error);}
+
+/* dietary tags */
+.tag-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;}
+.tag{
+  padding:6px 13px;border:1px solid var(--gold-soft);border-radius:16px;font-size:12.5px;
+  background:#fff;color:var(--ink-soft);font-weight:500;
+}
+.tag.on{background:var(--rose);border-color:var(--rose);color:#fff;}
+
+/* member card */
+.member{
+  border:1px solid var(--gold-soft);background:var(--paper-2);padding:18px 16px;margin-bottom:16px;position:relative;
+}
+.member-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;}
+.member-head .mname{font-family:var(--display);font-size:19px;font-weight:600;}
+.remove-link{background:none;border:none;color:var(--error);font-size:12px;text-decoration:underline;padding:4px;}
+.add-member-btn{
+  width:100%;padding:13px;border:1px dashed var(--gold);background:transparent;color:var(--sage-dark);
+  font-weight:600;font-size:13.5px;letter-spacing:0.03em;
+}
+
+/* buttons */
+.btn-row{display:flex;gap:12px;margin-top:30px;}
+.btn{
+  flex:1;padding:14px 18px;border:none;font-size:14px;font-weight:600;letter-spacing:0.03em;
+  transition:transform .15s ease, opacity .15s ease;
+}
+.btn:active{transform:scale(0.98);}
+.btn-primary{background:var(--sage);color:#fff;}
+.btn-primary:hover{background:var(--sage-dark);}
+.btn-ghost{background:transparent;color:var(--ink-soft);border:1px solid var(--gold-soft);}
+.btn-ghost:hover{background:var(--paper-2);}
+.btn:disabled{opacity:0.5;cursor:not-allowed;}
+.btn-link{background:none;border:none;color:var(--sage-dark);font-size:13px;text-decoration:underline;padding:6px;}
+
+/* landing choice cards */
+.choice-grid{display:grid;gap:14px;}
+.choice-card{
+  border:1px solid var(--gold-soft);background:#fff;padding:20px 18px;text-align:left;
+  display:flex;align-items:center;gap:14px;
+}
+.choice-card .ic{
+  width:42px;height:42px;border-radius:50%;background:var(--paper-2);flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-family:var(--display);font-size:20px;color:var(--gold);
+}
+.choice-card h3{margin:0 0 3px;font-family:var(--display);font-size:19px;font-weight:600;}
+.choice-card p{margin:0;font-size:13px;color:var(--ink-soft);}
+
+/* confirmation */
+.confirm-wrap{text-align:center;padding-top:8px;}
+.stamp{
+  width:120px;height:120px;border-radius:50%;margin:0 auto 22px;
+  border:3px solid var(--sage);color:var(--sage);
+  display:flex;align-items:center;justify-content:center;flex-direction:column;
+  transform:rotate(-8deg) scale(0.5);opacity:0;
+  animation:stampIn .5s cubic-bezier(.34,1.56,.64,1) forwards .15s;
+}
+@keyframes stampIn{to{transform:rotate(-8deg) scale(1);opacity:1;}}
+.stamp .s1{font-family:var(--display);font-weight:600;font-size:17px;line-height:1.1;}
+.stamp .s2{font-size:9px;letter-spacing:0.18em;text-transform:uppercase;margin-top:3px;}
+
+/* summary block on review + confirm */
+.summary{background:var(--paper-2);border:1px solid var(--gold-soft);padding:16px 18px;text-align:left;margin:20px 0;}
+.summary .srow{display:flex;justify-content:space-between;padding:6px 0;font-size:13.5px;border-bottom:1px solid rgba(169,129,76,0.25);}
+.summary .srow:last-child{border-bottom:none;}
+.summary .slabel{color:var(--ink-soft);}
+
+/* ---------- ADMIN ---------- */
+.admin-shell{min-height:100vh;background:var(--paper-2);padding:0 0 60px;}
+.admin-topbar{
+  background:var(--ink);color:var(--paper);padding:18px 22px;display:flex;justify-content:space-between;align-items:center;
+  position:sticky;top:0;z-index:10;
+}
+.admin-topbar h2{font-family:var(--display);font-weight:500;font-size:20px;margin:0;}
+.admin-topbar .btn-link{color:var(--gold-soft);}
+.admin-wrap{max-width:1000px;margin:0 auto;padding:26px 18px;}
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:26px;}
+.stat-card{background:#fff;border:1px solid var(--gold-soft);padding:16px;text-align:center;}
+.stat-card .num{font-family:var(--display);font-size:30px;font-weight:600;color:var(--sage-dark);}
+.stat-card .lbl{font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--ink-soft);margin-top:2px;}
+.admin-controls{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;}
+.admin-controls input{flex:1;min-width:180px;padding:10px 12px;border:1px solid var(--gold-soft);font-size:14px;}
+.rsvp-row{background:#fff;border:1px solid var(--gold-soft);margin-bottom:10px;}
+.rsvp-row-head{padding:14px 16px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;gap:10px;}
+.rsvp-row-head .rname{font-weight:600;font-size:15px;}
+.rsvp-row-head .rmeta{font-size:12px;color:var(--ink-soft);margin-top:2px;}
+.pill{padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600;white-space:nowrap;}
+.pill.yes{background:#E4EBDF;color:var(--sage-dark);}
+.pill.no{background:#F3E1DD;color:var(--error);}
+.rsvp-row-body{padding:0 16px 16px;border-top:1px solid var(--paper-2);display:none;}
+.rsvp-row-body.open{display:block;}
+.rsvp-member{padding:10px 0;border-bottom:1px dashed var(--gold-soft);font-size:13.5px;}
+.rsvp-member:last-child{border-bottom:none;}
+.empty-state{text-align:center;padding:60px 20px;color:var(--ink-soft);}
+.empty-state .em-ic{font-family:var(--display);font-size:44px;color:var(--gold-soft);margin-bottom:10px;}
+
+.login-box{max-width:380px;margin:80px auto;background:#fff;border:1px solid var(--gold-soft);padding:34px 30px;box-shadow:var(--shadow);}
+
+.footer-link{
+  position:fixed;bottom:10px;right:12px;font-size:11px;color:rgba(75,81,72,0.4);
+  background:none;border:none;text-decoration:underline;z-index:5;
+}
+
+.spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,0.4);border-top-color:#fff;border-radius:50%;display:inline-block;animation:spin .7s linear infinite;vertical-align:-3px;margin-right:6px;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.toast{
+  position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+  background:var(--ink);color:var(--paper);padding:12px 20px;border-radius:4px;font-size:13.5px;
+  box-shadow:var(--shadow);z-index:50;
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+/* =========================================================
+   CONFIG — edit this block to personalise the invitation
+   ========================================================= */
+const CONFIG = {
+  coupleNames: "Daniel & Faith",
+  events: [
+    { id: "engagement", name: "Engagement Party", date: "Saturday 14 February 2027", time: "6:00 PM", venue: "The Grounds, Adelaide" },
+    { id: "wedding",    name: "Wedding Ceremony & Reception", date: "Friday 06 August 2027", time: "3:00 PM", venue: "Longview Vineyard, Adelaide" }
+  ],
+  rsvpDeadline: "12 December 2026",
+  dietaryOptions: ["Vegetarian", "Vegan", "Gluten-free", "Dairy-free", "Nut allergy", "Other"],
+  adminPassword: "dlow&faith", // <-- change this before sharing the link
+  // Shown on the Details page, in addition to the event list above — edit freely
+  details: [
+    { title: "Dress Code", body: "Cocktail / semi-formal attire." },
+    { title: "Gifts", body: "Your presence is the only present we need — details will follow closer to the date if you'd still like to contribute." }
+  ]
+};
+const DIETARY_STORAGE_KEY = "rsvp-all";
+
+/* =========================================================
+   STORAGE HELPERS
+   ========================================================= */
+async function loadAllRSVPs(){
+  try{
+    const res = await window.storage.get(DIETARY_STORAGE_KEY, true);
+    return res && res.value ? JSON.parse(res.value) : {};
+  }catch(e){
+    return {}; // key doesn't exist yet
+  }
+}
+async function saveAllRSVPs(all){
+  return await window.storage.set(DIETARY_STORAGE_KEY, JSON.stringify(all), true);
+}
+
+/* =========================================================
+   STATE
+   ========================================================= */
+let state = {
+  view: "landing",       // landing | menu | location | details | form | confirm | choice | lookup | admin-login | admin
+  step: 1,
+  loading: false,
+  toast: null,
+  editingKey: null,      // when editing an existing RSVP
+  form: emptyForm(),
+  errors: {},
+  lookupEmail: "",
+  lookupError: "",
+  adminInput: "",
+  adminError: "",
+  adminAuthed: false,
+  allData: null,
+  adminSearch: "",
+  openRows: {}
+};
+
+function emptyForm(){
+  return {
+    contactName: "",
+    email: "",
+    phone: "",
+    members: [ makeMember(true) ],
+    notes: ""
+  };
+}
+function makeMember(isPrimary){
+  const attending = {};
+  CONFIG.events.forEach(e => attending[e.id] = true);
+  return {
+    name: "",
+    isPrimary: !!isPrimary,
+    attending,
+    dietaryTags: [],
+    dietaryNote: ""
+  };
+}
+
+function setState(patch){ state = { ...state, ...patch }; render(); }
+function showToast(msg){ setState({ toast: msg }); setTimeout(()=>{ if(state.toast===msg) setState({toast:null}); }, 3200); }
+
+/* =========================================================
+   VALIDATION
+   ========================================================= */
+function validateStep1(){
+  const e = {};
+  if(!state.form.contactName.trim()) e.contactName = "Please enter your name.";
+  if(!state.form.email.trim()) e.email = "Please enter an email address.";
+  else if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(state.form.email.trim())) e.email = "That email doesn't look right.";
+  return e;
+}
+function validateStep2(){
+  const e = {};
+  state.form.members.forEach((m,i)=>{
+    if(!m.name.trim()) e["member"+i] = "Please add a name.";
+  });
+  return e;
+}
+
+/* =========================================================
+   ACTIONS
+   ========================================================= */
+function goLanding(){ setState({ view:"landing", step:1, form: emptyForm(), errors:{}, editingKey:null }); }
+function goMenu(){ setState({ view:"menu", step:1, form: emptyForm(), errors:{}, editingKey:null }); }
+
+function startLookup(){ setState({ view:"lookup", lookupEmail:"", lookupError:"" }); }
+
+async function doLookup(){
+  const email = state.lookupEmail.trim().toLowerCase();
+  if(!email){ setState({ lookupError: "Enter the email you RSVP'd with." }); return; }
+  setState({ loading:true, lookupError:"" });
+  const all = await loadAllRSVPs();
+  const rec = all[email];
+  if(!rec){
+    setState({ loading:false, lookupError: "We couldn't find an RSVP under that email. You can submit a new one instead." });
+    return;
+  }
+  setState({ loading:false, view:"form", step:1, editingKey:email, form: JSON.parse(JSON.stringify(rec)) });
+}
+
+function updateContact(field, val){ state.form[field] = val; } // no render needed, uncontrolled-style input
+
+function nextFromStep1(){
+  const errs = validateStep1();
+  if(Object.keys(errs).length){ setState({ errors: errs }); return; }
+  setState({ step:2, errors:{} });
+}
+function backTo(step){ setState({ step, errors:{} }); }
+
+function addMember(){
+  state.form.members.push(makeMember(false));
+  render();
+}
+function removeMember(idx){
+  if(state.form.members.length<=1) return;
+  state.form.members.splice(idx,1);
+  render();
+}
+function updateMemberName(idx,val){ state.form.members[idx].name = val; }
+function toggleAttend(idx, eventId, val){
+  state.form.members[idx].attending[eventId] = val;
+  render();
+}
+function toggleDietTag(idx, tag){
+  const tags = state.form.members[idx].dietaryTags;
+  const pos = tags.indexOf(tag);
+  if(pos>-1) tags.splice(pos,1); else tags.push(tag);
+  render();
+}
+function updateDietNote(idx,val){ state.form.members[idx].dietaryNote = val; }
+function updateNotes(val){ state.form.notes = val; }
+
+function nextFromStep2(){
+  const errs = validateStep2();
+  if(Object.keys(errs).length){ setState({ errors: errs }); return; }
+  setState({ step:3, errors:{} });
+}
+function nextFromStep3(){ setState({ step:4 }); }
+
+async function submitRSVP(){
+  setState({ loading:true });
+  const key = state.form.email.trim().toLowerCase();
+  const record = {
+    ...state.form,
+    email: key,
+    submittedAt: new Date().toISOString()
+  };
+  try{
+    const all = await loadAllRSVPs();
+    all[key] = record;
+    const res = await saveAllRSVPs(all);
+    if(!res) throw new Error("save failed");
+    setState({ loading:false, view:"confirm", form: record });
+  }catch(e){
+    setState({ loading:false });
+    showToast("Something went wrong saving your RSVP — please try again.");
+  }
+}
+
+function startAdminLogin(){ setState({ view:"admin-login", adminInput:"", adminError:"" }); }
+async function submitAdminLogin(){
+  if(state.adminInput === CONFIG.adminPassword){
+    setState({ loading:true });
+    const all = await loadAllRSVPs();
+    setState({ loading:false, adminAuthed:true, view:"admin", allData: all });
+  }else{
+    setState({ adminError:"Incorrect password." });
+  }
+}
+async function refreshAdmin(){
+  setState({ loading:true });
+  const all = await loadAllRSVPs();
+  setState({ loading:false, allData: all });
+}
+function toggleRow(key){
+  state.openRows[key] = !state.openRows[key];
+  render();
+}
+function updateAdminSearch(val){ setState({ adminSearch: val }); }
+
+function exportCSV(){
+  const all = state.allData || {};
+  const rows = [["Household contact","Email","Phone","Guest name","Engagement RSVP","Wedding RSVP","Dietary tags","Dietary notes","Household notes","Submitted at"]];
+  Object.values(all).forEach(rec=>{
+    rec.members.forEach(m=>{
+      rows.push([
+        rec.contactName, rec.email, rec.phone||"",
+        m.name,
+        CONFIG.events.find(e=>e.id==="engagement") ? (m.attending.engagement? "Yes":"No") : "",
+        CONFIG.events.find(e=>e.id==="wedding") ? (m.attending.wedding? "Yes":"No") : "",
+        (m.dietaryTags||[]).join("; "),
+        m.dietaryNote||"",
+        rec.notes||"",
+        rec.submittedAt||""
+      ]);
+    });
+  });
+  const csv = rows.map(r => r.map(v => '"' + String(v).replace(/"/g,'""') + '"').join(",")).join("\n");
+  const blob = new Blob([csv], {type:"text/csv"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "rsvp-export.csv"; a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* =========================================================
+   RENDER HELPERS
+   ========================================================= */
+function esc(s){ return (s||"").toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function eventLabel(id){ const e = CONFIG.events.find(x=>x.id===id); return e ? e.name : id; }
+
+function renderSteps(current){
+  let html = '<div class="steps">';
+  const labels = ["Details","Guests","Dietary","Review"];
+  labels.forEach((l,i)=>{
+    const n = i+1;
+    const cls = n<current ? "done" : (n===current ? "active":"");
+    html += `<div class="step-dot ${cls}" title="${l}">${n}</div>`;
+    if(i<labels.length-1) html += '<div class="step-line"></div>';
+  });
+  html += '</div>';
+  return html;
+}
+
+/* =========================================================
+   VIEWS
+   ========================================================= */
+function viewLanding(){
+  return `
+  <div class="hero">
+    <div class="eyebrow">You are warmly invited</div>
+    <h1>${esc(CONFIG.coupleNames)}</h1>
+    <div class="sub">Engagement Party &amp; Wedding</div>
+    <div class="seal-wrap">
+      <button class="seal" id="sealBtn" onclick="breakSeal()" aria-label="Open the invitation">
+        ${initials()}
+      </button>
+      <div class="seal-caption">Break the seal to RSVP</div>
+    </div>
+  </div>`;
+}
+
+function initials(){
+  const parts = CONFIG.coupleNames.split("&").map(s=>s.trim()[0]||"");
+  return esc(parts.join(" & "));
+}
+
+function viewMenu(){
+  return `
+  <div class="stage"><div class="card"><div class="card-inner">
+    <div class="card-eyebrow eyebrow" style="text-align:center;">${esc(CONFIG.coupleNames)}</div>
+    <h2>Welcome</h2>
+    <p class="lede">We can't wait to celebrate with you. What would you like to do?</p>
+    <div class="choice-grid">
+      <button class="choice-card" onclick="setState({view:'choice'})">
+        <div class="ic">✎</div>
+        <div><h3>RSVP</h3><p>Let us know who's coming and any dietary needs.</p></div>
+      </button>
+      <button class="choice-card" onclick="setState({view:'location'})">
+        <div class="ic">⚑</div>
+        <div><h3>Location</h3><p>Venue details and directions for each event.</p></div>
+      </button>
+      <button class="choice-card" onclick="setState({view:'details'})">
+        <div class="ic">✦</div>
+        <div><h3>Details</h3><p>Dates, times, dress code and other info.</p></div>
+      </button>
+    </div>
+  </div></div></div>`;
+}
+
+function viewLocation(){
+  const eventsHtml = CONFIG.events.map(ev => `
+    <div class="member" style="margin-bottom:20px;">
+      <div class="member-head"><span class="mname">${esc(ev.name)}</span></div>
+      <div class="ev-meta" style="margin-bottom:12px;">${esc(ev.date)} · ${esc(ev.time)}</div>
+      <div style="font-size:14.5px;font-weight:500;margin-bottom:12px;">${esc(ev.venue)}</div>
+      <div style="border:1px solid var(--gold-soft);overflow:hidden;margin-bottom:12px;">
+        <iframe title="Map to ${esc(ev.venue)}" src="https://maps.google.com/maps?q=${encodeURIComponent(ev.venue)}&z=14&output=embed"
+          width="100%" height="220" style="border:0;display:block;" loading="lazy"></iframe>
+      </div>
+      <a class="btn btn-ghost" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;"
+        href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(ev.venue)}" target="_blank" rel="noopener">Get Directions</a>
+    </div>
+  `).join("");
+
+  return `
+  <div class="stage"><div class="card"><div class="card-inner">
+    <div class="card-eyebrow eyebrow" style="text-align:center;">${esc(CONFIG.coupleNames)}</div>
+    <h2>Location &amp; Directions</h2>
+    <p class="lede">Where to find us.</p>
+    ${eventsHtml}
+    <div style="text-align:center;margin-top:10px;">
+      <button class="btn-link" onclick="setState({view:'menu'})">&larr; Back</button>
+    </div>
+  </div></div></div>`;
+}
+
+function viewDetails(){
+  const eventsHtml = CONFIG.events.map(ev => `
+    <div class="srow" style="flex-direction:column;align-items:flex-start;gap:3px;">
+      <div style="font-weight:600;">${esc(ev.name)}</div>
+      <div class="slabel" style="font-size:12.5px;">${esc(ev.date)} · ${esc(ev.time)}</div>
+      <div class="slabel" style="font-size:12.5px;">${esc(ev.venue)}</div>
+    </div>
+  `).join("");
+  const extraHtml = (CONFIG.details||[]).map(d => `
+    <div class="srow" style="flex-direction:column;align-items:flex-start;gap:3px;">
+      <div style="font-weight:600;">${esc(d.title)}</div>
+      <div class="slabel" style="font-size:12.5px;">${esc(d.body)}</div>
+    </div>
+  `).join("");
+
+  return `
+  <div class="stage"><div class="card"><div class="card-inner">
+    <div class="card-eyebrow eyebrow" style="text-align:center;">${esc(CONFIG.coupleNames)}</div>
+    <h2>Event Details</h2>
+    <p class="lede">Everything you need to know before the big days.</p>
+    <div class="summary">${eventsHtml}</div>
+    ${extraHtml ? `<div class="summary">${extraHtml}</div>` : ''}
+    <p class="lede" style="margin-top:20px;">Kindly reply by ${esc(CONFIG.rsvpDeadline)}.</p>
+    <div style="text-align:center;margin-top:6px;">
+      <button class="btn-link" onclick="setState({view:'menu'})">&larr; Back</button>
+    </div>
+  </div></div></div>`;
+}
+
+function viewLookupPrompt(){
+  return `
+  <div class="stage"><div class="card"><div class="card-inner">
+    <div class="card-eyebrow eyebrow" style="text-align:center;">${esc(CONFIG.coupleNames)}</div>
+    <h2>How would you like to RSVP?</h2>
+    <p class="lede">Kindly reply by ${esc(CONFIG.rsvpDeadline)}.</p>
+    <div class="choice-grid">
+      <button class="choice-card" onclick="setState({view:'form', step:1})">
+        <div class="ic">＋</div>
+        <div><h3>New RSVP</h3><p>Fill in your details and let us know who's coming.</p></div>
+      </button>
+      <button class="choice-card" onclick="startLookup()">
+        <div class="ic">✎</div>
+        <div><h3>Edit a previous RSVP</h3><p>Look up your response by email to make changes.</p></div>
+      </button>
+    </div>
+    <div style="text-align:center;margin-top:24px;">
+      <button class="btn-link" onclick="goMenu()">&larr; Back</button>
+    </div>
+  </div></div></div>`;
+}
+
+function viewLookup(){
+  return `
+  <div class="stage"><div class="card"><div class="card-inner">
+    <h2>Find your RSVP</h2>
+    <p class="lede">Enter the email address you used when you RSVP'd.</p>
+    <div class="field ${state.lookupError?'has-err':''}">
+      <label>Email address</label>
+      <input type="email" value="${esc(state.lookupEmail)}" placeholder="you@example.com"
+        oninput="state.lookupEmail=this.value" />
+      ${state.lookupError ? `<div class="err">${esc(state.lookupError)}</div>` : ''}
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="setState({view:'form',step:1})">${state.loading?'':''}Back</button>
+      <button class="btn btn-primary" onclick="doLookup()" ${state.loading?'disabled':''}>
+        ${state.loading ? '<span class="spinner"></span>Searching…' : 'Find my RSVP'}
+      </button>
+    </div>
+  </div></div></div>`;
+}
+
+function viewFormStep1(){
+  const f = state.form, e = state.errors;
+  return `
+  <div class="stage"><div class="card"><div class="card-inner">
+    <div class="card-eyebrow eyebrow" style="text-align:center;">${esc(CONFIG.coupleNames)}</div>
+    <h2>${state.editingKey ? "Update your RSVP" : "Your details"}</h2>
+    <p class="lede">Kindly reply by ${esc(CONFIG.rsvpDeadline)}.</p>
+    ${renderSteps(1)}
+    <div class="field ${e.contactName?'has-err':''}">
+      <label>Your name</label>
+      <input type="text" value="${esc(f.contactName)}" placeholder="Jane Smith" oninput="updateContact('contactName', this.value)" />
+      ${e.contactName?`<div class="err">${esc(e.contactName)}</div>`:''}
+    </div>
+    <div class="field ${e.email?'has-err':''}">
+      <label>Email address</label>
+      <input type="email" value="${esc(f.email)}" placeholder="you@example.com" oninput="updateContact('email', this.value)" ${state.editingKey?'readonly':''} />
+      ${e.email?`<div class="err">${esc(e.email)}</div>`:'<div class="helptext" style="margin-top:6px;">We will use this to find your RSVP if you need to make changes later.</div>'}
+    </div>
+    <div class="field">
+      <label>Phone (optional)</label>
+      <input type="tel" value="${esc(f.phone)}" placeholder="04xx xxx xxx" oninput="updateContact('phone', this.value)" />
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="goMenu()">Cancel</button>
+      <button class="btn btn-primary" onclick="nextFromStep1()">Continue</button>
+    </div>
+  </div></div></div>`;
+}
+
+function viewFormStep2(){
+  const f = state.form, e = state.errors;
+  let membersHtml = f.members.map((m,i)=>`
+    <div class="member">
+      <div class="member-head">
+        <span class="mname">${i===0 ? "Guest 1 (you)" : "Guest "+(i+1)}</span>
+        ${f.members.length>1 && i>0 ? `<button class="remove-link" onclick="removeMember(${i})">Remove</button>` : ''}
+      </div>
+      <div class="field ${e['member'+i]?'has-err':''}" style="margin-bottom:0;">
+        <label>Full name</label>
+        <input type="text" value="${esc(m.name)}" placeholder="Guest name" oninput="updateMemberName(${i}, this.value)" />
+        ${e['member'+i]?`<div class="err">${esc(e['member'+i])}</div>`:''}
+      </div>
+    </div>
+  `).join("");
+
+  return `
+  <div class="stage"><div class="card"><div class="card-inner">
+    <h2>Who's coming?</h2>
+    <p class="lede">Add everyone in your party, including yourself.</p>
+    ${renderSteps(2)}
+    ${membersHtml}
+    <button class="add-member-btn" onclick="addMember()">+ Add another guest</button>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="backTo(1)">Back</button>
+      <button class="btn btn-primary" onclick="nextFromStep2()">Continue</button>
+    </div>
+  </div></div></div>`;
+}
+
+function viewFormStep3(){
+  const f = state.form;
+  let membersHtml = f.members.map((m,i)=>{
+    const eventsHtml = CONFIG.events.map(ev => `
+      <div class="attend-row">
+        <div>
+          <div class="ev-name">${esc(ev.name)}</div>
+          <div class="ev-meta">${esc(ev.date)} · ${esc(ev.venue)}</div>
+        </div>
+        <div class="toggle-pair">
+          <button class="toggle-btn yes ${m.attending[ev.id]?'on':''}" onclick="toggleAttend(${i}, '${ev.id}', true)">Yes</button>
+          <button class="toggle-btn no ${!m.attending[ev.id]?'on':''}" onclick="toggleAttend(${i}, '${ev.id}', false)">No</button>
+        </div>
+      </div>
+    `).join("");
+
+    const tagsHtml = CONFIG.dietaryOptions.map(tag => `
+      <button class="tag ${m.dietaryTags.includes(tag)?'on':''}" onclick="toggleDietTag(${i}, '${esc(tag)}')">${esc(tag)}</button>
+    `).join("");
+
+    return `
+    <div class="member">
+      <div class="member-head"><span class="mname">${esc(m.name || ('Guest '+(i+1)))}</span></div>
+      <div class="attend-grid">${eventsHtml}</div>
+      <div style="margin-top:16px;">
+        <label style="display:block;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;font-weight:600;color:var(--ink-soft);margin-bottom:8px;">Dietary requirements</label>
+        <div class="tag-row">${tagsHtml}</div>
+        <textarea placeholder="Any details we should know (allergy severity, other notes)…" oninput="updateDietNote(${i}, this.value)">${esc(m.dietaryNote)}</textarea>
+      </div>
+    </div>`;
+  }).join("");
+
+  return `
+  <div class="stage"><div class="card"><div class="card-inner">
+    <h2>Events &amp; dietary needs</h2>
+    <p class="lede">Let us know which events each guest can make, and any dietary requirements.</p>
+    ${renderSteps(3)}
+    ${membersHtml}
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="backTo(2)">Back</button>
+      <button class="btn btn-primary" onclick="nextFromStep3()">Continue</button>
+    </div>
+  </div></div></div>`;
+}
+
+function viewFormStep4(){
+  const f = state.form;
+  const memberSummaries = f.members.map(m=>{
+    const attendStr = CONFIG.events.map(ev => `${ev.name}: <strong>${m.attending[ev.id]?'Attending':'Not attending'}</strong>`).join(" · ");
+    const diet = [...(m.dietaryTags||[])];
+    const dietStr = diet.length ? diet.join(", ") + (m.dietaryNote? " — "+m.dietaryNote : "") : (m.dietaryNote || "None specified");
+    return `<div class="srow" style="flex-direction:column;align-items:flex-start;gap:3px;">
+      <div style="font-weight:600;">${esc(m.name)}</div>
+      <div class="slabel" style="font-size:12.5px;">${attendStr}</div>
+      <div class="slabel" style="font-size:12.5px;">Dietary: ${esc(dietStr)}</div>
+    </div>`;
+  }).join("");
+
+  return `
+  <div class="stage"><div class="card"><div class="card-inner">
+    <h2>Review your RSVP</h2>
+    <p class="lede">Please check the details below before sending.</p>
+    ${renderSteps(4)}
+    <div class="summary">
+      <div class="srow"><span class="slabel">Contact</span><span>${esc(f.contactName)}</span></div>
+      <div class="srow"><span class="slabel">Email</span><span>${esc(f.email)}</span></div>
+      ${f.phone ? `<div class="srow"><span class="slabel">Phone</span><span>${esc(f.phone)}</span></div>` : ''}
+    </div>
+    <div class="summary">${memberSummaries}</div>
+    <div class="field">
+      <label>Message for the couple (optional)</label>
+      <textarea placeholder="Song requests, well wishes, anything else…" oninput="updateNotes(this.value)">${esc(f.notes)}</textarea>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="backTo(3)">Back</button>
+      <button class="btn btn-primary" onclick="submitRSVP()" ${state.loading?'disabled':''}>
+        ${state.loading ? '<span class="spinner"></span>Sending…' : (state.editingKey ? 'Update RSVP' : 'Send RSVP')}
+      </button>
+    </div>
+  </div></div></div>`;
+}
+
+function viewConfirm(){
+  const f = state.form;
+  const anyYes = f.members.some(m => CONFIG.events.some(ev => m.attending[ev.id]));
+  return `
+  <div class="stage"><div class="card"><div class="card-inner confirm-wrap">
+    <div class="stamp"><div class="s1">RSVP</div><div class="s2">Confirmed</div></div>
+    <h2>Thank you, ${esc(f.contactName.split(' ')[0] || 'friend')}!</h2>
+    <p class="lede">${anyYes ? "We can't wait to celebrate with you." : "Thank you for letting us know — you'll be missed."}</p>
+    <div class="summary" style="text-align:left;">
+      ${f.members.map(m => `<div class="srow"><span>${esc(m.name)}</span><span class="slabel">${CONFIG.events.filter(ev=>m.attending[ev.id]).map(ev=>ev.name).join(", ") || "Not attending"}</span></div>`).join("")}
+    </div>
+    <p class="helptext" style="margin-top:6px;">Need to change something? Come back anytime and look up your RSVP with ${esc(f.email)}.</p>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="goMenu()">Done</button>
+    </div>
+  </div></div></div>`;
+}
+
+function viewAdminLogin(){
+  return `
+  <div class="stage" style="background:var(--paper);">
+    <div class="login-box">
+      <div class="card-eyebrow eyebrow" style="text-align:center;color:var(--gold);">${esc(CONFIG.coupleNames)}</div>
+      <h2 style="text-align:center;">Admin sign in</h2>
+      <div class="field ${state.adminError?'has-err':''}" style="margin-top:20px;">
+        <label>Password</label>
+        <input type="text" value="${esc(state.adminInput)}" oninput="state.adminInput=this.value"
+          onkeydown="if(event.key==='Enter') submitAdminLogin()" placeholder="Enter admin password" />
+        ${state.adminError ? `<div class="err">${esc(state.adminError)}</div>` : ''}
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" onclick="goLanding()">Back</button>
+        <button class="btn btn-primary" onclick="submitAdminLogin()" ${state.loading?'disabled':''}>
+          ${state.loading ? '<span class="spinner"></span>Checking…' : 'Sign in'}
+        </button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function viewAdmin(){
+  const all = state.allData || {};
+  let records = Object.entries(all);
+
+  const q = state.adminSearch.trim().toLowerCase();
+  if(q){
+    records = records.filter(([key,rec]) => {
+      const hay = (rec.contactName + " " + rec.email + " " + rec.members.map(m=>m.name).join(" ")).toLowerCase();
+      return hay.includes(q);
+    });
+  }
+
+  let totalGuests=0, totalHouseholds=Object.keys(all).length;
+  const eventCounts = {}; CONFIG.events.forEach(e=>eventCounts[e.id]={yes:0,no:0});
+  const dietaryCounts = {};
+  Object.values(all).forEach(rec=>{
+    rec.members.forEach(m=>{
+      totalGuests++;
+      CONFIG.events.forEach(ev=>{
+        if(m.attending[ev.id]) eventCounts[ev.id].yes++; else eventCounts[ev.id].no++;
+      });
+      (m.dietaryTags||[]).forEach(t=> dietaryCounts[t] = (dietaryCounts[t]||0)+1);
+    });
+  });
+
+  const statCards = [
+    `<div class="stat-card"><div class="num">${totalHouseholds}</div><div class="lbl">RSVPs received</div></div>`,
+    `<div class="stat-card"><div class="num">${totalGuests}</div><div class="lbl">Total guests</div></div>`,
+    ...CONFIG.events.map(ev => `<div class="stat-card"><div class="num">${eventCounts[ev.id].yes}</div><div class="lbl">${esc(ev.name)} — attending</div></div>`)
+  ].join("");
+
+  const dietSummary = Object.keys(dietaryCounts).length
+    ? Object.entries(dietaryCounts).map(([k,v]) => `${esc(k)}: ${v}`).join(" &nbsp;·&nbsp; ")
+    : "None recorded yet";
+
+  const rowsHtml = records.length ? records.map(([key,rec])=>{
+    const open = !!state.openRows[key];
+    const anyYes = rec.members.some(m => CONFIG.events.some(ev=>m.attending[ev.id]));
+    const memberRows = rec.members.map(m => `
+      <div class="rsvp-member">
+        <strong>${esc(m.name)}</strong><br/>
+        ${CONFIG.events.map(ev => `${esc(ev.name)}: <strong>${m.attending[ev.id]?'Yes':'No'}</strong>`).join(" &nbsp;·&nbsp; ")}<br/>
+        Dietary: ${esc((m.dietaryTags||[]).join(", ") || "—")}${m.dietaryNote ? " — "+esc(m.dietaryNote) : ""}
+      </div>
+    `).join("");
+    return `
+    <div class="rsvp-row">
+      <div class="rsvp-row-head" onclick="toggleRow('${key.replace(/'/g,"\\'")}')">
+        <div>
+          <div class="rname">${esc(rec.contactName)} <span style="color:var(--ink-soft);font-weight:400;">(${rec.members.length} guest${rec.members.length>1?'s':''})</span></div>
+          <div class="rmeta">${esc(rec.email)}${rec.phone? ' · '+esc(rec.phone):''} · submitted ${rec.submittedAt ? new Date(rec.submittedAt).toLocaleDateString() : '—'}</div>
+        </div>
+        <span class="pill ${anyYes?'yes':'no'}">${anyYes?'Attending':'Not attending'}</span>
+      </div>
+      <div class="rsvp-row-body ${open?'open':''}">
+        ${memberRows}
+        ${rec.notes ? `<div class="rsvp-member"><em>Message:</em> ${esc(rec.notes)}</div>` : ''}
+      </div>
+    </div>`;
+  }).join("") : `<div class="empty-state"><div class="em-ic">✦</div>No RSVPs match yet.</div>`;
+
+  return `
+  <div class="admin-shell">
+    <div class="admin-topbar">
+      <h2>RSVP Dashboard</h2>
+      <div>
+        <button class="btn-link" onclick="refreshAdmin()">Refresh</button>
+        &nbsp;|&nbsp;
+        <button class="btn-link" onclick="goLanding()">Sign out</button>
+      </div>
+    </div>
+    <div class="admin-wrap">
+      <div class="stat-grid">${statCards}</div>
+      <div class="summary" style="margin-bottom:22px;"><strong style="font-size:12px;text-transform:uppercase;letter-spacing:0.08em;color:var(--ink-soft);">Dietary summary&nbsp; </strong>${dietSummary}</div>
+      <div class="admin-controls">
+        <input type="text" placeholder="Search by name or email…" value="${esc(state.adminSearch)}" oninput="updateAdminSearch(this.value)" />
+        <button class="btn btn-ghost" style="flex:none;" onclick="exportCSV()">Export CSV</button>
+      </div>
+      ${rowsHtml}
+    </div>
+  </div>`;
+}
+
+/* =========================================================
+   MASTER RENDER
+   ========================================================= */
+function render(){
+  let html = "";
+  switch(state.view){
+    case "landing": html = viewLanding(); break;
+    case "menu": html = viewMenu(); break;
+    case "location": html = viewLocation(); break;
+    case "details": html = viewDetails(); break;
+    case "choice": html = viewLookupPrompt(); break;
+    case "lookup": html = viewLookup(); break;
+    case "form":
+      if(state.step===1) html = viewFormStep1();
+      else if(state.step===2) html = viewFormStep2();
+      else if(state.step===3) html = viewFormStep3();
+      else html = viewFormStep4();
+      break;
+    case "confirm": html = viewConfirm(); break;
+    case "admin-login": html = viewAdminLogin(); break;
+    case "admin": html = viewAdmin(); break;
+    default: html = viewLanding();
+  }
+  if(state.toast) html += `<div class="toast">${esc(state.toast)}</div>`;
+  if(state.view !== "admin" && state.view !== "admin-login"){
+    html += `<button class="footer-link" onclick="startAdminLogin()">Admin</button>`;
+  }
+  document.getElementById("app").innerHTML = html;
+}
+
+/* landing seal click routes to the main menu (RSVP / Location / Details) */
+function breakSeal(){
+  const el = document.getElementById("sealBtn");
+  if(el) el.classList.add("breaking");
+  setTimeout(()=> setState({ view:"menu" }), 420);
+}
+
+render();
+</script>
+</body>
+</html>
