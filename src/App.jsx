@@ -16,7 +16,7 @@ const CONFIG = {
   // Admin password now lives server-side only (a Cloudflare Pages secret) — see functions/api/admin.js.
   // Where this app will live once hosted (used to build QR codes / invite links).
   // Leave blank to fall back to the current browser URL.
-  siteBaseUrl: "",
+  siteBaseUrl: "https://daniel-and-faith-wedding-rsvp.pages.dev",
   // Shown on the guest Details page, in addition to the event list above — edit freely
   details: [
     { title: "Dress Code", body: "Cocktail / semi-formal attire." },

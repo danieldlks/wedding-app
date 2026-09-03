@@ -9,5 +9,9 @@ export async function sendEmail(env, { to, subject, html }) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ secret: env.EMAIL_SHARED_SECRET, to, subject, html })
   });
-  if (!res.ok) throw new Error(`Email send failed: ${res.status}`);
+  // Apps Script's ContentService always responds HTTP 200, even for "Unauthorized" /
+  // "Invalid JSON" / "Missing to/subject/html" — so res.ok alone can't tell success
+  // from failure. The body text is the real signal.
+  const text = await res.text();
+  if (!res.ok || text.trim() !== "OK") throw new Error(`Email send failed: ${res.status} ${text.slice(0, 200)}`);
 }

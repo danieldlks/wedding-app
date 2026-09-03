@@ -1,4 +1,4 @@
-name = "wedding-rsvp"
+name = "daniel-and-faith-wedding-rsvp"
 compatibility_date = "2024-09-23"
 # Required for Pages to read this file at all (bindings included) — without it,
 # `wrangler pages deploy`/`secret`/`deployment` commands print "Ignoring
