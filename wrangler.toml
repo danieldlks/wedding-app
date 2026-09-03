@@ -1,8 +1,12 @@
 name = "wedding-rsvp"
-pages_build_output_dir = "dist"
 compatibility_date = "2024-09-23"
+# Required for Pages to read this file at all (bindings included) — without it,
+# `wrangler pages deploy`/`secret`/`deployment` commands print "Ignoring
+# configuration file for now." and the D1 binding below never gets attached to
+# the deployed site (silently — /api/* calls that touch env.DB just 500).
+pages_build_output_dir = "dist"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "wedding-rsvp"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID" # from `wrangler d1 create wedding-rsvp`
+database_id = "6451eeee-db18-4480-8b31-a7a3b3726b1f" # from `wrangler d1 create wedding-rsvp`

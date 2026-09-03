@@ -262,6 +262,597 @@ const CSS = `
 `;
 
 /* =========================================================
+   VIEW COMPONENTS
+   Defined at module scope (not inside App) on purpose: a
+   component defined inside another component's render body
+   gets a brand-new function identity every render, which
+   makes React tear down and remount its whole DOM subtree
+   (losing focus, mid-typing) instead of just updating it.
+   These take `state` and an `actions` bag (all the handlers
+   from App) as props instead of closing over them.
+   ========================================================= */
+
+function StepDots({ current }) {
+  const labels = ["Details", "Events & Dietary", "Review"];
+  return (
+    <div className="steps">
+      {labels.map((l, i) => {
+        const n = i + 1;
+        const cls = n < current ? "done" : n === current ? "active" : "";
+        return (
+          <span key={l} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span className={`step-dot ${cls}`} title={l}>{n}</span>
+            {i < labels.length - 1 && <span className="step-line" />}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function NoInvite() {
+  return (
+    <div className="hero">
+      <div className="eyebrow">{CONFIG.coupleNames}</div>
+      <h1>You're Invited</h1>
+      <div className="sub">Engagement Party &amp; Wedding</div>
+      <p style={{ maxWidth: 380, fontSize: 14, color: "var(--gold-soft)", lineHeight: 1.6 }}>
+        This RSVP is personal to each guest. Please use the link or QR code from your invitation to open it —
+        or get in touch with {CONFIG.coupleNames} if you can't find yours.
+      </p>
+    </div>
+  );
+}
+
+function InvalidInvite() {
+  return (
+    <div className="hero">
+      <div className="eyebrow">{CONFIG.coupleNames}</div>
+      <h1 style={{ fontSize: "clamp(28px,6vw,44px)" }}>Invite not found</h1>
+      <p style={{ maxWidth: 380, fontSize: 14, color: "var(--gold-soft)", lineHeight: 1.6 }}>
+        We couldn't match this link to an invitation. Double-check the QR code or link you were sent, or reach out
+        to {CONFIG.coupleNames} directly.
+      </p>
+    </div>
+  );
+}
+
+function GuestLanding({ state, actions }) {
+  const rec = state.currentRecord;
+  return (
+    <div className="hero">
+      {state.previewMode && (
+        <div className="preview-banner" style={{ position: "absolute", top: 0, left: 0, right: 0 }}>
+          Previewing {rec.householdName}'s invite <button onClick={actions.exitPreview}>Exit preview</button>
+        </div>
+      )}
+      <div className="eyebrow">Dear {rec.householdName}</div>
+      <h1>You're Invited</h1>
+      <div className="sub">{rec.invitedEvents.map(id => eventById(id)?.name).join(" & ")}</div>
+      {rec.personalNote && <p className="note-quote">&ldquo;{rec.personalNote}&rdquo;</p>}
+      <div>
+        <button className="seal" onClick={() => actions.patch({ view: "guest-menu" })}>{rec.householdName.split(/[&,]/)[0].trim()[0] || "♥"}</button>
+        <div className="seal-caption">Break the seal to continue</div>
+      </div>
+    </div>
+  );
+}
+
+function GuestMenu({ state, actions }) {
+  const rec = state.currentRecord;
+  return (
+    <div className="stage"><div className="card"><div className="card-inner">
+      <div className="card-eyebrow eyebrow" style={{ textAlign: "center" }}>{rec.householdName}</div>
+      <CountdownWidget eventIds={rec.invitedEvents} />
+      <h2>Welcome</h2>
+      <p className="lede">We can't wait to celebrate with you. What would you like to do?</p>
+      <div className="choice-grid">
+        <button className="choice-card" onClick={actions.startGuestForm}>
+          <div className="ic">✎</div>
+          <div><h3>RSVP</h3><p>{rec.response ? "View or update your response." : "Let us know who's coming and any dietary needs."}</p></div>
+        </button>
+        <button className="choice-card" onClick={() => actions.patch({ view: "guest-location" })}>
+          <div className="ic">⚑</div>
+          <div><h3>Location</h3><p>Venue details and directions.</p></div>
+        </button>
+        <button className="choice-card" onClick={() => actions.patch({ view: "guest-details" })}>
+          <div className="ic">✦</div>
+          <div><h3>Details</h3><p>Dates, times, dress code and other info.</p></div>
+        </button>
+      </div>
+      {state.previewMode && (
+        <div style={{ textAlign: "center", marginTop: 20 }}>
+          <button className="btn-link" onClick={actions.exitPreview}>Exit preview</button>
+        </div>
+      )}
+    </div></div></div>
+  );
+}
+
+function GuestLocation({ state, actions }) {
+  const rec = state.currentRecord;
+  return (
+    <div className="stage"><div className="card"><div className="card-inner">
+      <h2>Location &amp; Directions</h2>
+      <p className="lede">Where to find us.</p>
+      {rec.invitedEvents.map(id => {
+        const ev = eventById(id);
+        return (
+          <div className="member" style={{ marginBottom: 20 }} key={id}>
+            <div className="member-head"><span className="mname">{ev.name}</span></div>
+            <div className="ev-meta" style={{ marginBottom: 12 }}>{ev.date} · {ev.time}</div>
+            <div style={{ fontSize: 14.5, fontWeight: 500, marginBottom: 12 }}>{ev.venue}</div>
+            <div style={{ border: "1px solid var(--gold-soft)", overflow: "hidden", marginBottom: 12 }}>
+              <iframe title={`Map to ${ev.venue}`} src={`https://maps.google.com/maps?q=${encodeURIComponent(ev.venue)}&z=14&output=embed`}
+                width="100%" height="220" style={{ border: 0, display: "block" }} loading="lazy" />
+            </div>
+            <a className="btn btn-ghost" style={{ display: "block", textAlign: "center", textDecoration: "none", boxSizing: "border-box" }}
+              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(ev.venue)}`} target="_blank" rel="noopener noreferrer">Get Directions</a>
+          </div>
+        );
+      })}
+      <div style={{ textAlign: "center", marginTop: 10 }}>
+        <button className="btn-link" onClick={() => actions.patch({ view: "guest-menu" })}>&larr; Back</button>
+      </div>
+    </div></div></div>
+  );
+}
+
+function GuestDetails({ state, actions }) {
+  const rec = state.currentRecord;
+  return (
+    <div className="stage"><div className="card"><div className="card-inner">
+      <h2>Event Details</h2>
+      <p className="lede">Everything you need to know.</p>
+      <div className="summary">
+        {rec.invitedEvents.map(id => {
+          const ev = eventById(id);
+          return (
+            <div className="srow" key={id}>
+              <div style={{ fontWeight: 600 }}>{ev.name}</div>
+              <div className="slabel" style={{ fontSize: 12.5 }}>{ev.date} · {ev.time}</div>
+              <div className="slabel" style={{ fontSize: 12.5 }}>{ev.venue}</div>
+            </div>
+          );
+        })}
+      </div>
+      {CONFIG.details && CONFIG.details.length > 0 && (
+        <div className="summary">
+          {CONFIG.details.map(d => (
+            <div className="srow" key={d.title}>
+              <div style={{ fontWeight: 600 }}>{d.title}</div>
+              <div className="slabel" style={{ fontSize: 12.5 }}>{d.body}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {rec.personalNote && <p className="note-quote" style={{ color: "var(--ink)", margin: "0 0 20px" }}>&ldquo;{rec.personalNote}&rdquo;</p>}
+      <p className="lede">Kindly reply by {CONFIG.rsvpDeadline}.</p>
+      <div style={{ textAlign: "center", marginTop: 6 }}>
+        <button className="btn-link" onClick={() => actions.patch({ view: "guest-menu" })}>&larr; Back</button>
+      </div>
+    </div></div></div>
+  );
+}
+
+function GuestFormStep1({ state, actions }) {
+  const d = state.draft, e = state.errors, rec = state.currentRecord;
+  return (
+    <div className="stage"><div className="card"><div className="card-inner">
+      <div className="card-eyebrow eyebrow" style={{ textAlign: "center" }}>{rec.householdName}</div>
+      <h2>Confirm your details</h2>
+      <p className="lede">Kindly reply by {CONFIG.rsvpDeadline}.</p>
+      <StepDots current={1} />
+      {d.members.map((m, i) => (
+        <div className="field" key={m.id} style={i === 0 ? {} : { marginBottom: 10 }}>
+          <label>{i === 0 ? "Guest 1" : `Guest ${i + 1}`}</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input type="text" value={m.name} placeholder="Guest name"
+              onChange={ev => actions.updateMember(i, "name", ev.target.value)} />
+            {i >= rec.members.length && (
+              <button className="remove-link" onClick={() => actions.removeExtraGuest(i)}>Remove</button>
+            )}
+          </div>
+          {e["m" + i] && <div className="err">{e["m" + i]}</div>}
+        </div>
+      ))}
+      {rec.allowPlusOne && (
+        <button className="add-member-btn" onClick={actions.addExtraGuest} style={{ marginBottom: 20 }}>+ Add a guest</button>
+      )}
+      <div className={`field ${e.email ? "has-err" : ""}`}>
+        <label>Email address</label>
+        <input type="email" value={d.contactEmail} placeholder="you@example.com"
+          onChange={ev => actions.updateDraft("contactEmail", ev.target.value)} />
+        {e.email ? <div className="err">{e.email}</div> : <div className="helptext">So we can reach you if plans change.</div>}
+      </div>
+      <div className="field">
+        <label>Phone (optional)</label>
+        <input type="tel" value={d.contactPhone} placeholder="04xx xxx xxx"
+          onChange={ev => actions.updateDraft("contactPhone", ev.target.value)} />
+      </div>
+      <div className="btn-row">
+        <button className="btn btn-ghost" onClick={() => actions.patch({ view: "guest-menu" })}>Back</button>
+        <button className="btn btn-primary" onClick={() => {
+          const errs = actions.validateGuestStep1();
+          if (Object.keys(errs).length) { actions.patch({ errors: errs }); return; }
+          actions.patch({ step: 2, errors: {} });
+        }}>Continue</button>
+      </div>
+    </div></div></div>
+  );
+}
+
+function GuestFormStep2({ state, actions }) {
+  const d = state.draft, rec = state.currentRecord;
+  return (
+    <div className="stage"><div className="card"><div className="card-inner">
+      <h2>Events &amp; dietary needs</h2>
+      <p className="lede">You're invited to the following — let us know who's coming and any dietary requirements.</p>
+      <StepDots current={2} />
+      {d.members.map((m, i) => (
+        <div className="member" key={m.id}>
+          <div className="member-head"><span className="mname">{m.name || `Guest ${i + 1}`}</span></div>
+          {rec.invitedEvents.map(id => {
+            const ev = eventById(id);
+            return (
+              <div className="attend-row" key={id}>
+                <div>
+                  <div className="ev-name">{ev.name}</div>
+                  <div className="ev-meta">{ev.date} · {ev.venue}</div>
+                </div>
+                <div className="toggle-pair">
+                  <button className={`toggle-btn yes ${m.attending[id] ? "on" : ""}`} onClick={() => actions.toggleAttend(i, id)}>Yes</button>
+                  <button className={`toggle-btn no ${!m.attending[id] ? "on" : ""}`} onClick={() => actions.toggleAttend(i, id)}>No</button>
+                </div>
+              </div>
+            );
+          })}
+          <div style={{ marginTop: 14 }}>
+            <label style={{ display: "block", fontSize: 11, letterSpacing: ".12em", textTransform: "uppercase", fontWeight: 600, color: "var(--ink-soft)", marginBottom: 8 }}>Dietary requirements</label>
+            <div className="tag-row">
+              {CONFIG.dietaryOptions.map(tag => (
+                <button key={tag} className={`tag ${m.dietaryTags.includes(tag) ? "on" : ""}`} onClick={() => actions.toggleDiet(i, tag)}>{tag}</button>
+              ))}
+            </div>
+            <textarea placeholder="Any details we should know…" value={m.dietaryNote}
+              onChange={ev => actions.updateMember(i, "dietaryNote", ev.target.value)} />
+          </div>
+        </div>
+      ))}
+      <div className="btn-row">
+        <button className="btn btn-ghost" onClick={() => actions.patch({ step: 1 })}>Back</button>
+        <button className="btn btn-primary" onClick={() => actions.patch({ step: 3 })}>Continue</button>
+      </div>
+    </div></div></div>
+  );
+}
+
+function GuestFormStep3({ state, actions }) {
+  const d = state.draft, rec = state.currentRecord;
+  return (
+    <div className="stage"><div className="card"><div className="card-inner">
+      <h2>Review &amp; send</h2>
+      <p className="lede">Please check everything before sending.</p>
+      <StepDots current={3} />
+      <div className="summary">
+        <div className="srow"><span className="slabel">Email</span><br />{d.contactEmail}</div>
+        {d.contactPhone && <div className="srow"><span className="slabel">Phone</span><br />{d.contactPhone}</div>}
+      </div>
+      <div className="summary">
+        {d.members.map(m => {
+          const diet = [...m.dietaryTags];
+          const dietStr = diet.length ? diet.join(", ") + (m.dietaryNote ? " — " + m.dietaryNote : "") : (m.dietaryNote || "None specified");
+          return (
+            <div className="srow" key={m.id}>
+              <div style={{ fontWeight: 600 }}>{m.name}</div>
+              <div className="slabel" style={{ fontSize: 12.5 }}>
+                {rec.invitedEvents.map(id => `${eventById(id).name}: ${m.attending[id] ? "Attending" : "Not attending"}`).join(" · ")}
+              </div>
+              <div className="slabel" style={{ fontSize: 12.5 }}>Dietary: {dietStr}</div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="field">
+        <label>Message for {CONFIG.coupleNames.split("&")[0].trim()} &amp; {CONFIG.coupleNames.split("&")[1]?.trim()} (optional)</label>
+        <textarea placeholder="Song requests, well wishes, anything else…" value={d.notes}
+          onChange={ev => actions.updateDraft("notes", ev.target.value)} />
+      </div>
+      <div className="btn-row">
+        <button className="btn btn-ghost" onClick={() => actions.patch({ step: 2 })}>Back</button>
+        <button className="btn btn-primary" onClick={actions.submitGuestRSVP} disabled={state.loading}>
+          {state.loading ? <><span className="spinner" />Sending…</> : (rec.response ? "Update RSVP" : "Send RSVP")}
+        </button>
+      </div>
+    </div></div></div>
+  );
+}
+
+function GuestConfirm({ state }) {
+  const rec = state.currentRecord;
+  const anyYes = rec.response.members.some(m => rec.invitedEvents.some(id => m.attending[id]));
+  return (
+    <div className="stage"><div className="card"><div className="card-inner confirm-wrap">
+      <div className="stamp"><div className="s1">RSVP</div><div className="s2">Confirmed</div></div>
+      <h2>Thank you!</h2>
+      <p className="lede">{anyYes ? "We can't wait to celebrate with you." : "Thank you for letting us know — you'll be missed."}</p>
+      <div className="summary" style={{ textAlign: "left" }}>
+        {rec.response.members.map(m => (
+          <div className="srow" key={m.id}>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span>{m.name}</span>
+              <span className="slabel">{rec.invitedEvents.filter(id => m.attending[id]).map(id => eventById(id).name).join(", ") || "Not attending"}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="helptext">You can reopen this same link anytime to update your response.</p>
+    </div></div></div>
+  );
+}
+
+function AdminLogin({ state, actions }) {
+  return (
+    <div className="stage" style={{ background: "var(--paper)" }}>
+      <div className="login-box">
+        <div className="card-eyebrow eyebrow" style={{ textAlign: "center", color: "var(--gold)" }}>{CONFIG.coupleNames}</div>
+        <h2 style={{ textAlign: "center" }}>Admin sign in</h2>
+        <div className={`field ${state.adminError ? "has-err" : ""}`} style={{ marginTop: 20 }}>
+          <label>Password</label>
+          <input type="text" value={state.adminInput}
+            onChange={e => actions.patch({ adminInput: e.target.value })}
+            onKeyDown={e => { if (e.key === "Enter") actions.submitAdminLogin(); }}
+            placeholder="Enter admin password" />
+          {state.adminError && <div className="err">{state.adminError}</div>}
+        </div>
+        <div className="btn-row">
+          <button className="btn btn-ghost" onClick={actions.exitToPublic}>Back</button>
+          <button className="btn btn-primary" onClick={actions.submitAdminLogin} disabled={state.loading}>
+            {state.loading ? <><span className="spinner" />Checking…</> : "Sign in"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HouseholdEditor({ state, actions }) {
+  const d = state.householdDraft;
+  return (
+    <div className="row-card" style={{ padding: 18, marginBottom: 22, borderColor: "var(--sage)" }}>
+      <h3 style={{ fontFamily: "var(--display)", fontSize: 20, marginTop: 0 }}>{state.editingCode ? "Edit household" : "Add a household"}</h3>
+      <div className="field">
+        <label>Household name (optional — auto-filled from guest names)</label>
+        <input type="text" value={d.householdName} placeholder="e.g. The Smith Family"
+          onChange={e => actions.updateHouseholdField("householdName", e.target.value)} />
+      </div>
+      {d.members.map((m, i) => (
+        <div className="field" key={m.id} style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+          <div style={{ flex: 1 }}>
+            <label>{i === 0 ? "Guest 1" : `Guest ${i + 1}`}</label>
+            <input type="text" value={m.name} placeholder="Guest name" onChange={e => actions.updateHMemberName(i, e.target.value)} />
+          </div>
+          {d.members.length > 1 && <button className="remove-link" onClick={() => actions.removeHMember(i)}>Remove</button>}
+        </div>
+      ))}
+      <button className="add-member-btn" onClick={actions.addHMember} style={{ marginBottom: 18 }}>+ Add guest to household</button>
+
+      <label style={{ display: "block", fontSize: 11, letterSpacing: ".12em", textTransform: "uppercase", fontWeight: 600, color: "var(--ink-soft)", marginBottom: 6 }}>Invited to</label>
+      {CONFIG.events.map(ev => (
+        <label className="checkbox-row" key={ev.id}>
+          <input type="checkbox" checked={d.invitedEvents.includes(ev.id)} onChange={() => actions.toggleHEvent(ev.id)} />
+          {ev.name}
+        </label>
+      ))}
+      <label className="checkbox-row">
+        <input type="checkbox" checked={d.allowPlusOne} onChange={e => actions.updateHouseholdField("allowPlusOne", e.target.checked)} />
+        Allow this household to add an extra guest
+      </label>
+      <div className="field" style={{ marginTop: 14 }}>
+        <label>Personal note (shown on their RSVP page)</label>
+        <textarea placeholder="We're so excited to have you at the ceremony!" value={d.personalNote}
+          onChange={e => actions.updateHouseholdField("personalNote", e.target.value)} />
+      </div>
+      <div className="btn-row" style={{ marginTop: 10 }}>
+        <button className="btn btn-ghost" onClick={actions.cancelHouseholdDraft}>Cancel</button>
+        <button className="btn btn-primary" onClick={actions.saveHousehold} disabled={state.loading}>
+          {state.loading ? <><span className="spinner" />Saving…</> : "Save household"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function QrModal({ state, actions }) {
+  if (!state.qrModalCode) return null;
+  const code = state.qrModalCode;
+  const rec = state.guestList[code];
+  return (
+    <div className="qr-modal-backdrop" onClick={() => actions.patch({ qrModalCode: null })}>
+      <div className="qr-modal" onClick={e => e.stopPropagation()}>
+        <h3 style={{ fontFamily: "var(--display)", marginTop: 0 }}>{rec.householdName}</h3>
+        <img src={qrSrc(code)} alt={`QR code for ${rec.householdName}`} />
+        <div className="link-box">{inviteUrl(code)}</div>
+        <div className="btn-row" style={{ marginTop: 0 }}>
+          <button className="btn btn-ghost" onClick={() => actions.copyLink(code)}>Copy link</button>
+          <button className="btn btn-primary" onClick={() => actions.patch({ qrModalCode: null })}>Done</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminGuestList({ state, actions }) {
+  const records = Object.entries(state.guestList);
+  return (
+    <>
+      {!state.householdDraft && (
+        <button className="btn btn-primary" style={{ marginBottom: 20 }} onClick={actions.startAddHousehold}>+ Add household</button>
+      )}
+      {state.householdDraft && <HouseholdEditor state={state} actions={actions} />}
+      {records.length === 0 && !state.householdDraft && (
+        <div className="empty-state"><div className="em-ic">✦</div>No households yet — add one to generate its QR code.</div>
+      )}
+      {records.map(([code, rec]) => {
+        const open = !!state.openRows[code];
+        const status = !rec.response ? "pending" : (rec.response.members.some(m => rec.invitedEvents.some(id => m.attending[id])) ? "yes" : "no");
+        return (
+          <div className="row-card" key={code}>
+            <div className="row-head" onClick={() => actions.toggleRow(code)}>
+              <div>
+                <div className="rname">{rec.householdName} <span style={{ color: "var(--ink-soft)", fontWeight: 400 }}>({rec.members.length} guest{rec.members.length > 1 ? "s" : ""})</span></div>
+                <div className="rmeta">Invited: {rec.invitedEvents.map(id => eventById(id)?.name).join(", ")} · code {code}</div>
+              </div>
+              <span className={`pill ${status}`}>{status === "pending" ? "Awaiting reply" : status === "yes" ? "Attending" : "Not attending"}</span>
+            </div>
+            {open && (
+              <div className="row-body">
+                {rec.personalNote && <div className="member-detail"><em>Note shown to guest:</em> "{rec.personalNote}"</div>}
+                {rec.members.map(m => <div className="member-detail" key={m.id}>{m.name}</div>)}
+                {rec.response && <div className="member-detail">Contact: {rec.response.contactEmail} {rec.response.contactPhone ? "· " + rec.response.contactPhone : ""}</div>}
+                <div className="row-actions">
+                  <button onClick={() => actions.patch({ qrModalCode: code })}>Show QR code</button>
+                  <button onClick={() => actions.copyLink(code)}>Copy link</button>
+                  <button onClick={() => actions.previewInvite(code)}>Preview as guest</button>
+                  <button onClick={() => actions.startEditHousehold(code)}>Edit</button>
+                  <button onClick={() => actions.deleteHousehold(code)} style={{ color: "var(--error)" }}>Delete</button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <QrModal state={state} actions={actions} />
+    </>
+  );
+}
+
+function BroadcastPanel({ state, actions, respondedCount }) {
+  return (
+    <div className="row-card" style={{ padding: 18, marginBottom: 22 }}>
+      <h3 style={{ fontFamily: "var(--display)", fontSize: 20, marginTop: 0 }}>Send an update</h3>
+      <p className="lede" style={{ margin: "0 0 16px", textAlign: "left" }}>
+        Email everyone who's RSVP'd so far ({respondedCount}) about a change — venue update, reminder, anything else.
+        (Guests who haven't replied yet don't have an email on file until they do.)
+      </p>
+      <div className="field">
+        <label>Subject</label>
+        <input type="text" value={state.broadcastSubject} placeholder="An update from us"
+          onChange={e => actions.patch({ broadcastSubject: e.target.value })} />
+      </div>
+      <div className="field">
+        <label>Message</label>
+        <textarea value={state.broadcastMessage} placeholder="Write your update here…" style={{ minHeight: 110 }}
+          onChange={e => actions.patch({ broadcastMessage: e.target.value })} />
+      </div>
+      <div className="btn-row" style={{ marginTop: 4 }}>
+        <button className="btn btn-primary" onClick={actions.sendBroadcast} disabled={state.broadcastSending || respondedCount === 0}>
+          {state.broadcastSending ? <><span className="spinner" />Sending…</> : "Send update"}
+        </button>
+      </div>
+      {state.broadcastResult && (
+        <p className="helptext" style={{ marginTop: 10 }}>
+          Last send: {state.broadcastResult.sent} delivered{state.broadcastResult.failed ? `, ${state.broadcastResult.failed} failed` : ""}.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function AdminResponses({ state, actions }) {
+  const all = state.guestList;
+  let records = Object.entries(all);
+  const q = state.adminSearch.trim().toLowerCase();
+  if (q) records = records.filter(([code, rec]) => (rec.householdName + " " + rec.members.map(m => m.name).join(" ")).toLowerCase().includes(q));
+
+  let totalHouseholds = Object.keys(all).length, responded = 0, totalGuests = 0;
+  const eventCounts = {}; CONFIG.events.forEach(e => (eventCounts[e.id] = { yes: 0 }));
+  const dietaryCounts = {};
+  Object.values(all).forEach(rec => {
+    totalGuests += rec.members.length;
+    if (rec.response) {
+      responded++;
+      rec.response.members.forEach(m => {
+        rec.invitedEvents.forEach(id => { if (m.attending[id]) eventCounts[id].yes++; });
+        (m.dietaryTags || []).forEach(t => (dietaryCounts[t] = (dietaryCounts[t] || 0) + 1));
+      });
+    }
+  });
+  const dietSummary = Object.keys(dietaryCounts).length ? Object.entries(dietaryCounts).map(([k, v]) => `${k}: ${v}`).join("  ·  ") : "None recorded yet";
+
+  return (
+    <>
+      <div className="stat-grid">
+        <div className="stat-card"><div className="num">{totalHouseholds}</div><div className="lbl">Households invited</div></div>
+        <div className="stat-card"><div className="num">{responded}</div><div className="lbl">Responded</div></div>
+        <div className="stat-card"><div className="num">{totalGuests}</div><div className="lbl">Total guests</div></div>
+        {CONFIG.events.map(ev => (
+          <div className="stat-card" key={ev.id}><div className="num">{eventCounts[ev.id].yes}</div><div className="lbl">{ev.name} — attending</div></div>
+        ))}
+      </div>
+      <div className="summary" style={{ marginBottom: 22 }}><strong style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: ".08em", color: "var(--ink-soft)" }}>Dietary summary&nbsp; </strong>{dietSummary}</div>
+      <BroadcastPanel state={state} actions={actions} respondedCount={responded} />
+      <div className="admin-controls">
+        <input type="text" placeholder="Search by name…" value={state.adminSearch} onChange={e => actions.patch({ adminSearch: e.target.value })} />
+        <button className="btn btn-ghost" style={{ flex: "none" }} onClick={actions.exportCSV}>Export CSV</button>
+      </div>
+      {records.length === 0 && <div className="empty-state"><div className="em-ic">✦</div>No RSVPs match yet.</div>}
+      {records.map(([code, rec]) => {
+        const open = !!state.openRows["r" + code];
+        const status = !rec.response ? "pending" : (rec.response.members.some(m => rec.invitedEvents.some(id => m.attending[id])) ? "yes" : "no");
+        return (
+          <div className="row-card" key={code}>
+            <div className="row-head" onClick={() => actions.patch({ openRows: { ...state.openRows, ["r" + code]: !open } })}>
+              <div>
+                <div className="rname">{rec.householdName}</div>
+                <div className="rmeta">{rec.response ? rec.response.contactEmail : "No response yet"} {rec.response?.submittedAt ? "· " + new Date(rec.response.submittedAt).toLocaleDateString() : ""}</div>
+              </div>
+              <span className={`pill ${status}`}>{status === "pending" ? "Awaiting reply" : status === "yes" ? "Attending" : "Not attending"}</span>
+            </div>
+            {open && (
+              <div className="row-body">
+                {(rec.response ? rec.response.members : rec.members).map(m => (
+                  <div className="member-detail" key={m.id || m.name}>
+                    <strong>{m.name}</strong><br />
+                    {rec.response
+                      ? rec.invitedEvents.map(id => `${eventById(id).name}: ${m.attending[id] ? "Yes" : "No"}`).join("  ·  ")
+                      : rec.invitedEvents.map(id => eventById(id).name).join(", ") + " — awaiting reply"}
+                    {rec.response && <><br />Dietary: {(m.dietaryTags || []).join(", ") || "—"}{m.dietaryNote ? " — " + m.dietaryNote : ""}</>}
+                  </div>
+                ))}
+                {rec.response?.notes && <div className="member-detail"><em>Message:</em> {rec.response.notes}</div>}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+function Admin({ state, actions }) {
+  return (
+    <div className="admin-shell">
+      <div className="admin-topbar">
+        <h2>RSVP Dashboard</h2>
+        <div>
+          <button className="btn-link" onClick={actions.refreshAdmin}>Refresh</button>
+          &nbsp;|&nbsp;
+          <button className="btn-link" onClick={actions.exitToPublic}>Sign out</button>
+        </div>
+      </div>
+      <div className="admin-wrap">
+        <div className="tabs">
+          <button className={`tab-btn ${state.adminTab === "guestlist" ? "active" : ""}`} onClick={() => actions.patch({ adminTab: "guestlist" })}>Guest List</button>
+          <button className={`tab-btn ${state.adminTab === "responses" ? "active" : ""}`} onClick={() => actions.patch({ adminTab: "responses" })}>Responses &amp; Stats</button>
+        </div>
+        {state.adminTab === "guestlist" ? <AdminGuestList state={state} actions={actions} /> : <AdminResponses state={state} actions={actions} />}
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
    APP
    ========================================================= */
 export default function App() {
@@ -546,586 +1137,17 @@ export default function App() {
     URL.revokeObjectURL(url);
   }
 
-  /* ========================= RENDER HELPERS ========================= */
-  function StepDots({ current }) {
-    const labels = ["Details", "Events & Dietary", "Review"];
-    return (
-      <div className="steps">
-        {labels.map((l, i) => {
-          const n = i + 1;
-          const cls = n < current ? "done" : n === current ? "active" : "";
-          return (
-            <span key={l} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span className={`step-dot ${cls}`} title={l}>{n}</span>
-              {i < labels.length - 1 && <span className="step-line" />}
-            </span>
-          );
-        })}
-      </div>
-    );
-  }
-
-  /* ---------- guest views ---------- */
-  function NoInvite() {
-    return (
-      <div className="hero">
-        <div className="eyebrow">{CONFIG.coupleNames}</div>
-        <h1>You're Invited</h1>
-        <div className="sub">Engagement Party &amp; Wedding</div>
-        <p style={{ maxWidth: 380, fontSize: 14, color: "var(--gold-soft)", lineHeight: 1.6 }}>
-          This RSVP is personal to each guest. Please use the link or QR code from your invitation to open it —
-          or get in touch with {CONFIG.coupleNames} if you can't find yours.
-        </p>
-      </div>
-    );
-  }
-  function InvalidInvite() {
-    return (
-      <div className="hero">
-        <div className="eyebrow">{CONFIG.coupleNames}</div>
-        <h1 style={{ fontSize: "clamp(28px,6vw,44px)" }}>Invite not found</h1>
-        <p style={{ maxWidth: 380, fontSize: 14, color: "var(--gold-soft)", lineHeight: 1.6 }}>
-          We couldn't match this link to an invitation. Double-check the QR code or link you were sent, or reach out
-          to {CONFIG.coupleNames} directly.
-        </p>
-      </div>
-    );
-  }
-  function GuestLanding() {
-    const rec = state.currentRecord;
-    return (
-      <div className="hero">
-        {state.previewMode && (
-          <div className="preview-banner" style={{ position: "absolute", top: 0, left: 0, right: 0 }}>
-            Previewing {rec.householdName}'s invite <button onClick={exitPreview}>Exit preview</button>
-          </div>
-        )}
-        <div className="eyebrow">Dear {rec.householdName}</div>
-        <h1>You're Invited</h1>
-        <div className="sub">{rec.invitedEvents.map(id => eventById(id)?.name).join(" & ")}</div>
-        {rec.personalNote && <p className="note-quote">&ldquo;{rec.personalNote}&rdquo;</p>}
-        <div>
-          <button className="seal" onClick={() => patch({ view: "guest-menu" })}>{rec.householdName.split(/[&,]/)[0].trim()[0] || "♥"}</button>
-          <div className="seal-caption">Break the seal to continue</div>
-        </div>
-      </div>
-    );
-  }
-
-  function GuestMenu() {
-    const rec = state.currentRecord;
-    return (
-      <div className="stage"><div className="card"><div className="card-inner">
-        <div className="card-eyebrow eyebrow" style={{ textAlign: "center" }}>{rec.householdName}</div>
-        <CountdownWidget eventIds={rec.invitedEvents} />
-        <h2>Welcome</h2>
-        <p className="lede">We can't wait to celebrate with you. What would you like to do?</p>
-        <div className="choice-grid">
-          <button className="choice-card" onClick={startGuestForm}>
-            <div className="ic">✎</div>
-            <div><h3>RSVP</h3><p>{rec.response ? "View or update your response." : "Let us know who's coming and any dietary needs."}</p></div>
-          </button>
-          <button className="choice-card" onClick={() => patch({ view: "guest-location" })}>
-            <div className="ic">⚑</div>
-            <div><h3>Location</h3><p>Venue details and directions.</p></div>
-          </button>
-          <button className="choice-card" onClick={() => patch({ view: "guest-details" })}>
-            <div className="ic">✦</div>
-            <div><h3>Details</h3><p>Dates, times, dress code and other info.</p></div>
-          </button>
-        </div>
-        {state.previewMode && (
-          <div style={{ textAlign: "center", marginTop: 20 }}>
-            <button className="btn-link" onClick={exitPreview}>Exit preview</button>
-          </div>
-        )}
-      </div></div></div>
-    );
-  }
-
-  function GuestLocation() {
-    const rec = state.currentRecord;
-    return (
-      <div className="stage"><div className="card"><div className="card-inner">
-        <h2>Location &amp; Directions</h2>
-        <p className="lede">Where to find us.</p>
-        {rec.invitedEvents.map(id => {
-          const ev = eventById(id);
-          return (
-            <div className="member" style={{ marginBottom: 20 }} key={id}>
-              <div className="member-head"><span className="mname">{ev.name}</span></div>
-              <div className="ev-meta" style={{ marginBottom: 12 }}>{ev.date} · {ev.time}</div>
-              <div style={{ fontSize: 14.5, fontWeight: 500, marginBottom: 12 }}>{ev.venue}</div>
-              <div style={{ border: "1px solid var(--gold-soft)", overflow: "hidden", marginBottom: 12 }}>
-                <iframe title={`Map to ${ev.venue}`} src={`https://maps.google.com/maps?q=${encodeURIComponent(ev.venue)}&z=14&output=embed`}
-                  width="100%" height="220" style={{ border: 0, display: "block" }} loading="lazy" />
-              </div>
-              <a className="btn btn-ghost" style={{ display: "block", textAlign: "center", textDecoration: "none", boxSizing: "border-box" }}
-                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(ev.venue)}`} target="_blank" rel="noopener noreferrer">Get Directions</a>
-            </div>
-          );
-        })}
-        <div style={{ textAlign: "center", marginTop: 10 }}>
-          <button className="btn-link" onClick={() => patch({ view: "guest-menu" })}>&larr; Back</button>
-        </div>
-      </div></div></div>
-    );
-  }
-
-  function GuestDetails() {
-    const rec = state.currentRecord;
-    return (
-      <div className="stage"><div className="card"><div className="card-inner">
-        <h2>Event Details</h2>
-        <p className="lede">Everything you need to know.</p>
-        <div className="summary">
-          {rec.invitedEvents.map(id => {
-            const ev = eventById(id);
-            return (
-              <div className="srow" key={id}>
-                <div style={{ fontWeight: 600 }}>{ev.name}</div>
-                <div className="slabel" style={{ fontSize: 12.5 }}>{ev.date} · {ev.time}</div>
-                <div className="slabel" style={{ fontSize: 12.5 }}>{ev.venue}</div>
-              </div>
-            );
-          })}
-        </div>
-        {CONFIG.details && CONFIG.details.length > 0 && (
-          <div className="summary">
-            {CONFIG.details.map(d => (
-              <div className="srow" key={d.title}>
-                <div style={{ fontWeight: 600 }}>{d.title}</div>
-                <div className="slabel" style={{ fontSize: 12.5 }}>{d.body}</div>
-              </div>
-            ))}
-          </div>
-        )}
-        {rec.personalNote && <p className="note-quote" style={{ color: "var(--ink)", margin: "0 0 20px" }}>&ldquo;{rec.personalNote}&rdquo;</p>}
-        <p className="lede">Kindly reply by {CONFIG.rsvpDeadline}.</p>
-        <div style={{ textAlign: "center", marginTop: 6 }}>
-          <button className="btn-link" onClick={() => patch({ view: "guest-menu" })}>&larr; Back</button>
-        </div>
-      </div></div></div>
-    );
-  }
-
-  function GuestFormStep1() {
-    const d = state.draft, e = state.errors, rec = state.currentRecord;
-    return (
-      <div className="stage"><div className="card"><div className="card-inner">
-        <div className="card-eyebrow eyebrow" style={{ textAlign: "center" }}>{rec.householdName}</div>
-        <h2>Confirm your details</h2>
-        <p className="lede">Kindly reply by {CONFIG.rsvpDeadline}.</p>
-        <StepDots current={1} />
-        {d.members.map((m, i) => (
-          <div className="field" key={m.id} style={i === 0 ? {} : { marginBottom: 10 }}>
-            <label>{i === 0 ? "Guest 1" : `Guest ${i + 1}`}</label>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input type="text" value={m.name} placeholder="Guest name"
-                onChange={ev => updateMember(i, "name", ev.target.value)} />
-              {i >= rec.members.length && (
-                <button className="remove-link" onClick={() => removeExtraGuest(i)}>Remove</button>
-              )}
-            </div>
-            {e["m" + i] && <div className="err">{e["m" + i]}</div>}
-          </div>
-        ))}
-        {rec.allowPlusOne && (
-          <button className="add-member-btn" onClick={addExtraGuest} style={{ marginBottom: 20 }}>+ Add a guest</button>
-        )}
-        <div className={`field ${e.email ? "has-err" : ""}`}>
-          <label>Email address</label>
-          <input type="email" value={d.contactEmail} placeholder="you@example.com"
-            onChange={ev => updateDraft("contactEmail", ev.target.value)} />
-          {e.email ? <div className="err">{e.email}</div> : <div className="helptext">So we can reach you if plans change.</div>}
-        </div>
-        <div className="field">
-          <label>Phone (optional)</label>
-          <input type="tel" value={d.contactPhone} placeholder="04xx xxx xxx"
-            onChange={ev => updateDraft("contactPhone", ev.target.value)} />
-        </div>
-        <div className="btn-row">
-          <button className="btn btn-ghost" onClick={() => patch({ view: "guest-menu" })}>Back</button>
-          <button className="btn btn-primary" onClick={() => {
-            const errs = validateGuestStep1();
-            if (Object.keys(errs).length) { patch({ errors: errs }); return; }
-            patch({ step: 2, errors: {} });
-          }}>Continue</button>
-        </div>
-      </div></div></div>
-    );
-  }
-
-  function GuestFormStep2() {
-    const d = state.draft, rec = state.currentRecord;
-    return (
-      <div className="stage"><div className="card"><div className="card-inner">
-        <h2>Events &amp; dietary needs</h2>
-        <p className="lede">You're invited to the following — let us know who's coming and any dietary requirements.</p>
-        <StepDots current={2} />
-        {d.members.map((m, i) => (
-          <div className="member" key={m.id}>
-            <div className="member-head"><span className="mname">{m.name || `Guest ${i + 1}`}</span></div>
-            {rec.invitedEvents.map(id => {
-              const ev = eventById(id);
-              return (
-                <div className="attend-row" key={id}>
-                  <div>
-                    <div className="ev-name">{ev.name}</div>
-                    <div className="ev-meta">{ev.date} · {ev.venue}</div>
-                  </div>
-                  <div className="toggle-pair">
-                    <button className={`toggle-btn yes ${m.attending[id] ? "on" : ""}`} onClick={() => toggleAttend(i, id)}>Yes</button>
-                    <button className={`toggle-btn no ${!m.attending[id] ? "on" : ""}`} onClick={() => toggleAttend(i, id)}>No</button>
-                  </div>
-                </div>
-              );
-            })}
-            <div style={{ marginTop: 14 }}>
-              <label style={{ display: "block", fontSize: 11, letterSpacing: ".12em", textTransform: "uppercase", fontWeight: 600, color: "var(--ink-soft)", marginBottom: 8 }}>Dietary requirements</label>
-              <div className="tag-row">
-                {CONFIG.dietaryOptions.map(tag => (
-                  <button key={tag} className={`tag ${m.dietaryTags.includes(tag) ? "on" : ""}`} onClick={() => toggleDiet(i, tag)}>{tag}</button>
-                ))}
-              </div>
-              <textarea placeholder="Any details we should know…" value={m.dietaryNote}
-                onChange={ev => updateMember(i, "dietaryNote", ev.target.value)} />
-            </div>
-          </div>
-        ))}
-        <div className="btn-row">
-          <button className="btn btn-ghost" onClick={() => patch({ step: 1 })}>Back</button>
-          <button className="btn btn-primary" onClick={() => patch({ step: 3 })}>Continue</button>
-        </div>
-      </div></div></div>
-    );
-  }
-
-  function GuestFormStep3() {
-    const d = state.draft, rec = state.currentRecord;
-    return (
-      <div className="stage"><div className="card"><div className="card-inner">
-        <h2>Review &amp; send</h2>
-        <p className="lede">Please check everything before sending.</p>
-        <StepDots current={3} />
-        <div className="summary">
-          <div className="srow"><span className="slabel">Email</span><br />{d.contactEmail}</div>
-          {d.contactPhone && <div className="srow"><span className="slabel">Phone</span><br />{d.contactPhone}</div>}
-        </div>
-        <div className="summary">
-          {d.members.map(m => {
-            const diet = [...m.dietaryTags];
-            const dietStr = diet.length ? diet.join(", ") + (m.dietaryNote ? " — " + m.dietaryNote : "") : (m.dietaryNote || "None specified");
-            return (
-              <div className="srow" key={m.id}>
-                <div style={{ fontWeight: 600 }}>{m.name}</div>
-                <div className="slabel" style={{ fontSize: 12.5 }}>
-                  {rec.invitedEvents.map(id => `${eventById(id).name}: ${m.attending[id] ? "Attending" : "Not attending"}`).join(" · ")}
-                </div>
-                <div className="slabel" style={{ fontSize: 12.5 }}>Dietary: {dietStr}</div>
-              </div>
-            );
-          })}
-        </div>
-        <div className="field">
-          <label>Message for {CONFIG.coupleNames.split("&")[0].trim()} &amp; {CONFIG.coupleNames.split("&")[1]?.trim()} (optional)</label>
-          <textarea placeholder="Song requests, well wishes, anything else…" value={d.notes}
-            onChange={ev => updateDraft("notes", ev.target.value)} />
-        </div>
-        <div className="btn-row">
-          <button className="btn btn-ghost" onClick={() => patch({ step: 2 })}>Back</button>
-          <button className="btn btn-primary" onClick={submitGuestRSVP} disabled={state.loading}>
-            {state.loading ? <><span className="spinner" />Sending…</> : (rec.response ? "Update RSVP" : "Send RSVP")}
-          </button>
-        </div>
-      </div></div></div>
-    );
-  }
-
-  function GuestConfirm() {
-    const rec = state.currentRecord;
-    const anyYes = rec.response.members.some(m => rec.invitedEvents.some(id => m.attending[id]));
-    return (
-      <div className="stage"><div className="card"><div className="card-inner confirm-wrap">
-        <div className="stamp"><div className="s1">RSVP</div><div className="s2">Confirmed</div></div>
-        <h2>Thank you!</h2>
-        <p className="lede">{anyYes ? "We can't wait to celebrate with you." : "Thank you for letting us know — you'll be missed."}</p>
-        <div className="summary" style={{ textAlign: "left" }}>
-          {rec.response.members.map(m => (
-            <div className="srow" key={m.id}>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span>{m.name}</span>
-                <span className="slabel">{rec.invitedEvents.filter(id => m.attending[id]).map(id => eventById(id).name).join(", ") || "Not attending"}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-        <p className="helptext">You can reopen this same link anytime to update your response.</p>
-      </div></div></div>
-    );
-  }
-
-  /* ---------- admin views ---------- */
-  function AdminLogin() {
-    return (
-      <div className="stage" style={{ background: "var(--paper)" }}>
-        <div className="login-box">
-          <div className="card-eyebrow eyebrow" style={{ textAlign: "center", color: "var(--gold)" }}>{CONFIG.coupleNames}</div>
-          <h2 style={{ textAlign: "center" }}>Admin sign in</h2>
-          <div className={`field ${state.adminError ? "has-err" : ""}`} style={{ marginTop: 20 }}>
-            <label>Password</label>
-            <input type="text" value={state.adminInput}
-              onChange={e => patch({ adminInput: e.target.value })}
-              onKeyDown={e => { if (e.key === "Enter") submitAdminLogin(); }}
-              placeholder="Enter admin password" />
-            {state.adminError && <div className="err">{state.adminError}</div>}
-          </div>
-          <div className="btn-row">
-            <button className="btn btn-ghost" onClick={exitToPublic}>Back</button>
-            <button className="btn btn-primary" onClick={submitAdminLogin} disabled={state.loading}>
-              {state.loading ? <><span className="spinner" />Checking…</> : "Sign in"}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  function HouseholdEditor() {
-    const d = state.householdDraft;
-    return (
-      <div className="row-card" style={{ padding: 18, marginBottom: 22, borderColor: "var(--sage)" }}>
-        <h3 style={{ fontFamily: "var(--display)", fontSize: 20, marginTop: 0 }}>{state.editingCode ? "Edit household" : "Add a household"}</h3>
-        <div className="field">
-          <label>Household name (optional — auto-filled from guest names)</label>
-          <input type="text" value={d.householdName} placeholder="e.g. The Smith Family"
-            onChange={e => updateHouseholdField("householdName", e.target.value)} />
-        </div>
-        {d.members.map((m, i) => (
-          <div className="field" key={m.id} style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-            <div style={{ flex: 1 }}>
-              <label>{i === 0 ? "Guest 1" : `Guest ${i + 1}`}</label>
-              <input type="text" value={m.name} placeholder="Guest name" onChange={e => updateHMemberName(i, e.target.value)} />
-            </div>
-            {d.members.length > 1 && <button className="remove-link" onClick={() => removeHMember(i)}>Remove</button>}
-          </div>
-        ))}
-        <button className="add-member-btn" onClick={addHMember} style={{ marginBottom: 18 }}>+ Add guest to household</button>
-
-        <label style={{ display: "block", fontSize: 11, letterSpacing: ".12em", textTransform: "uppercase", fontWeight: 600, color: "var(--ink-soft)", marginBottom: 6 }}>Invited to</label>
-        {CONFIG.events.map(ev => (
-          <label className="checkbox-row" key={ev.id}>
-            <input type="checkbox" checked={d.invitedEvents.includes(ev.id)} onChange={() => toggleHEvent(ev.id)} />
-            {ev.name}
-          </label>
-        ))}
-        <label className="checkbox-row">
-          <input type="checkbox" checked={d.allowPlusOne} onChange={e => updateHouseholdField("allowPlusOne", e.target.checked)} />
-          Allow this household to add an extra guest
-        </label>
-        <div className="field" style={{ marginTop: 14 }}>
-          <label>Personal note (shown on their RSVP page)</label>
-          <textarea placeholder="We're so excited to have you at the ceremony!" value={d.personalNote}
-            onChange={e => updateHouseholdField("personalNote", e.target.value)} />
-        </div>
-        <div className="btn-row" style={{ marginTop: 10 }}>
-          <button className="btn btn-ghost" onClick={cancelHouseholdDraft}>Cancel</button>
-          <button className="btn btn-primary" onClick={saveHousehold} disabled={state.loading}>
-            {state.loading ? <><span className="spinner" />Saving…</> : "Save household"}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  function QrModal() {
-    if (!state.qrModalCode) return null;
-    const code = state.qrModalCode;
-    const rec = state.guestList[code];
-    return (
-      <div className="qr-modal-backdrop" onClick={() => patch({ qrModalCode: null })}>
-        <div className="qr-modal" onClick={e => e.stopPropagation()}>
-          <h3 style={{ fontFamily: "var(--display)", marginTop: 0 }}>{rec.householdName}</h3>
-          <img src={qrSrc(code)} alt={`QR code for ${rec.householdName}`} />
-          <div className="link-box">{inviteUrl(code)}</div>
-          <div className="btn-row" style={{ marginTop: 0 }}>
-            <button className="btn btn-ghost" onClick={() => copyLink(code)}>Copy link</button>
-            <button className="btn btn-primary" onClick={() => patch({ qrModalCode: null })}>Done</button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  function AdminGuestList() {
-    const records = Object.entries(state.guestList);
-    return (
-      <>
-        {!state.householdDraft && (
-          <button className="btn btn-primary" style={{ marginBottom: 20 }} onClick={startAddHousehold}>+ Add household</button>
-        )}
-        {state.householdDraft && <HouseholdEditor />}
-        {records.length === 0 && !state.householdDraft && (
-          <div className="empty-state"><div className="em-ic">✦</div>No households yet — add one to generate its QR code.</div>
-        )}
-        {records.map(([code, rec]) => {
-          const open = !!state.openRows[code];
-          const status = !rec.response ? "pending" : (rec.response.members.some(m => rec.invitedEvents.some(id => m.attending[id])) ? "yes" : "no");
-          return (
-            <div className="row-card" key={code}>
-              <div className="row-head" onClick={() => toggleRow(code)}>
-                <div>
-                  <div className="rname">{rec.householdName} <span style={{ color: "var(--ink-soft)", fontWeight: 400 }}>({rec.members.length} guest{rec.members.length > 1 ? "s" : ""})</span></div>
-                  <div className="rmeta">Invited: {rec.invitedEvents.map(id => eventById(id)?.name).join(", ")} · code {code}</div>
-                </div>
-                <span className={`pill ${status}`}>{status === "pending" ? "Awaiting reply" : status === "yes" ? "Attending" : "Not attending"}</span>
-              </div>
-              {open && (
-                <div className="row-body">
-                  {rec.personalNote && <div className="member-detail"><em>Note shown to guest:</em> "{rec.personalNote}"</div>}
-                  {rec.members.map(m => <div className="member-detail" key={m.id}>{m.name}</div>)}
-                  {rec.response && <div className="member-detail">Contact: {rec.response.contactEmail} {rec.response.contactPhone ? "· " + rec.response.contactPhone : ""}</div>}
-                  <div className="row-actions">
-                    <button onClick={() => patch({ qrModalCode: code })}>Show QR code</button>
-                    <button onClick={() => copyLink(code)}>Copy link</button>
-                    <button onClick={() => previewInvite(code)}>Preview as guest</button>
-                    <button onClick={() => startEditHousehold(code)}>Edit</button>
-                    <button onClick={() => deleteHousehold(code)} style={{ color: "var(--error)" }}>Delete</button>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-        <QrModal />
-      </>
-    );
-  }
-
-  function BroadcastPanel({ respondedCount }) {
-    return (
-      <div className="row-card" style={{ padding: 18, marginBottom: 22 }}>
-        <h3 style={{ fontFamily: "var(--display)", fontSize: 20, marginTop: 0 }}>Send an update</h3>
-        <p className="lede" style={{ margin: "0 0 16px", textAlign: "left" }}>
-          Email everyone who's RSVP'd so far ({respondedCount}) about a change — venue update, reminder, anything else.
-          (Guests who haven't replied yet don't have an email on file until they do.)
-        </p>
-        <div className="field">
-          <label>Subject</label>
-          <input type="text" value={state.broadcastSubject} placeholder="An update from us"
-            onChange={e => patch({ broadcastSubject: e.target.value })} />
-        </div>
-        <div className="field">
-          <label>Message</label>
-          <textarea value={state.broadcastMessage} placeholder="Write your update here…" style={{ minHeight: 110 }}
-            onChange={e => patch({ broadcastMessage: e.target.value })} />
-        </div>
-        <div className="btn-row" style={{ marginTop: 4 }}>
-          <button className="btn btn-primary" onClick={sendBroadcast} disabled={state.broadcastSending || respondedCount === 0}>
-            {state.broadcastSending ? <><span className="spinner" />Sending…</> : "Send update"}
-          </button>
-        </div>
-        {state.broadcastResult && (
-          <p className="helptext" style={{ marginTop: 10 }}>
-            Last send: {state.broadcastResult.sent} delivered{state.broadcastResult.failed ? `, ${state.broadcastResult.failed} failed` : ""}.
-          </p>
-        )}
-      </div>
-    );
-  }
-
-  function AdminResponses() {
-    const all = state.guestList;
-    let records = Object.entries(all);
-    const q = state.adminSearch.trim().toLowerCase();
-    if (q) records = records.filter(([code, rec]) => (rec.householdName + " " + rec.members.map(m => m.name).join(" ")).toLowerCase().includes(q));
-
-    let totalHouseholds = Object.keys(all).length, responded = 0, totalGuests = 0;
-    const eventCounts = {}; CONFIG.events.forEach(e => (eventCounts[e.id] = { yes: 0 }));
-    const dietaryCounts = {};
-    Object.values(all).forEach(rec => {
-      totalGuests += rec.members.length;
-      if (rec.response) {
-        responded++;
-        rec.response.members.forEach(m => {
-          rec.invitedEvents.forEach(id => { if (m.attending[id]) eventCounts[id].yes++; });
-          (m.dietaryTags || []).forEach(t => (dietaryCounts[t] = (dietaryCounts[t] || 0) + 1));
-        });
-      }
-    });
-    const dietSummary = Object.keys(dietaryCounts).length ? Object.entries(dietaryCounts).map(([k, v]) => `${k}: ${v}`).join("  ·  ") : "None recorded yet";
-
-    return (
-      <>
-        <div className="stat-grid">
-          <div className="stat-card"><div className="num">{totalHouseholds}</div><div className="lbl">Households invited</div></div>
-          <div className="stat-card"><div className="num">{responded}</div><div className="lbl">Responded</div></div>
-          <div className="stat-card"><div className="num">{totalGuests}</div><div className="lbl">Total guests</div></div>
-          {CONFIG.events.map(ev => (
-            <div className="stat-card" key={ev.id}><div className="num">{eventCounts[ev.id].yes}</div><div className="lbl">{ev.name} — attending</div></div>
-          ))}
-        </div>
-        <div className="summary" style={{ marginBottom: 22 }}><strong style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: ".08em", color: "var(--ink-soft)" }}>Dietary summary&nbsp; </strong>{dietSummary}</div>
-        <BroadcastPanel respondedCount={responded} />
-        <div className="admin-controls">
-          <input type="text" placeholder="Search by name…" value={state.adminSearch} onChange={e => patch({ adminSearch: e.target.value })} />
-          <button className="btn btn-ghost" style={{ flex: "none" }} onClick={exportCSV}>Export CSV</button>
-        </div>
-        {records.length === 0 && <div className="empty-state"><div className="em-ic">✦</div>No RSVPs match yet.</div>}
-        {records.map(([code, rec]) => {
-          const open = !!state.openRows["r" + code];
-          const status = !rec.response ? "pending" : (rec.response.members.some(m => rec.invitedEvents.some(id => m.attending[id])) ? "yes" : "no");
-          return (
-            <div className="row-card" key={code}>
-              <div className="row-head" onClick={() => patch({ openRows: { ...state.openRows, ["r" + code]: !open } })}>
-                <div>
-                  <div className="rname">{rec.householdName}</div>
-                  <div className="rmeta">{rec.response ? rec.response.contactEmail : "No response yet"} {rec.response?.submittedAt ? "· " + new Date(rec.response.submittedAt).toLocaleDateString() : ""}</div>
-                </div>
-                <span className={`pill ${status}`}>{status === "pending" ? "Awaiting reply" : status === "yes" ? "Attending" : "Not attending"}</span>
-              </div>
-              {open && (
-                <div className="row-body">
-                  {(rec.response ? rec.response.members : rec.members).map(m => (
-                    <div className="member-detail" key={m.id || m.name}>
-                      <strong>{m.name}</strong><br />
-                      {rec.response
-                        ? rec.invitedEvents.map(id => `${eventById(id).name}: ${m.attending[id] ? "Yes" : "No"}`).join("  ·  ")
-                        : rec.invitedEvents.map(id => eventById(id).name).join(", ") + " — awaiting reply"}
-                      {rec.response && <><br />Dietary: {(m.dietaryTags || []).join(", ") || "—"}{m.dietaryNote ? " — " + m.dietaryNote : ""}</>}
-                    </div>
-                  ))}
-                  {rec.response?.notes && <div className="member-detail"><em>Message:</em> {rec.response.notes}</div>}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </>
-    );
-  }
-
-  function Admin() {
-    return (
-      <div className="admin-shell">
-        <div className="admin-topbar">
-          <h2>RSVP Dashboard</h2>
-          <div>
-            <button className="btn-link" onClick={refreshAdmin}>Refresh</button>
-            &nbsp;|&nbsp;
-            <button className="btn-link" onClick={exitToPublic}>Sign out</button>
-          </div>
-        </div>
-        <div className="admin-wrap">
-          <div className="tabs">
-            <button className={`tab-btn ${state.adminTab === "guestlist" ? "active" : ""}`} onClick={() => patch({ adminTab: "guestlist" })}>Guest List</button>
-            <button className={`tab-btn ${state.adminTab === "responses" ? "active" : ""}`} onClick={() => patch({ adminTab: "responses" })}>Responses &amp; Stats</button>
-          </div>
-          {state.adminTab === "guestlist" ? <AdminGuestList /> : <AdminResponses />}
-        </div>
-      </div>
-    );
-  }
+  // Bag of handlers passed down to the module-level view components as one
+  // `actions` prop, so those components don't need a long individual prop
+  // list per handler they use.
+  const actions = {
+    patch, showToast,
+    startGuestForm, updateDraft, updateMember, toggleAttend, toggleDiet, addExtraGuest, removeExtraGuest, validateGuestStep1, submitGuestRSVP,
+    submitAdminLogin, refreshAdmin, exitToPublic,
+    startAddHousehold, startEditHousehold, cancelHouseholdDraft, updateHouseholdField, updateHMemberName, addHMember, removeHMember, toggleHEvent, saveHousehold, deleteHousehold,
+    sendBroadcast,
+    previewInvite, exitPreview, toggleRow, copyLink, exportCSV
+  };
 
   /* ========================= MASTER RENDER ========================= */
   if (!state.ready) return <div className="rsvp-root" style={{ minHeight: "100vh" }} />;
@@ -1134,16 +1156,18 @@ export default function App() {
   switch (state.view) {
     case "no-invite": body = <NoInvite />; break;
     case "invalid-invite": body = <InvalidInvite />; break;
-    case "guest-landing": body = <GuestLanding />; break;
-    case "guest-menu": body = <GuestMenu />; break;
-    case "guest-location": body = <GuestLocation />; break;
-    case "guest-details": body = <GuestDetails />; break;
+    case "guest-landing": body = <GuestLanding state={state} actions={actions} />; break;
+    case "guest-menu": body = <GuestMenu state={state} actions={actions} />; break;
+    case "guest-location": body = <GuestLocation state={state} actions={actions} />; break;
+    case "guest-details": body = <GuestDetails state={state} actions={actions} />; break;
     case "guest-form":
-      body = state.step === 1 ? <GuestFormStep1 /> : state.step === 2 ? <GuestFormStep2 /> : <GuestFormStep3 />;
+      body = state.step === 1 ? <GuestFormStep1 state={state} actions={actions} />
+        : state.step === 2 ? <GuestFormStep2 state={state} actions={actions} />
+        : <GuestFormStep3 state={state} actions={actions} />;
       break;
-    case "guest-confirm": body = <GuestConfirm />; break;
-    case "admin-login": body = <AdminLogin />; break;
-    case "admin": body = <Admin />; break;
+    case "guest-confirm": body = <GuestConfirm state={state} />; break;
+    case "admin-login": body = <AdminLogin state={state} actions={actions} />; break;
+    case "admin": body = <Admin state={state} actions={actions} />; break;
     default: body = <NoInvite />;
   }
 

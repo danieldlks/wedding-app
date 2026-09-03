@@ -13,7 +13,7 @@ const CONFIG = {
   ],
   rsvpDeadline: "Friday 1 October 2027",
   dietaryOptions: ["Vegetarian", "Vegan", "Gluten-free", "Dairy-free", "Nut allergy", "Other"],
-  adminPassword: "dlow&faith", // <-- change this before sharing the app
+  adminPassword: "dlow96", // <-- change this before sharing the app
   // Where this app will live once hosted (used to build QR codes / invite links).
   // Leave blank to fall back to the current browser URL.
   siteBaseUrl: "",
