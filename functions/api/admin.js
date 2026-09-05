@@ -1,4 +1,4 @@
-import { rowToRecord, genId, genInviteCode, listAllRecords } from "../_lib/db.js";
+import { rowToRecord, genId, genInviteCode, listAllRecords, listSeating } from "../_lib/db.js";
 import { sendEmail } from "../_lib/email.js";
 import { renderBroadcastEmail } from "../_lib/templates.js";
 
@@ -25,8 +25,51 @@ export async function onRequestPost({ request, env }) {
     case "delete-household": {
       const code = String(payload?.inviteCode || "").trim().toUpperCase();
       if (!code) return new Response("Missing inviteCode", { status: 400 });
+      await env.DB.prepare("DELETE FROM seat_assignments WHERE invite_code = ?").bind(code).run();
       await env.DB.prepare("DELETE FROM households WHERE invite_code = ?").bind(code).run();
       return Response.json(await listAllRecords(env.DB));
+    }
+
+    case "list-seating":
+      return Response.json(await listSeating(env.DB));
+
+    case "save-table":
+      return Response.json(await saveTable(env.DB, payload || {}));
+
+    case "delete-table": {
+      const id = String(payload?.id || "").trim();
+      if (!id) return new Response("Missing id", { status: 400 });
+      await env.DB.prepare("DELETE FROM seat_assignments WHERE table_id = ?").bind(id).run();
+      await env.DB.prepare("DELETE FROM seating_tables WHERE id = ?").bind(id).run();
+      return Response.json(await listSeating(env.DB));
+    }
+
+    case "assign-seat": {
+      const memberId = String(payload?.memberId || "").trim();
+      const inviteCode = String(payload?.inviteCode || "").trim().toUpperCase();
+      const tableId = payload?.tableId ? String(payload.tableId).trim() : null;
+      if (!memberId || !inviteCode) return new Response("Missing memberId/inviteCode", { status: 400 });
+      if (tableId) {
+        const seatIndex = Number(payload?.seatIndex);
+        if (!Number.isInteger(seatIndex) || seatIndex < 0) return new Response("Missing seatIndex", { status: 400 });
+        // The UI only offers empty seats as drop/tap targets, but guard against a
+        // stale-poll race (two admins targeting the same seat within the same
+        // ~5s refresh window) rather than silently overwriting one of them.
+        const clash = await env.DB.prepare(
+          "SELECT member_id FROM seat_assignments WHERE table_id = ? AND seat_index = ? AND member_id != ?"
+        ).bind(tableId, seatIndex, memberId).first();
+        if (clash) return new Response("That seat is already taken", { status: 409 });
+        await env.DB.prepare(`
+          INSERT INTO seat_assignments (member_id, invite_code, table_id, seat_index, assigned_at)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(member_id) DO UPDATE SET
+            table_id = excluded.table_id, invite_code = excluded.invite_code,
+            seat_index = excluded.seat_index, assigned_at = excluded.assigned_at
+        `).bind(memberId, inviteCode, tableId, seatIndex, new Date().toISOString()).run();
+      } else {
+        await env.DB.prepare("DELETE FROM seat_assignments WHERE member_id = ?").bind(memberId).run();
+      }
+      return Response.json(await listSeating(env.DB));
     }
 
     case "broadcast": {
@@ -77,6 +120,30 @@ async function saveHousehold(db, p) {
   ).run();
 
   return listAllRecords(db);
+}
+
+async function saveTable(db, p) {
+  const id = String(p.id || "").trim() || genId();
+  const label = String(p.label || "").trim() || "Table";
+  const shape = p.shape === "rect" ? "rect" : "round";
+  const x = Number.isFinite(Number(p.x)) ? Number(p.x) : 100;
+  const y = Number.isFinite(Number(p.y)) ? Number(p.y) : 100;
+  const size = Math.max(30, Number(p.size) || 90);
+  const rotation = Number(p.rotation) || 0;
+  const capacity = Math.max(1, Number(p.capacity) || 8);
+
+  const existing = await db.prepare("SELECT created_at FROM seating_tables WHERE id = ?").bind(id).first();
+  const createdAt = existing?.created_at || new Date().toISOString();
+
+  await db.prepare(`
+    INSERT INTO seating_tables (id, label, shape, x, y, size, rotation, capacity, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      label = excluded.label, shape = excluded.shape, x = excluded.x, y = excluded.y,
+      size = excluded.size, rotation = excluded.rotation, capacity = excluded.capacity
+  `).bind(id, label, shape, x, y, size, rotation, capacity, createdAt).run();
+
+  return listSeating(db);
 }
 
 async function broadcast(env, subject, message) {

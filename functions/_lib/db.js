@@ -30,3 +30,24 @@ export async function listAllRecords(db) {
   for (const row of results) out[row.invite_code] = rowToRecord(row);
   return out;
 }
+
+export function rowToTable(row) {
+  return {
+    id: row.id,
+    label: row.label,
+    shape: row.shape,
+    x: row.x,
+    y: row.y,
+    size: row.size,
+    rotation: row.rotation,
+    capacity: row.capacity
+  };
+}
+
+export async function listSeating(db) {
+  const { results: tableRows } = await db.prepare("SELECT * FROM seating_tables ORDER BY created_at ASC").all();
+  const { results: assignmentRows } = await db.prepare("SELECT member_id, table_id, seat_index FROM seat_assignments").all();
+  const assignments = {};
+  for (const r of assignmentRows) assignments[r.member_id] = { tableId: r.table_id, seatIndex: r.seat_index };
+  return { tables: tableRows.map(rowToTable), assignments };
+}
