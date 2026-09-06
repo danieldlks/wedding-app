@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 /* =========================================================
    CONFIG — edit this block to personalise the invitation
@@ -59,6 +59,11 @@ async function apiSubmitRsvp(payload) {
   if (!res.ok) throw new Error("submit failed");
   return await res.json();
 }
+async function apiGetSeating(code) {
+  const res = await fetch(`/api/seating?code=${encodeURIComponent(code)}`);
+  if (!res.ok) return null;
+  return await res.json();
+}
 async function apiAdmin(password, action, payload) {
   const res = await fetch("/api/admin", {
     method: "POST",
@@ -66,7 +71,7 @@ async function apiAdmin(password, action, payload) {
     body: JSON.stringify({ password, action, payload })
   });
   if (res.status === 401) { const e = new Error("Unauthorized"); e.code = 401; throw e; }
-  if (!res.ok) throw new Error("admin request failed");
+  if (!res.ok) { const e = new Error("admin request failed"); e.status = res.status; throw e; }
   return await res.json();
 }
 
@@ -259,6 +264,42 @@ const CSS = `
 @keyframes spin{to{transform:rotate(360deg);}}
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:12px 20px;border-radius:4px;font-size:13.5px;box-shadow:var(--shadow);z-index:60;}
 @media(prefers-reduced-motion:reduce){.seal{transition:none;}}
+
+/* seat map */
+.seating-layout{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;}
+.seating-sidebar{width:220px;flex-shrink:0;background:#fff;border:1px solid var(--gold-soft);padding:14px;max-height:640px;overflow-y:auto;}
+.seating-main{flex:1;min-width:280px;}
+.seating-sidebar h4{margin:0 0 4px;font-family:var(--display);font-size:16px;font-weight:600;}
+.seating-sidebar .helptext{margin:0 0 12px;}
+.household-group{margin-bottom:14px;}
+.household-group .hname{font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:600;color:var(--ink-soft);margin-bottom:6px;}
+.guest-chip{display:block;width:100%;text-align:left;padding:8px 10px;margin-bottom:6px;border:1px solid var(--gold-soft);background:var(--paper-2);font-size:13px;font-weight:500;cursor:grab;border-radius:3px;}
+.guest-chip:active{cursor:grabbing;}
+.guest-chip.armed{background:var(--sage);color:#fff;border-color:var(--sage);}
+.seating-toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;}
+.seating-canvas-wrap{position:relative;width:100%;border:1px solid var(--gold-soft);background:#fff;}
+.seating-canvas-wrap canvas{display:block;width:100%;height:auto;touch-action:none;}
+.seating-canvas-wrap.dragover{outline:3px solid var(--sage);outline-offset:-3px;}
+.table-editor-panel{background:#fff;border:1px solid var(--gold-soft);padding:16px 18px;margin-top:14px;}
+.table-editor-panel h4{margin:0 0 14px;font-family:var(--display);font-size:18px;}
+.table-editor-row{display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;}
+.table-editor-row .field{flex:1;min-width:120px;margin-bottom:0;}
+.seated-list{list-style:none;margin:0 0 14px;padding:0;}
+.seated-list li{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px dashed var(--gold-soft);font-size:13.5px;}
+.seated-list li:last-child{border-bottom:none;}
+.unseat-btn{background:none;border:none;color:var(--error);font-size:12px;text-decoration:underline;padding:2px;}
+.seat-row{padding:12px 10px !important;}
+.seat-row.empty{color:var(--ink-soft);}
+.seat-row.empty:hover{background:var(--paper-2);cursor:pointer;}
+.seat-row.filled{font-weight:500;}
+.zoom-controls{position:absolute;bottom:10px;right:10px;display:flex;flex-direction:column;gap:6px;}
+.zoom-controls button{width:34px;height:34px;border-radius:50%;border:1px solid var(--gold-soft);background:#fff;font-size:16px;font-weight:600;color:var(--ink);box-shadow:0 4px 10px rgba(0,0,0,.12);}
+.seat-legend{margin-top:14px;}
+.seat-legend-row{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13.5px;}
+.seat-legend-dot{width:12px;height:12px;border-radius:50%;flex-shrink:0;}
+.seat-empty{text-align:center;padding:50px 20px;color:var(--ink-soft);}
+.seat-empty .em-ic{font-family:var(--display);font-size:40px;color:var(--gold-soft);margin-bottom:10px;}
+@media(max-width:720px){.seating-sidebar{width:100%;max-height:220px;}}
 `;
 
 /* =========================================================
@@ -359,6 +400,10 @@ function GuestMenu({ state, actions }) {
           <div className="ic">✦</div>
           <div><h3>Details</h3><p>Dates, times, dress code and other info.</p></div>
         </button>
+        <button className="choice-card" onClick={() => actions.patch({ view: "guest-seating" })}>
+          <div className="ic">◈</div>
+          <div><h3>Find My Seat</h3><p>See your table for the reception.</p></div>
+        </button>
       </div>
       {state.previewMode && (
         <div style={{ textAlign: "center", marginTop: 20 }}>
@@ -429,6 +474,78 @@ function GuestDetails({ state, actions }) {
       {rec.personalNote && <p className="note-quote" style={{ color: "var(--ink)", margin: "0 0 20px" }}>&ldquo;{rec.personalNote}&rdquo;</p>}
       <p className="lede">Kindly reply by {CONFIG.rsvpDeadline}.</p>
       <div style={{ textAlign: "center", marginTop: 6 }}>
+        <button className="btn-link" onClick={() => actions.patch({ view: "guest-menu" })}>&larr; Back</button>
+      </div>
+    </div></div></div>
+  );
+}
+
+function GuestSeating({ state, actions }) {
+  const [seating, setSeating] = useState(null);
+  const [transform, setTransform] = useState({ panX: 0, panY: 0, zoom: 1 });
+  const [fitted, setFitted] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    function fetchSeating() {
+      apiGetSeating(state.inviteCode).then(data => { if (!cancelled) setSeating(data || { tables: [], mySeats: [], objects: [] }); });
+    }
+    fetchSeating();
+    // Light polling so a last-minute reassignment on the day shows up even if
+    // this page has been open since the morning — see the admin tab's polling too.
+    const id = setInterval(fetchSeating, 20000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [state.inviteCode]);
+
+  useEffect(() => {
+    if (seating && seating.tables.length > 0 && !fitted) {
+      setTransform(fitSeatTransform(seating.tables));
+      setFitted(true);
+    }
+  }, [seating, fitted]);
+
+  // Colors keyed by sorted table id (not array order) so they stay stable across polls.
+  const highlightColors = {};
+  const highlightSeatIndices = {};
+  const sortedTableIds = [...new Set((seating?.mySeats || []).map(s => s.tableId))].sort();
+  sortedTableIds.forEach((tid, i) => { highlightColors[tid] = colorForIndex(i); });
+  (seating?.mySeats || []).forEach(s => {
+    if (!highlightSeatIndices[s.tableId]) highlightSeatIndices[s.tableId] = new Set();
+    highlightSeatIndices[s.tableId].add(s.seatIndex);
+  });
+
+  return (
+    <div className="stage"><div className="card"><div className="card-inner">
+      <h2>Find Your Seat</h2>
+      <p className="lede">Your reception table for the day.</p>
+      {seating === null && <p className="helptext" style={{ textAlign: "center" }}>Loading…</p>}
+      {seating && seating.mySeats.length === 0 && (
+        <div className="seat-empty"><div className="em-ic">✦</div>Seating hasn't been finalised yet — check back closer to the big day!</div>
+      )}
+      {seating && seating.mySeats.length > 0 && (
+        <>
+          <div className="seating-canvas-wrap">
+            <SeatingCanvas tables={seating.tables} objects={seating.objects} highlightColors={highlightColors} highlightSeatIndices={highlightSeatIndices} viewTransform={transform} onViewTransformChange={setTransform} />
+            <div className="zoom-controls">
+              <button onClick={() => setTransform(t => zoomSeatTransform(t, 1.25))} aria-label="Zoom in">+</button>
+              <button onClick={() => setTransform(t => zoomSeatTransform(t, 1 / 1.25))} aria-label="Zoom out">−</button>
+              <button onClick={() => setTransform(fitSeatTransform(seating.tables))} aria-label="Recenter">⦿</button>
+            </div>
+          </div>
+          <div className="seat-legend">
+            {seating.mySeats.map(s => {
+              const t = seating.tables.find(tt => tt.id === s.tableId);
+              return (
+                <div className="seat-legend-row" key={s.memberId}>
+                  <span className="seat-legend-dot" style={{ background: highlightColors[s.tableId] }} />
+                  <span>{s.memberName} — <strong>{t ? t.label : "Table"}</strong>, seat {s.seatIndex + 1}</span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+      <div style={{ textAlign: "center", marginTop: 16 }}>
         <button className="btn-link" onClick={() => actions.patch({ view: "guest-menu" })}>&larr; Back</button>
       </div>
     </div></div></div>
@@ -830,6 +947,650 @@ function AdminResponses({ state, actions }) {
   );
 }
 
+/* =========================================================
+   SEAT MAP
+   Canvas-drawn reception floor plan. Logical coordinate space
+   is fixed at LW x LH regardless of on-screen size — the canvas
+   is rendered at that resolution (scaled for devicePixelRatio)
+   and stretched to fit its container via CSS, so all hit-testing
+   and drag math works in the same fixed units as the drawing.
+   ========================================================= */
+const SEAT_LW = 1000;
+const SEAT_LH = 700;
+const SEAT_PALETTE = ["#A9814C", "#6E7F63", "#C98F86", "#57654E", "#B6503F", "#8A6636"];
+function colorForIndex(i) { return SEAT_PALETTE[i % SEAT_PALETTE.length]; }
+function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
+const SEAT_GRID = 50; // floor-plan units — also the spacing of the faint background dot grid, so the two visibly agree
+function snapToGrid(v) { return Math.round(v / SEAT_GRID) * SEAT_GRID; }
+function snapClamp(v, min, max) { return snapToGrid(clamp(v, min, max)); }
+function hexWithAlpha(hex, alpha) {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.substring(0, 2), 16), g = parseInt(h.substring(2, 4), 16), b = parseInt(h.substring(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+function roundRectPath(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+function seatToLogical(e, canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const evt = e.touches && e.touches[0] ? e.touches[0] : e;
+  return {
+    x: (evt.clientX - rect.left) * (SEAT_LW / rect.width),
+    y: (evt.clientY - rect.top) * (SEAT_LH / rect.height)
+  };
+}
+// Every table shape reduces to a width/height box plus whether it's
+// round-cornered (ellipse) or sharp (rect) — hit-testing, seat layout,
+// drawing, and the occupancy-badge offset all read off this one function.
+function tableDims(t) {
+  switch (t.shape) {
+    case "oval": return { w: t.size, h: t.size2 || t.size * 1.4, round: true };
+    case "rect": return { w: t.size, h: t.size * 0.55, round: false };
+    case "banquet": return { w: t.size2 || t.size * 2.5, h: t.size, round: false };
+    default: return { w: t.size, h: t.size, round: true }; // 'round'
+  }
+}
+function hitTestTable(tables, x, y) {
+  for (let i = tables.length - 1; i >= 0; i--) {
+    const t = tables[i];
+    const dx = x - t.x, dy = y - t.y;
+    const { w, h, round } = tableDims(t);
+    if (round) {
+      if ((dx * dx) / ((w / 2) * (w / 2)) + (dy * dy) / ((h / 2) * (h / 2)) <= 1) return t;
+    } else if (Math.abs(dx) <= w / 2 && Math.abs(dy) <= h / 2) return t;
+  }
+  return null;
+}
+// Floor objects (bar, doors, walls...): geometry shared by drawing and hit-testing.
+function triangleVertices(o) {
+  const r = o.size / 2;
+  return [-90, 30, 150].map(deg => {
+    const rad = (deg * Math.PI) / 180;
+    return [o.x + Math.cos(rad) * r, o.y + Math.sin(rad) * r];
+  });
+}
+function triSign(p1, p2, p3) { return (p1[0] - p3[0]) * (p2[1] - p3[1]) - (p2[0] - p3[0]) * (p1[1] - p3[1]); }
+function pointInTriangle(px, py, pts) {
+  const p = [px, py];
+  const d1 = triSign(p, pts[0], pts[1]), d2 = triSign(p, pts[1], pts[2]), d3 = triSign(p, pts[2], pts[0]);
+  const hasNeg = d1 < 0 || d2 < 0 || d3 < 0, hasPos = d1 > 0 || d2 > 0 || d3 > 0;
+  return !(hasNeg && hasPos);
+}
+function pointToSegmentDistance(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const lenSq = dx * dx + dy * dy;
+  let t = lenSq ? ((px - x1) * dx + (py - y1) * dy) / lenSq : 0;
+  t = clamp(t, 0, 1);
+  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+// Returns null (no hit), "body" (move the whole shape), or for lines "p1"/"p2"
+// (drag just that endpoint) so a wall/barrier can be stretched, not just moved.
+function hitTestObject(o, x, y) {
+  if (o.type === "line") {
+    if (Math.hypot(x - o.x, y - o.y) <= 10) return "p1";
+    if (Math.hypot(x - o.x2, y - o.y2) <= 10) return "p2";
+    return pointToSegmentDistance(x, y, o.x, o.y, o.x2, o.y2) <= 8 ? "body" : null;
+  }
+  const dx = x - o.x, dy = y - o.y;
+  if (o.type === "circle") return dx * dx + dy * dy <= (o.size / 2) * (o.size / 2) ? "body" : null;
+  if (o.type === "triangle") return pointInTriangle(x, y, triangleVertices(o)) ? "body" : null;
+  return Math.abs(dx) <= o.size / 2 && Math.abs(dy) <= o.size / 2 ? "body" : null; // rect
+}
+function hitTestObjects(objects, x, y) {
+  for (let i = objects.length - 1; i >= 0; i--) {
+    const handle = hitTestObject(objects[i], x, y);
+    if (handle) return { object: objects[i], handle };
+  }
+  return null;
+}
+// Seat layout, shared by drawing and by the admin seat-picker panel so seat
+// N always means the same physical chair everywhere it's referenced.
+function getSeatPositions(t) {
+  const n = Math.max(1, t.capacity | 0);
+  const positions = [];
+  const { w, h, round } = tableDims(t);
+  if (round) {
+    const rx = w / 2, ry = h / 2;
+    for (let i = 0; i < n; i++) {
+      const ang = (i / n) * Math.PI * 2 - Math.PI / 2;
+      positions.push({ x: Math.cos(ang) * (rx + 12), y: Math.sin(ang) * (ry + 12) });
+    }
+  } else {
+    const perSide = Math.ceil(n / 2);
+    for (let i = 0; i < n; i++) {
+      const onTop = i < perSide;
+      const idx = onTop ? i : i - perSide;
+      const countInRow = onTop ? perSide : n - perSide;
+      positions.push({ x: -w / 2 + (w / (countInRow + 1)) * (idx + 1), y: (onTop ? -1 : 1) * (h / 2 + 12) });
+    }
+  }
+  return positions;
+}
+function fitSeatTransform(tables) {
+  if (!tables.length) return { panX: 0, panY: 0, zoom: 1 };
+  const pad = 70;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  tables.forEach(t => {
+    const half = t.size / 2;
+    minX = Math.min(minX, t.x - half); maxX = Math.max(maxX, t.x + half);
+    minY = Math.min(minY, t.y - half); maxY = Math.max(maxY, t.y + half);
+  });
+  minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+  const boxW = Math.max(1, maxX - minX), boxH = Math.max(1, maxY - minY);
+  const zoom = clamp(Math.min(SEAT_LW / boxW, SEAT_LH / boxH), 0.6, 2.5);
+  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+  return { zoom, panX: SEAT_LW / 2 - cx * zoom, panY: SEAT_LH / 2 - cy * zoom };
+}
+function zoomSeatTransform(t, factor) {
+  const zoom = clamp((t.zoom || 1) * factor, 0.5, 3);
+  const cx = (SEAT_LW / 2 - (t.panX || 0)) / (t.zoom || 1);
+  const cy = (SEAT_LH / 2 - (t.panY || 0)) / (t.zoom || 1);
+  return { zoom, panX: SEAT_LW / 2 - cx * zoom, panY: SEAT_LH / 2 - cy * zoom };
+}
+
+// Draws one frame into an already-transformed ctx (translated/scaled to the
+// current pan/zoom) in floor-plan units. Shared by the live canvas and the
+// PNG export so the two can never visually drift apart.
+function drawFloorPlan(ctx, opts) {
+  const {
+    tables, objects, editable, selectedTableId, selectedObjectId,
+    occupancy, occupiedSeats, highlightColors, highlightSeatIndices, zoom = 1, showGrid = true
+  } = opts;
+
+  if (showGrid) {
+    const dotGrid = new Path2D();
+    for (let gx = SEAT_GRID; gx < SEAT_LW; gx += SEAT_GRID) {
+      for (let gy = SEAT_GRID; gy < SEAT_LH; gy += SEAT_GRID) {
+        dotGrid.moveTo(gx + 1.6, gy);
+        dotGrid.arc(gx, gy, 1.6, 0, Math.PI * 2);
+      }
+    }
+    ctx.fillStyle = "rgba(169,129,76,.18)";
+    ctx.fill(dotGrid);
+  }
+
+  ctx.strokeStyle = "rgba(169,129,76,.4)";
+  ctx.lineWidth = 2 / zoom;
+  ctx.strokeRect(10, 10, SEAT_LW - 20, SEAT_LH - 20);
+
+  // Floor objects draw first (background layer) so tables visually sit on top of them.
+  objects.forEach(o => {
+    const isSelected = editable && selectedObjectId === o.id;
+    ctx.save();
+    if (o.type === "line") {
+      ctx.strokeStyle = isSelected ? "#6E7F63" : "#3A3F37";
+      ctx.lineWidth = isSelected ? 7 : 5;
+      ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(o.x2, o.y2); ctx.stroke();
+      if (isSelected) {
+        [[o.x, o.y], [o.x2, o.y2]].forEach(([px, py]) => {
+          ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI * 2);
+          ctx.fillStyle = "#6E7F63"; ctx.fill();
+        });
+      }
+      if (o.label) {
+        ctx.fillStyle = "#202B22";
+        ctx.font = "600 12px 'Work Sans', sans-serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+        ctx.fillText(o.label, (o.x + o.x2) / 2, (o.y + o.y2) / 2 - 8);
+      }
+    } else {
+      ctx.translate(o.x, o.y);
+      ctx.fillStyle = "rgba(216,200,165,.4)";
+      ctx.strokeStyle = isSelected ? "#6E7F63" : "rgba(74,81,72,.5)";
+      ctx.lineWidth = isSelected ? 3 : 1.5;
+      if (o.type === "circle") {
+        ctx.beginPath(); ctx.arc(0, 0, o.size / 2, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      } else if (o.type === "triangle") {
+        const pts = triangleVertices(o);
+        ctx.beginPath();
+        pts.forEach(([px, py], i) => (i === 0 ? ctx.moveTo(px - o.x, py - o.y) : ctx.lineTo(px - o.x, py - o.y)));
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+      } else {
+        roundRectPath(ctx, -o.size / 2, -o.size / 2, o.size, o.size, 4); ctx.fill(); ctx.stroke();
+      }
+      if (o.label) {
+        ctx.fillStyle = "#202B22";
+        ctx.font = "600 12px 'Work Sans', sans-serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(o.label, 0, 0);
+      }
+    }
+    ctx.restore();
+  });
+
+  tables.forEach(t => {
+    const isSelected = editable && selectedTableId === t.id;
+    const hlColor = !editable && highlightColors ? highlightColors[t.id] : null;
+    ctx.save();
+    ctx.translate(t.x, t.y);
+    ctx.lineWidth = hlColor ? 4 : (isSelected ? 3 : 1.5);
+    ctx.strokeStyle = hlColor || (isSelected ? "#6E7F63" : "#D8C8A5");
+    ctx.fillStyle = hlColor ? hexWithAlpha(hlColor, 0.2) : "#ffffff";
+    if (hlColor) { ctx.shadowColor = hlColor; ctx.shadowBlur = 18; }
+
+    const dims = tableDims(t);
+    if (dims.round) {
+      ctx.beginPath(); ctx.ellipse(0, 0, dims.w / 2, dims.h / 2, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    } else {
+      roundRectPath(ctx, -dims.w / 2, -dims.h / 2, dims.w, dims.h, 6); ctx.fill(); ctx.stroke();
+    }
+    ctx.shadowBlur = 0;
+
+    const occSet = occupiedSeats ? occupiedSeats[t.id] : null;
+    const hlSet = highlightSeatIndices ? highlightSeatIndices[t.id] : null;
+    getSeatPositions(t).forEach((pos, i) => {
+      const isFilled = occSet && occSet.has(i);
+      const isHlSeat = hlSet && hlSet.has(i);
+      const seatR = isHlSeat ? 8 : 4;
+      ctx.beginPath(); ctx.arc(pos.x, pos.y, seatR, 0, Math.PI * 2);
+      if (isHlSeat) {
+        ctx.fillStyle = hlColor; ctx.shadowColor = hlColor; ctx.shadowBlur = 10; ctx.fill(); ctx.shadowBlur = 0;
+      } else if (isFilled) {
+        ctx.fillStyle = "rgba(74,81,72,.6)"; ctx.fill();
+      } else {
+        ctx.fillStyle = "#FBF7EF"; ctx.fill();
+        ctx.lineWidth = 1.2; ctx.strokeStyle = "rgba(74,81,72,.35)"; ctx.stroke();
+      }
+    });
+
+    ctx.fillStyle = "#202B22";
+    ctx.font = "600 15px 'Work Sans', sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(t.label, 0, 0);
+
+    if (occupancy) {
+      const count = occupancy[t.id] || 0;
+      ctx.font = "600 11px 'Work Sans', sans-serif";
+      ctx.fillStyle = count > t.capacity ? "#B6503F" : "#6E7F63";
+      ctx.fillText(`${count}/${t.capacity}`, 0, dims.h / 2 + 16);
+    }
+    ctx.restore();
+  });
+}
+
+// Renders the current floor plan to a labeled PNG and triggers a download —
+// something the couple can hand to a venue or caterer, so it deliberately
+// shows table capacity/occupancy (useful for a headcount) but not the grid
+// (a snap aid, not something a venue needs to see) or any selection state.
+function exportFloorPlanPNG(tables, objects, occupancy, title) {
+  const scale = 1.6, margin = 40, titleH = 70;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(SEAT_LW * scale + margin * 2);
+  canvas.height = Math.round(SEAT_LH * scale + margin * 2 + titleH);
+  const ctx = canvas.getContext("2d");
+
+  ctx.fillStyle = "#FBF7EF";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#202B22";
+  ctx.font = "600 30px Georgia, 'Cormorant Garamond', serif";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(title, canvas.width / 2, titleH / 2 + 10);
+
+  ctx.save();
+  ctx.translate(margin, titleH + margin / 2);
+  ctx.scale(scale, scale);
+  drawFloorPlan(ctx, { tables, objects, occupancy, zoom: scale, showGrid: false });
+  ctx.restore();
+
+  const a = document.createElement("a");
+  a.href = canvas.toDataURL("image/png");
+  a.download = "reception-floor-plan.png";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+function SeatingCanvas({
+  tables, objects, editable, selectedTableId, onSelectTable, onDragTableEnd, occupancy,
+  occupiedSeats, highlightColors, highlightSeatIndices,
+  selectedObjectId, onSelectObject, onObjectDragEnd,
+  viewTransform, onViewTransformChange
+}) {
+  const canvasRef = useRef(null);
+  const dragStartRef = useRef(null);
+  const panStartRef = useRef(null);
+  const [liveDrag, setLiveDrag] = useState(null); // { kind: "table"|"object", id, x, y, x2, y2 }
+  const vtRef = useRef(viewTransform);
+  const cbRef = useRef(onViewTransformChange);
+  vtRef.current = viewTransform;
+  cbRef.current = onViewTransformChange;
+
+  const objs = objects || [];
+  const effectiveTables = liveDrag?.kind === "table" ? tables.map(t => (t.id === liveDrag.id ? { ...t, x: liveDrag.x, y: liveDrag.y } : t)) : tables;
+  const effectiveObjects = liveDrag?.kind === "object"
+    ? objs.map(o => (o.id === liveDrag.id ? { ...o, ...(liveDrag.x != null && { x: liveDrag.x, y: liveDrag.y }), ...(liveDrag.x2 != null && { x2: liveDrag.x2, y2: liveDrag.y2 }) } : o))
+    : objs;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || editable) return;
+    const onWheel = e => {
+      e.preventDefault();
+      const pt = seatToLogical(e, canvas);
+      const cur = vtRef.current || { panX: 0, panY: 0, zoom: 1 };
+      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+      const newZoom = clamp((cur.zoom || 1) * factor, 0.5, 3);
+      const worldX = (pt.x - (cur.panX || 0)) / (cur.zoom || 1);
+      const worldY = (pt.y - (cur.panY || 0)) / (cur.zoom || 1);
+      cbRef.current({ zoom: newZoom, panX: pt.x - worldX * newZoom, panY: pt.y - worldY * newZoom });
+    };
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", onWheel);
+  }, [editable]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    const targetW = Math.round(SEAT_LW * dpr), targetH = Math.round(SEAT_LH * dpr);
+    if (canvas.width !== targetW || canvas.height !== targetH) { canvas.width = targetW; canvas.height = targetH; }
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, SEAT_LW, SEAT_LH);
+    // Soft vignette instead of a flat fill so the room reads as a floor, not a canvas.
+    const bgGrad = ctx.createRadialGradient(SEAT_LW / 2, SEAT_LH / 2, 40, SEAT_LW / 2, SEAT_LH / 2, Math.max(SEAT_LW, SEAT_LH) / 1.3);
+    bgGrad.addColorStop(0, "#FDFAF3");
+    bgGrad.addColorStop(1, "#F3EDDF");
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, SEAT_LW, SEAT_LH);
+
+    ctx.save();
+    const { panX = 0, panY = 0, zoom = 1 } = viewTransform || {};
+    ctx.translate(panX, panY);
+    ctx.scale(zoom, zoom);
+    drawFloorPlan(ctx, {
+      tables: effectiveTables, objects: effectiveObjects, editable, selectedTableId, selectedObjectId,
+      occupancy: editable ? occupancy : null, occupiedSeats, highlightColors, highlightSeatIndices, zoom
+    });
+    ctx.restore();
+  }, [effectiveTables, effectiveObjects, editable, selectedTableId, selectedObjectId, occupancy, occupiedSeats, highlightColors, highlightSeatIndices, viewTransform]);
+
+  function handlePointerDown(e) {
+    const canvas = canvasRef.current;
+    const pt = seatToLogical(e, canvas);
+    if (editable) {
+      const tableHit = hitTestTable(tables, pt.x, pt.y);
+      if (tableHit) {
+        onSelectTable(tableHit.id);
+        onSelectObject(null);
+        dragStartRef.current = { kind: "table", id: tableHit.id, startX: tableHit.x, startY: tableHit.y, startPtX: pt.x, startPtY: pt.y };
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+      const objHit = hitTestObjects(objs, pt.x, pt.y);
+      if (objHit) {
+        onSelectObject(objHit.object.id);
+        onSelectTable(null);
+        dragStartRef.current = {
+          kind: "object", id: objHit.object.id, handle: objHit.handle,
+          startX: objHit.object.x, startY: objHit.object.y, startX2: objHit.object.x2, startY2: objHit.object.y2,
+          startPtX: pt.x, startPtY: pt.y
+        };
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+      onSelectTable(null);
+      onSelectObject(null);
+    } else {
+      panStartRef.current = { startPanX: (viewTransform?.panX || 0), startPanY: (viewTransform?.panY || 0), startPtX: pt.x, startPtY: pt.y };
+      canvas.setPointerCapture(e.pointerId);
+    }
+  }
+  function handlePointerMove(e) {
+    const canvas = canvasRef.current;
+    const pt = seatToLogical(e, canvas);
+    const d = dragStartRef.current;
+    if (editable && d) {
+      const dx = pt.x - d.startPtX, dy = pt.y - d.startPtY;
+      if (d.kind === "table") {
+        setLiveDrag({ kind: "table", id: d.id, x: snapClamp(d.startX + dx, 0, SEAT_LW), y: snapClamp(d.startY + dy, 0, SEAT_LH) });
+      } else if (d.handle === "p1") {
+        setLiveDrag({ kind: "object", id: d.id, x: snapClamp(d.startX + dx, 0, SEAT_LW), y: snapClamp(d.startY + dy, 0, SEAT_LH) });
+      } else if (d.handle === "p2") {
+        setLiveDrag({ kind: "object", id: d.id, x2: snapClamp(d.startX2 + dx, 0, SEAT_LW), y2: snapClamp(d.startY2 + dy, 0, SEAT_LH) });
+      } else if (d.startX2 != null) {
+        // dragging a line's body translates both endpoints together
+        setLiveDrag({
+          kind: "object", id: d.id,
+          x: snapClamp(d.startX + dx, 0, SEAT_LW), y: snapClamp(d.startY + dy, 0, SEAT_LH),
+          x2: snapClamp(d.startX2 + dx, 0, SEAT_LW), y2: snapClamp(d.startY2 + dy, 0, SEAT_LH)
+        });
+      } else {
+        setLiveDrag({ kind: "object", id: d.id, x: snapClamp(d.startX + dx, 0, SEAT_LW), y: snapClamp(d.startY + dy, 0, SEAT_LH) });
+      }
+    } else if (!editable && panStartRef.current) {
+      const p = panStartRef.current;
+      onViewTransformChange({ ...(viewTransform || { zoom: 1 }), panX: p.startPanX + (pt.x - p.startPtX), panY: p.startPanY + (pt.y - p.startPtY) });
+    }
+  }
+  function handlePointerUp() {
+    const d = dragStartRef.current;
+    if (editable && d && liveDrag) {
+      if (d.kind === "table") onDragTableEnd(liveDrag.id, liveDrag.x, liveDrag.y);
+      else {
+        const changes = {};
+        if (liveDrag.x != null) { changes.x = liveDrag.x; changes.y = liveDrag.y; }
+        if (liveDrag.x2 != null) { changes.x2 = liveDrag.x2; changes.y2 = liveDrag.y2; }
+        onObjectDragEnd(liveDrag.id, changes);
+      }
+    }
+    dragStartRef.current = null;
+    panStartRef.current = null;
+    setLiveDrag(null);
+  }
+  return (
+    <canvas
+      ref={canvasRef}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerLeave={handlePointerUp}
+    />
+  );
+}
+
+function findGuestByMemberId(guestList, memberId) {
+  for (const [code, rec] of Object.entries(guestList)) {
+    const m = rec.members.find(mm => mm.id === memberId);
+    if (m) return { memberId, name: m.name, inviteCode: code };
+  }
+  return { memberId, name: "Unknown guest", inviteCode: null };
+}
+
+function AdminSeating({ state, actions }) {
+  useEffect(() => { if (!state.seatingLoaded && !state.seatingLoading) actions.loadSeating(); }, [state.seatingLoaded, state.seatingLoading]);
+
+  // Background refresh so a second admin's changes (on another device) show
+  // up here within a few seconds, without needing full real-time push infra.
+  useEffect(() => {
+    if (!state.seatingLoaded) return;
+    const id = setInterval(() => actions.loadSeating(true), 5000);
+    return () => clearInterval(id);
+  }, [state.seatingLoaded]);
+
+  if (state.seatingLoading && !state.seatingLoaded) {
+    return <div className="empty-state"><div className="em-ic">✦</div>Loading seating chart…</div>;
+  }
+
+  const households = Object.entries(state.guestList).map(([code, rec]) => ({
+    code, name: rec.householdName,
+    unseated: rec.members.filter(m => !state.seatingAssignments[m.id])
+  })).filter(h => h.unseated.length > 0);
+
+  const occupancy = {};
+  const occupiedSeats = {};
+  Object.values(state.seatingAssignments).forEach(a => {
+    occupancy[a.tableId] = (occupancy[a.tableId] || 0) + 1;
+    if (!occupiedSeats[a.tableId]) occupiedSeats[a.tableId] = new Set();
+    occupiedSeats[a.tableId].add(a.seatIndex);
+  });
+
+  const selectedTable = state.seatingTables.find(t => t.id === state.selectedTableId);
+  const selectedObject = state.seatingObjects.find(o => o.id === state.selectedObjectId);
+  const seats = selectedTable
+    ? Array.from({ length: selectedTable.capacity }, (_, i) => {
+        const entry = Object.entries(state.seatingAssignments).find(([, a]) => a.tableId === selectedTable.id && a.seatIndex === i);
+        return { index: i, guest: entry ? findGuestByMemberId(state.guestList, entry[0]) : null };
+      })
+    : [];
+
+  function handleSeatDrop(e, seatIndex) {
+    e.preventDefault();
+    const data = e.dataTransfer.getData("text/plain");
+    if (!data) return;
+    const [memberId, inviteCode] = data.split("|");
+    actions.assignSeat(memberId, inviteCode, selectedTable.id, seatIndex);
+  }
+
+  const selectStyle = { width: "100%", padding: "12px 13px", border: "1px solid var(--gold-soft)", background: "#fff", fontSize: 15.5, borderRadius: 2 };
+
+  return (
+    <>
+      <p className="lede" style={{ textAlign: "left", margin: "0 0 16px" }}>
+        Tap a table to see its seats. Drag a guest onto an empty seat — or tap a guest, then tap the seat.
+        Drag tables and shapes to arrange the room; drag a wall's endpoints to angle or stretch it.
+      </p>
+      <div className="seating-toolbar">
+        <button className="btn btn-primary" style={{ flex: "none" }} onClick={actions.addTable} disabled={state.loading}>+ Add table</button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="btn btn-ghost" style={{ flex: "none" }} onClick={() => actions.addObject("circle")} disabled={state.loading}>+ Circle</button>
+          <button className="btn btn-ghost" style={{ flex: "none" }} onClick={() => actions.addObject("rect")} disabled={state.loading}>+ Square</button>
+          <button className="btn btn-ghost" style={{ flex: "none" }} onClick={() => actions.addObject("triangle")} disabled={state.loading}>+ Triangle</button>
+          <button className="btn btn-ghost" style={{ flex: "none" }} onClick={() => actions.addObject("line")} disabled={state.loading}>+ Wall / barrier</button>
+          <button className="btn btn-ghost" style={{ flex: "none" }} onClick={actions.downloadFloorPlan}>⬇ Download floor plan</button>
+        </div>
+      </div>
+      <div className="seating-layout">
+        <div className="seating-sidebar">
+          <h4>Unseated guests</h4>
+          {households.length === 0 && <p className="helptext">Everyone's seated.</p>}
+          {households.map(h => (
+            <div className="household-group" key={h.code}>
+              <div className="hname">{h.name}</div>
+              {h.unseated.map(m => (
+                <button key={m.id} className={`guest-chip ${state.armedGuest?.memberId === m.id ? "armed" : ""}`}
+                  draggable
+                  onDragStart={e => e.dataTransfer.setData("text/plain", `${m.id}|${h.code}`)}
+                  onClick={() => actions.armGuest(m.id, h.code)}>
+                  {m.name}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+        <div className="seating-main">
+          <div className="seating-canvas-wrap">
+            <SeatingCanvas
+              tables={state.seatingTables}
+              objects={state.seatingObjects}
+              editable
+              selectedTableId={state.selectedTableId}
+              onSelectTable={actions.selectTable}
+              onDragTableEnd={actions.moveTable}
+              occupancy={occupancy}
+              occupiedSeats={occupiedSeats}
+              selectedObjectId={state.selectedObjectId}
+              onSelectObject={actions.selectObject}
+              onObjectDragEnd={actions.moveObject}
+            />
+          </div>
+          {selectedTable && state.tableDraft && (
+            <div className="table-editor-panel">
+              <h4>Edit table</h4>
+              <div className="table-editor-row">
+                <div className="field"><label>Label</label>
+                  <input type="text" value={state.tableDraft.label} onChange={e => actions.updateTableDraftField("label", e.target.value)} />
+                </div>
+                <div className="field"><label>Shape</label>
+                  <select style={selectStyle} value={state.tableDraft.shape} onChange={e => actions.setTableShape(e.target.value)}>
+                    <option value="round">Round</option>
+                    <option value="rect">Rectangular</option>
+                    <option value="oval">Oval</option>
+                    <option value="banquet">Banquet (long)</option>
+                  </select>
+                </div>
+                <div className="field"><label>{state.tableDraft.shape === "oval" || state.tableDraft.shape === "banquet" ? "Width" : "Size"}</label>
+                  <select style={selectStyle} value={state.tableDraft.size} onChange={e => actions.updateTableDraftField("size", Number(e.target.value))}>
+                    <option value={70}>Small</option>
+                    <option value={90}>Medium</option>
+                    <option value={120}>Large</option>
+                  </select>
+                </div>
+                {(state.tableDraft.shape === "oval" || state.tableDraft.shape === "banquet") && (
+                  <div className="field"><label>Length</label>
+                    <select style={selectStyle} value={state.tableDraft.size2 || 180} onChange={e => actions.updateTableDraftField("size2", Number(e.target.value))}>
+                      <option value={140}>Short</option>
+                      <option value={180}>Medium</option>
+                      <option value={240}>Long</option>
+                      <option value={300}>Extra long</option>
+                    </select>
+                  </div>
+                )}
+                <div className="field"><label>Capacity</label>
+                  <input type="number" min="1" value={state.tableDraft.capacity} onChange={e => actions.updateTableDraftField("capacity", e.target.value)} />
+                </div>
+              </div>
+              <div className="btn-row" style={{ marginTop: 0, marginBottom: 18 }}>
+                <button className="btn btn-ghost" onClick={actions.deselectTable}>Close</button>
+                <button className="btn btn-ghost" style={{ color: "var(--error)", borderColor: "var(--error)" }} onClick={actions.deleteTable}>Delete table</button>
+                <button className="btn btn-primary" onClick={actions.saveTableDraft} disabled={state.loading}>Save details</button>
+              </div>
+
+              <h4>Seats</h4>
+              <ul className="seated-list">
+                {seats.map(s => (
+                  <li key={s.index}
+                    className={`seat-row ${s.guest ? "filled" : "empty"}`}
+                    onDragOver={!s.guest ? (e => e.preventDefault()) : undefined}
+                    onDrop={!s.guest ? (e => handleSeatDrop(e, s.index)) : undefined}
+                    onClick={!s.guest && state.armedGuest ? () => actions.assignSeat(state.armedGuest.memberId, state.armedGuest.inviteCode, selectedTable.id, s.index) : undefined}>
+                    <span>Seat {s.index + 1}</span>
+                    {s.guest
+                      ? <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          {s.guest.name}
+                          <button className="unseat-btn" onClick={() => actions.assignSeat(s.guest.memberId, s.guest.inviteCode, null, null)}>Unseat</button>
+                        </span>
+                      : <span className="helptext" style={{ margin: 0 }}>Empty — drag or tap a guest</span>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {selectedObject && state.objectDraft && (
+            <div className="table-editor-panel">
+              <h4>Edit {selectedObject.type === "line" ? "wall / barrier" : selectedObject.type}</h4>
+              <div className="table-editor-row">
+                <div className="field" style={{ flex: 2 }}><label>Label</label>
+                  <input type="text" placeholder="e.g. Bar, Entrance, Dance floor" value={state.objectDraft.label}
+                    onChange={e => actions.updateObjectDraftField("label", e.target.value)} />
+                </div>
+                {selectedObject.type !== "line" && (
+                  <div className="field"><label>Size</label>
+                    <input type="number" min="10" value={state.objectDraft.size}
+                      onChange={e => actions.updateObjectDraftField("size", Number(e.target.value))} />
+                  </div>
+                )}
+              </div>
+              <div className="btn-row" style={{ marginTop: 0 }}>
+                <button className="btn btn-ghost" onClick={actions.deselectObject}>Close</button>
+                <button className="btn btn-ghost" style={{ color: "var(--error)", borderColor: "var(--error)" }} onClick={actions.deleteObject}>Delete</button>
+                <button className="btn btn-primary" onClick={actions.saveObjectDraft} disabled={state.loading}>Save</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
 function Admin({ state, actions }) {
   return (
     <div className="admin-shell">
@@ -845,8 +1606,11 @@ function Admin({ state, actions }) {
         <div className="tabs">
           <button className={`tab-btn ${state.adminTab === "guestlist" ? "active" : ""}`} onClick={() => actions.patch({ adminTab: "guestlist" })}>Guest List</button>
           <button className={`tab-btn ${state.adminTab === "responses" ? "active" : ""}`} onClick={() => actions.patch({ adminTab: "responses" })}>Responses &amp; Stats</button>
+          <button className={`tab-btn ${state.adminTab === "seating" ? "active" : ""}`} onClick={() => actions.patch({ adminTab: "seating" })}>Seating</button>
         </div>
-        {state.adminTab === "guestlist" ? <AdminGuestList state={state} actions={actions} /> : <AdminResponses state={state} actions={actions} />}
+        {state.adminTab === "guestlist" && <AdminGuestList state={state} actions={actions} />}
+        {state.adminTab === "responses" && <AdminResponses state={state} actions={actions} />}
+        {state.adminTab === "seating" && <AdminSeating state={state} actions={actions} />}
       </div>
     </div>
   );
@@ -858,7 +1622,7 @@ function Admin({ state, actions }) {
 export default function App() {
   const [state, setState] = useState({
     ready: false,
-    view: "no-invite", // no-invite | invalid-invite | guest-landing | guest-menu | guest-location | guest-details | guest-form | guest-confirm | admin-login | admin
+    view: "no-invite", // no-invite | invalid-invite | guest-landing | guest-menu | guest-location | guest-details | guest-seating | guest-form | guest-confirm | admin-login | admin
     inviteCode: null,
     currentRecord: null,
     previewMode: false,
@@ -883,10 +1647,37 @@ export default function App() {
     broadcastSubject: "",
     broadcastMessage: "",
     broadcastSending: false,
-    broadcastResult: null
+    broadcastResult: null,
+    // admin: seating
+    seatingTables: [],
+    seatingAssignments: {},
+    seatingObjects: [],
+    seatingLoaded: false,
+    seatingLoading: false,
+    selectedTableId: null,
+    tableDraft: null,
+    selectedObjectId: null,
+    objectDraft: null,
+    armedGuest: null
   });
 
   const patch = p => setState(s => ({ ...s, ...p }));
+
+  // Seating requests (background polling + every add/move/delete/assign) can
+  // resolve out of order — e.g. a 5s poll fired before a manual "add shape"
+  // click can still land after it. Without a guard, that stale response
+  // overwrites the newer state and the just-added shape silently vanishes,
+  // which looks exactly like "adding a shape doesn't work." This ref tracks
+  // the most recently *issued* seating request; a response only gets applied
+  // if it's still the newest one by the time it comes back.
+  const seatingSeqRef = useRef(0);
+  async function seatingMutate(action, payload) {
+    const mySeq = ++seatingSeqRef.current;
+    const data = await apiAdmin(state.adminPassword, action, payload);
+    if (seatingSeqRef.current !== mySeq) return null; // superseded by a newer request; drop it
+    patch({ seatingTables: data.tables, seatingAssignments: data.assignments, seatingObjects: data.objects });
+    return data;
+  }
 
   useEffect(() => { init(); }, []);
 
@@ -1071,9 +1862,163 @@ export default function App() {
     try {
       const all = await apiAdmin(state.adminPassword, "delete-household", { inviteCode: code });
       patch({ loading: false, guestList: all });
+      if (state.seatingLoaded) loadSeating();
     } catch (e) {
       patch({ loading: false });
       showToast("Something went wrong deleting this household.");
+    }
+  }
+
+  /* ---------- admin: seating chart ---------- */
+  async function loadSeating(silent) {
+    if (!silent) patch({ seatingLoading: true });
+    try {
+      const data = await seatingMutate("list-seating");
+      if (data) patch({ seatingLoading: false, seatingLoaded: true });
+      else if (!silent) patch({ seatingLoading: false });
+    } catch (e) {
+      if (!silent) {
+        patch({ seatingLoading: false });
+        showToast("Couldn't load the seating chart.");
+      }
+    }
+  }
+  function selectTable(id) {
+    const t = state.seatingTables.find(t => t.id === id);
+    patch({ selectedTableId: id, tableDraft: t ? { ...t } : null });
+  }
+  function deselectTable() { patch({ selectedTableId: null, tableDraft: null }); }
+  function updateTableDraftField(field, value) { patch({ tableDraft: { ...state.tableDraft, [field]: value } }); }
+  function setTableShape(shape) {
+    const needsLength = shape === "oval" || shape === "banquet";
+    patch({ tableDraft: { ...state.tableDraft, shape, size2: needsLength ? (state.tableDraft.size2 || 180) : state.tableDraft.size2 } });
+  }
+
+  async function addTable() {
+    const n = state.seatingTables.length + 1;
+    const table = { id: genId(), label: `Table ${n}`, shape: "round", x: 140 + ((n * 97) % 720), y: 110 + ((n * 61) % 460), size: 90, rotation: 0, capacity: 8 };
+    patch({ loading: true });
+    try {
+      const data = await seatingMutate("save-table", table);
+      if (data) patch({ loading: false, selectedTableId: table.id, tableDraft: { ...table } });
+      else patch({ loading: false });
+    } catch (e) {
+      patch({ loading: false });
+      showToast("Couldn't add a table.");
+    }
+  }
+  async function saveTableDraft() {
+    const d = state.tableDraft;
+    if (!d.label.trim()) { showToast("Give the table a name."); return; }
+    const payload = { ...d, label: d.label.trim(), capacity: Math.max(1, Number(d.capacity) || 1) };
+    patch({ loading: true });
+    try {
+      await seatingMutate("save-table", payload);
+      // Keep the panel open (rather than closing it) so seats can be assigned right after saving details.
+      patch({ loading: false });
+    } catch (e) {
+      patch({ loading: false });
+      showToast("Couldn't save the table.");
+    }
+  }
+  async function deleteTable() {
+    const id = state.selectedTableId;
+    if (!id) return;
+    patch({ loading: true });
+    try {
+      const data = await seatingMutate("delete-table", { id });
+      if (data) patch({ loading: false, selectedTableId: null, tableDraft: null });
+      else patch({ loading: false });
+    } catch (e) {
+      patch({ loading: false });
+      showToast("Couldn't delete the table.");
+    }
+  }
+  async function moveTable(id, x, y) {
+    const t = state.seatingTables.find(t => t.id === id);
+    if (!t) return;
+    patch({ seatingTables: state.seatingTables.map(tt => (tt.id === id ? { ...tt, x, y } : tt)) });
+    try {
+      await seatingMutate("save-table", { ...t, x, y });
+    } catch (e) {
+      showToast("Couldn't save the table's position.");
+    }
+  }
+  function selectObject(id) {
+    const o = id ? state.seatingObjects.find(o => o.id === id) : null;
+    patch({ selectedObjectId: id, objectDraft: o ? { ...o } : null });
+  }
+  function deselectObject() { patch({ selectedObjectId: null, objectDraft: null }); }
+  function updateObjectDraftField(field, value) { patch({ objectDraft: { ...state.objectDraft, [field]: value } }); }
+
+  async function addObject(type) {
+    const n = state.seatingObjects.length + 1;
+    const baseX = 150 + ((n * 83) % 700), baseY = 150 + ((n * 47) % 400);
+    const obj = type === "line"
+      ? { id: genId(), type, label: "", x: baseX, y: baseY, size: 10, x2: baseX + 120, y2: baseY }
+      : { id: genId(), type, label: "", x: baseX, y: baseY, size: 60, x2: null, y2: null };
+    patch({ loading: true });
+    try {
+      const data = await seatingMutate("save-object", obj);
+      if (data) patch({ loading: false, selectedObjectId: obj.id, objectDraft: { ...obj }, selectedTableId: null, tableDraft: null });
+      else patch({ loading: false });
+    } catch (e) {
+      patch({ loading: false });
+      showToast("Couldn't add that.");
+    }
+  }
+  async function saveObjectDraft() {
+    const d = state.objectDraft;
+    patch({ loading: true });
+    try {
+      await seatingMutate("save-object", { ...d, label: d.label.trim() });
+      patch({ loading: false });
+    } catch (e) {
+      patch({ loading: false });
+      showToast("Couldn't save that.");
+    }
+  }
+  async function deleteObject() {
+    const id = state.selectedObjectId;
+    if (!id) return;
+    patch({ loading: true });
+    try {
+      const data = await seatingMutate("delete-object", { id });
+      if (data) patch({ loading: false, selectedObjectId: null, objectDraft: null });
+      else patch({ loading: false });
+    } catch (e) {
+      patch({ loading: false });
+      showToast("Couldn't delete that.");
+    }
+  }
+  async function moveObject(id, changes) {
+    const o = state.seatingObjects.find(o => o.id === id);
+    if (!o) return;
+    const updated = { ...o, ...changes };
+    patch({ seatingObjects: state.seatingObjects.map(oo => (oo.id === id ? updated : oo)) });
+    try {
+      await seatingMutate("save-object", updated);
+    } catch (e) {
+      showToast("Couldn't save that shape's position.");
+    }
+  }
+  function downloadFloorPlan() {
+    const occupancy = {};
+    Object.values(state.seatingAssignments).forEach(a => { occupancy[a.tableId] = (occupancy[a.tableId] || 0) + 1; });
+    exportFloorPlanPNG(state.seatingTables, state.seatingObjects, occupancy, `${CONFIG.coupleNames} — Reception Floor Plan`);
+  }
+  function armGuest(memberId, inviteCode) {
+    patch({ armedGuest: state.armedGuest?.memberId === memberId ? null : { memberId, inviteCode } });
+  }
+  async function assignSeat(memberId, inviteCode, tableId, seatIndex) {
+    patch({ loading: true });
+    try {
+      const data = await seatingMutate("assign-seat", { memberId, inviteCode, tableId, seatIndex });
+      if (data) patch({ loading: false, armedGuest: null });
+      else patch({ loading: false });
+    } catch (e) {
+      patch({ loading: false });
+      showToast(e.status === 409 ? "That seat is already taken — pick another." : "Couldn't update that seat assignment.");
     }
   }
 
@@ -1146,7 +2091,10 @@ export default function App() {
     submitAdminLogin, refreshAdmin, exitToPublic,
     startAddHousehold, startEditHousehold, cancelHouseholdDraft, updateHouseholdField, updateHMemberName, addHMember, removeHMember, toggleHEvent, saveHousehold, deleteHousehold,
     sendBroadcast,
-    previewInvite, exitPreview, toggleRow, copyLink, exportCSV
+    previewInvite, exitPreview, toggleRow, copyLink, exportCSV,
+    loadSeating, selectTable, deselectTable, updateTableDraftField, addTable, saveTableDraft, deleteTable, moveTable, armGuest, assignSeat,
+    selectObject, deselectObject, updateObjectDraftField, addObject, saveObjectDraft, deleteObject, moveObject,
+    setTableShape, downloadFloorPlan
   };
 
   /* ========================= MASTER RENDER ========================= */
@@ -1160,6 +2108,7 @@ export default function App() {
     case "guest-menu": body = <GuestMenu state={state} actions={actions} />; break;
     case "guest-location": body = <GuestLocation state={state} actions={actions} />; break;
     case "guest-details": body = <GuestDetails state={state} actions={actions} />; break;
+    case "guest-seating": body = <GuestSeating state={state} actions={actions} />; break;
     case "guest-form":
       body = state.step === 1 ? <GuestFormStep1 state={state} actions={actions} />
         : state.step === 2 ? <GuestFormStep2 state={state} actions={actions} />
