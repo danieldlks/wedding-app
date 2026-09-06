@@ -39,6 +39,7 @@ export function rowToTable(row) {
     x: row.x,
     y: row.y,
     size: row.size,
+    size2: row.size2,
     rotation: row.rotation,
     capacity: row.capacity
   };

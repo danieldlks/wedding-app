@@ -960,6 +960,9 @@ const SEAT_LH = 700;
 const SEAT_PALETTE = ["#A9814C", "#6E7F63", "#C98F86", "#57654E", "#B6503F", "#8A6636"];
 function colorForIndex(i) { return SEAT_PALETTE[i % SEAT_PALETTE.length]; }
 function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
+const SEAT_GRID = 50; // floor-plan units — also the spacing of the faint background dot grid, so the two visibly agree
+function snapToGrid(v) { return Math.round(v / SEAT_GRID) * SEAT_GRID; }
+function snapClamp(v, min, max) { return snapToGrid(clamp(v, min, max)); }
 function hexWithAlpha(hex, alpha) {
   const h = hex.replace("#", "");
   const r = parseInt(h.substring(0, 2), 16), g = parseInt(h.substring(2, 4), 16), b = parseInt(h.substring(4, 6), 16);
@@ -982,16 +985,25 @@ function seatToLogical(e, canvas) {
     y: (evt.clientY - rect.top) * (SEAT_LH / rect.height)
   };
 }
+// Every table shape reduces to a width/height box plus whether it's
+// round-cornered (ellipse) or sharp (rect) — hit-testing, seat layout,
+// drawing, and the occupancy-badge offset all read off this one function.
+function tableDims(t) {
+  switch (t.shape) {
+    case "oval": return { w: t.size, h: t.size2 || t.size * 1.4, round: true };
+    case "rect": return { w: t.size, h: t.size * 0.55, round: false };
+    case "banquet": return { w: t.size2 || t.size * 2.5, h: t.size, round: false };
+    default: return { w: t.size, h: t.size, round: true }; // 'round'
+  }
+}
 function hitTestTable(tables, x, y) {
   for (let i = tables.length - 1; i >= 0; i--) {
     const t = tables[i];
     const dx = x - t.x, dy = y - t.y;
-    if (t.shape === "round") {
-      if (dx * dx + dy * dy <= (t.size / 2) * (t.size / 2)) return t;
-    } else {
-      const w = t.size, h = t.size * 0.55;
-      if (Math.abs(dx) <= w / 2 && Math.abs(dy) <= h / 2) return t;
-    }
+    const { w, h, round } = tableDims(t);
+    if (round) {
+      if ((dx * dx) / ((w / 2) * (w / 2)) + (dy * dy) / ((h / 2) * (h / 2)) <= 1) return t;
+    } else if (Math.abs(dx) <= w / 2 && Math.abs(dy) <= h / 2) return t;
   }
   return null;
 }
@@ -1042,14 +1054,14 @@ function hitTestObjects(objects, x, y) {
 function getSeatPositions(t) {
   const n = Math.max(1, t.capacity | 0);
   const positions = [];
-  if (t.shape === "round") {
-    const r = t.size / 2;
+  const { w, h, round } = tableDims(t);
+  if (round) {
+    const rx = w / 2, ry = h / 2;
     for (let i = 0; i < n; i++) {
       const ang = (i / n) * Math.PI * 2 - Math.PI / 2;
-      positions.push({ x: Math.cos(ang) * (r + 12), y: Math.sin(ang) * (r + 12) });
+      positions.push({ x: Math.cos(ang) * (rx + 12), y: Math.sin(ang) * (ry + 12) });
     }
   } else {
-    const w = t.size, h = t.size * 0.55;
     const perSide = Math.ceil(n / 2);
     for (let i = 0; i < n; i++) {
       const onTop = i < perSide;
@@ -1080,6 +1092,159 @@ function zoomSeatTransform(t, factor) {
   const cx = (SEAT_LW / 2 - (t.panX || 0)) / (t.zoom || 1);
   const cy = (SEAT_LH / 2 - (t.panY || 0)) / (t.zoom || 1);
   return { zoom, panX: SEAT_LW / 2 - cx * zoom, panY: SEAT_LH / 2 - cy * zoom };
+}
+
+// Draws one frame into an already-transformed ctx (translated/scaled to the
+// current pan/zoom) in floor-plan units. Shared by the live canvas and the
+// PNG export so the two can never visually drift apart.
+function drawFloorPlan(ctx, opts) {
+  const {
+    tables, objects, editable, selectedTableId, selectedObjectId,
+    occupancy, occupiedSeats, highlightColors, highlightSeatIndices, zoom = 1, showGrid = true
+  } = opts;
+
+  if (showGrid) {
+    const dotGrid = new Path2D();
+    for (let gx = SEAT_GRID; gx < SEAT_LW; gx += SEAT_GRID) {
+      for (let gy = SEAT_GRID; gy < SEAT_LH; gy += SEAT_GRID) {
+        dotGrid.moveTo(gx + 1.6, gy);
+        dotGrid.arc(gx, gy, 1.6, 0, Math.PI * 2);
+      }
+    }
+    ctx.fillStyle = "rgba(169,129,76,.18)";
+    ctx.fill(dotGrid);
+  }
+
+  ctx.strokeStyle = "rgba(169,129,76,.4)";
+  ctx.lineWidth = 2 / zoom;
+  ctx.strokeRect(10, 10, SEAT_LW - 20, SEAT_LH - 20);
+
+  // Floor objects draw first (background layer) so tables visually sit on top of them.
+  objects.forEach(o => {
+    const isSelected = editable && selectedObjectId === o.id;
+    ctx.save();
+    if (o.type === "line") {
+      ctx.strokeStyle = isSelected ? "#6E7F63" : "#3A3F37";
+      ctx.lineWidth = isSelected ? 7 : 5;
+      ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(o.x2, o.y2); ctx.stroke();
+      if (isSelected) {
+        [[o.x, o.y], [o.x2, o.y2]].forEach(([px, py]) => {
+          ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI * 2);
+          ctx.fillStyle = "#6E7F63"; ctx.fill();
+        });
+      }
+      if (o.label) {
+        ctx.fillStyle = "#202B22";
+        ctx.font = "600 12px 'Work Sans', sans-serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+        ctx.fillText(o.label, (o.x + o.x2) / 2, (o.y + o.y2) / 2 - 8);
+      }
+    } else {
+      ctx.translate(o.x, o.y);
+      ctx.fillStyle = "rgba(216,200,165,.4)";
+      ctx.strokeStyle = isSelected ? "#6E7F63" : "rgba(74,81,72,.5)";
+      ctx.lineWidth = isSelected ? 3 : 1.5;
+      if (o.type === "circle") {
+        ctx.beginPath(); ctx.arc(0, 0, o.size / 2, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      } else if (o.type === "triangle") {
+        const pts = triangleVertices(o);
+        ctx.beginPath();
+        pts.forEach(([px, py], i) => (i === 0 ? ctx.moveTo(px - o.x, py - o.y) : ctx.lineTo(px - o.x, py - o.y)));
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+      } else {
+        roundRectPath(ctx, -o.size / 2, -o.size / 2, o.size, o.size, 4); ctx.fill(); ctx.stroke();
+      }
+      if (o.label) {
+        ctx.fillStyle = "#202B22";
+        ctx.font = "600 12px 'Work Sans', sans-serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(o.label, 0, 0);
+      }
+    }
+    ctx.restore();
+  });
+
+  tables.forEach(t => {
+    const isSelected = editable && selectedTableId === t.id;
+    const hlColor = !editable && highlightColors ? highlightColors[t.id] : null;
+    ctx.save();
+    ctx.translate(t.x, t.y);
+    ctx.lineWidth = hlColor ? 4 : (isSelected ? 3 : 1.5);
+    ctx.strokeStyle = hlColor || (isSelected ? "#6E7F63" : "#D8C8A5");
+    ctx.fillStyle = hlColor ? hexWithAlpha(hlColor, 0.2) : "#ffffff";
+    if (hlColor) { ctx.shadowColor = hlColor; ctx.shadowBlur = 18; }
+
+    const dims = tableDims(t);
+    if (dims.round) {
+      ctx.beginPath(); ctx.ellipse(0, 0, dims.w / 2, dims.h / 2, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    } else {
+      roundRectPath(ctx, -dims.w / 2, -dims.h / 2, dims.w, dims.h, 6); ctx.fill(); ctx.stroke();
+    }
+    ctx.shadowBlur = 0;
+
+    const occSet = occupiedSeats ? occupiedSeats[t.id] : null;
+    const hlSet = highlightSeatIndices ? highlightSeatIndices[t.id] : null;
+    getSeatPositions(t).forEach((pos, i) => {
+      const isFilled = occSet && occSet.has(i);
+      const isHlSeat = hlSet && hlSet.has(i);
+      const seatR = isHlSeat ? 8 : 4;
+      ctx.beginPath(); ctx.arc(pos.x, pos.y, seatR, 0, Math.PI * 2);
+      if (isHlSeat) {
+        ctx.fillStyle = hlColor; ctx.shadowColor = hlColor; ctx.shadowBlur = 10; ctx.fill(); ctx.shadowBlur = 0;
+      } else if (isFilled) {
+        ctx.fillStyle = "rgba(74,81,72,.6)"; ctx.fill();
+      } else {
+        ctx.fillStyle = "#FBF7EF"; ctx.fill();
+        ctx.lineWidth = 1.2; ctx.strokeStyle = "rgba(74,81,72,.35)"; ctx.stroke();
+      }
+    });
+
+    ctx.fillStyle = "#202B22";
+    ctx.font = "600 15px 'Work Sans', sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(t.label, 0, 0);
+
+    if (occupancy) {
+      const count = occupancy[t.id] || 0;
+      ctx.font = "600 11px 'Work Sans', sans-serif";
+      ctx.fillStyle = count > t.capacity ? "#B6503F" : "#6E7F63";
+      ctx.fillText(`${count}/${t.capacity}`, 0, dims.h / 2 + 16);
+    }
+    ctx.restore();
+  });
+}
+
+// Renders the current floor plan to a labeled PNG and triggers a download —
+// something the couple can hand to a venue or caterer, so it deliberately
+// shows table capacity/occupancy (useful for a headcount) but not the grid
+// (a snap aid, not something a venue needs to see) or any selection state.
+function exportFloorPlanPNG(tables, objects, occupancy, title) {
+  const scale = 1.6, margin = 40, titleH = 70;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(SEAT_LW * scale + margin * 2);
+  canvas.height = Math.round(SEAT_LH * scale + margin * 2 + titleH);
+  const ctx = canvas.getContext("2d");
+
+  ctx.fillStyle = "#FBF7EF";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#202B22";
+  ctx.font = "600 30px Georgia, 'Cormorant Garamond', serif";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(title, canvas.width / 2, titleH / 2 + 10);
+
+  ctx.save();
+  ctx.translate(margin, titleH + margin / 2);
+  ctx.scale(scale, scale);
+  drawFloorPlan(ctx, { tables, objects, occupancy, zoom: scale, showGrid: false });
+  ctx.restore();
+
+  const a = document.createElement("a");
+  a.href = canvas.toDataURL("image/png");
+  a.download = "reception-floor-plan.png";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
 
 function SeatingCanvas({
@@ -1129,112 +1294,20 @@ function SeatingCanvas({
     const ctx = canvas.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, SEAT_LW, SEAT_LH);
-    ctx.fillStyle = "#FBF7EF";
+    // Soft vignette instead of a flat fill so the room reads as a floor, not a canvas.
+    const bgGrad = ctx.createRadialGradient(SEAT_LW / 2, SEAT_LH / 2, 40, SEAT_LW / 2, SEAT_LH / 2, Math.max(SEAT_LW, SEAT_LH) / 1.3);
+    bgGrad.addColorStop(0, "#FDFAF3");
+    bgGrad.addColorStop(1, "#F3EDDF");
+    ctx.fillStyle = bgGrad;
     ctx.fillRect(0, 0, SEAT_LW, SEAT_LH);
 
     ctx.save();
     const { panX = 0, panY = 0, zoom = 1 } = viewTransform || {};
     ctx.translate(panX, panY);
     ctx.scale(zoom, zoom);
-    ctx.strokeStyle = "rgba(169,129,76,.4)";
-    ctx.lineWidth = 2 / zoom;
-    ctx.strokeRect(10, 10, SEAT_LW - 20, SEAT_LH - 20);
-
-    // Floor objects draw first (background layer) so tables visually sit on top of them.
-    effectiveObjects.forEach(o => {
-      const isSelected = editable && selectedObjectId === o.id;
-      ctx.save();
-      if (o.type === "line") {
-        ctx.strokeStyle = isSelected ? "#6E7F63" : "#3A3F37";
-        ctx.lineWidth = isSelected ? 7 : 5;
-        ctx.lineCap = "round";
-        ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(o.x2, o.y2); ctx.stroke();
-        if (isSelected) {
-          [[o.x, o.y], [o.x2, o.y2]].forEach(([px, py]) => {
-            ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI * 2);
-            ctx.fillStyle = "#6E7F63"; ctx.fill();
-          });
-        }
-        if (o.label) {
-          ctx.fillStyle = "#202B22";
-          ctx.font = "600 12px 'Work Sans', sans-serif";
-          ctx.textAlign = "center"; ctx.textBaseline = "bottom";
-          ctx.fillText(o.label, (o.x + o.x2) / 2, (o.y + o.y2) / 2 - 8);
-        }
-      } else {
-        ctx.translate(o.x, o.y);
-        ctx.fillStyle = "rgba(216,200,165,.4)";
-        ctx.strokeStyle = isSelected ? "#6E7F63" : "rgba(74,81,72,.5)";
-        ctx.lineWidth = isSelected ? 3 : 1.5;
-        if (o.type === "circle") {
-          ctx.beginPath(); ctx.arc(0, 0, o.size / 2, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-        } else if (o.type === "triangle") {
-          const pts = triangleVertices(o);
-          ctx.beginPath();
-          pts.forEach(([px, py], i) => (i === 0 ? ctx.moveTo(px - o.x, py - o.y) : ctx.lineTo(px - o.x, py - o.y)));
-          ctx.closePath(); ctx.fill(); ctx.stroke();
-        } else {
-          roundRectPath(ctx, -o.size / 2, -o.size / 2, o.size, o.size, 4); ctx.fill(); ctx.stroke();
-        }
-        if (o.label) {
-          ctx.fillStyle = "#202B22";
-          ctx.font = "600 12px 'Work Sans', sans-serif";
-          ctx.textAlign = "center"; ctx.textBaseline = "middle";
-          ctx.fillText(o.label, 0, 0);
-        }
-      }
-      ctx.restore();
-    });
-
-    effectiveTables.forEach(t => {
-      const isSelected = editable && selectedTableId === t.id;
-      const hlColor = !editable && highlightColors ? highlightColors[t.id] : null;
-      ctx.save();
-      ctx.translate(t.x, t.y);
-      ctx.lineWidth = hlColor ? 4 : (isSelected ? 3 : 1.5);
-      ctx.strokeStyle = hlColor || (isSelected ? "#6E7F63" : "#D8C8A5");
-      ctx.fillStyle = hlColor ? hexWithAlpha(hlColor, 0.2) : "#ffffff";
-      if (hlColor) { ctx.shadowColor = hlColor; ctx.shadowBlur = 18; }
-
-      if (t.shape === "round") {
-        const r = t.size / 2;
-        ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-      } else {
-        const w = t.size, h = t.size * 0.55;
-        roundRectPath(ctx, -w / 2, -h / 2, w, h, 6); ctx.fill(); ctx.stroke();
-      }
-      ctx.shadowBlur = 0;
-
-      const occSet = occupiedSeats ? occupiedSeats[t.id] : null;
-      const hlSet = highlightSeatIndices ? highlightSeatIndices[t.id] : null;
-      getSeatPositions(t).forEach((pos, i) => {
-        const isFilled = occSet && occSet.has(i);
-        const isHlSeat = hlSet && hlSet.has(i);
-        const seatR = isHlSeat ? 8 : 4;
-        ctx.beginPath(); ctx.arc(pos.x, pos.y, seatR, 0, Math.PI * 2);
-        if (isHlSeat) {
-          ctx.fillStyle = hlColor; ctx.shadowColor = hlColor; ctx.shadowBlur = 10; ctx.fill(); ctx.shadowBlur = 0;
-        } else if (isFilled) {
-          ctx.fillStyle = "rgba(74,81,72,.6)"; ctx.fill();
-        } else {
-          ctx.fillStyle = "#FBF7EF"; ctx.fill();
-          ctx.lineWidth = 1.2; ctx.strokeStyle = "rgba(74,81,72,.35)"; ctx.stroke();
-        }
-      });
-
-      ctx.fillStyle = "#202B22";
-      ctx.font = "600 15px 'Work Sans', sans-serif";
-      ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(t.label, 0, 0);
-
-      if (editable && occupancy) {
-        const count = occupancy[t.id] || 0;
-        ctx.font = "600 11px 'Work Sans', sans-serif";
-        ctx.fillStyle = count > t.capacity ? "#B6503F" : "#6E7F63";
-        const offset = (t.shape === "round" ? t.size / 2 : t.size * 0.275) + 16;
-        ctx.fillText(`${count}/${t.capacity}`, 0, offset);
-      }
-      ctx.restore();
+    drawFloorPlan(ctx, {
+      tables: effectiveTables, objects: effectiveObjects, editable, selectedTableId, selectedObjectId,
+      occupancy: editable ? occupancy : null, occupiedSeats, highlightColors, highlightSeatIndices, zoom
     });
     ctx.restore();
   }, [effectiveTables, effectiveObjects, editable, selectedTableId, selectedObjectId, occupancy, occupiedSeats, highlightColors, highlightSeatIndices, viewTransform]);
@@ -1277,20 +1350,20 @@ function SeatingCanvas({
     if (editable && d) {
       const dx = pt.x - d.startPtX, dy = pt.y - d.startPtY;
       if (d.kind === "table") {
-        setLiveDrag({ kind: "table", id: d.id, x: clamp(d.startX + dx, 0, SEAT_LW), y: clamp(d.startY + dy, 0, SEAT_LH) });
+        setLiveDrag({ kind: "table", id: d.id, x: snapClamp(d.startX + dx, 0, SEAT_LW), y: snapClamp(d.startY + dy, 0, SEAT_LH) });
       } else if (d.handle === "p1") {
-        setLiveDrag({ kind: "object", id: d.id, x: clamp(d.startX + dx, 0, SEAT_LW), y: clamp(d.startY + dy, 0, SEAT_LH) });
+        setLiveDrag({ kind: "object", id: d.id, x: snapClamp(d.startX + dx, 0, SEAT_LW), y: snapClamp(d.startY + dy, 0, SEAT_LH) });
       } else if (d.handle === "p2") {
-        setLiveDrag({ kind: "object", id: d.id, x2: clamp(d.startX2 + dx, 0, SEAT_LW), y2: clamp(d.startY2 + dy, 0, SEAT_LH) });
+        setLiveDrag({ kind: "object", id: d.id, x2: snapClamp(d.startX2 + dx, 0, SEAT_LW), y2: snapClamp(d.startY2 + dy, 0, SEAT_LH) });
       } else if (d.startX2 != null) {
         // dragging a line's body translates both endpoints together
         setLiveDrag({
           kind: "object", id: d.id,
-          x: clamp(d.startX + dx, 0, SEAT_LW), y: clamp(d.startY + dy, 0, SEAT_LH),
-          x2: clamp(d.startX2 + dx, 0, SEAT_LW), y2: clamp(d.startY2 + dy, 0, SEAT_LH)
+          x: snapClamp(d.startX + dx, 0, SEAT_LW), y: snapClamp(d.startY + dy, 0, SEAT_LH),
+          x2: snapClamp(d.startX2 + dx, 0, SEAT_LW), y2: snapClamp(d.startY2 + dy, 0, SEAT_LH)
         });
       } else {
-        setLiveDrag({ kind: "object", id: d.id, x: clamp(d.startX + dx, 0, SEAT_LW), y: clamp(d.startY + dy, 0, SEAT_LH) });
+        setLiveDrag({ kind: "object", id: d.id, x: snapClamp(d.startX + dx, 0, SEAT_LW), y: snapClamp(d.startY + dy, 0, SEAT_LH) });
       }
     } else if (!editable && panStartRef.current) {
       const p = panStartRef.current;
@@ -1391,6 +1464,7 @@ function AdminSeating({ state, actions }) {
           <button className="btn btn-ghost" style={{ flex: "none" }} onClick={() => actions.addObject("rect")} disabled={state.loading}>+ Square</button>
           <button className="btn btn-ghost" style={{ flex: "none" }} onClick={() => actions.addObject("triangle")} disabled={state.loading}>+ Triangle</button>
           <button className="btn btn-ghost" style={{ flex: "none" }} onClick={() => actions.addObject("line")} disabled={state.loading}>+ Wall / barrier</button>
+          <button className="btn btn-ghost" style={{ flex: "none" }} onClick={actions.downloadFloorPlan}>⬇ Download floor plan</button>
         </div>
       </div>
       <div className="seating-layout">
@@ -1435,18 +1509,30 @@ function AdminSeating({ state, actions }) {
                   <input type="text" value={state.tableDraft.label} onChange={e => actions.updateTableDraftField("label", e.target.value)} />
                 </div>
                 <div className="field"><label>Shape</label>
-                  <select style={selectStyle} value={state.tableDraft.shape} onChange={e => actions.updateTableDraftField("shape", e.target.value)}>
+                  <select style={selectStyle} value={state.tableDraft.shape} onChange={e => actions.setTableShape(e.target.value)}>
                     <option value="round">Round</option>
                     <option value="rect">Rectangular</option>
+                    <option value="oval">Oval</option>
+                    <option value="banquet">Banquet (long)</option>
                   </select>
                 </div>
-                <div className="field"><label>Size</label>
+                <div className="field"><label>{state.tableDraft.shape === "oval" || state.tableDraft.shape === "banquet" ? "Width" : "Size"}</label>
                   <select style={selectStyle} value={state.tableDraft.size} onChange={e => actions.updateTableDraftField("size", Number(e.target.value))}>
                     <option value={70}>Small</option>
                     <option value={90}>Medium</option>
                     <option value={120}>Large</option>
                   </select>
                 </div>
+                {(state.tableDraft.shape === "oval" || state.tableDraft.shape === "banquet") && (
+                  <div className="field"><label>Length</label>
+                    <select style={selectStyle} value={state.tableDraft.size2 || 180} onChange={e => actions.updateTableDraftField("size2", Number(e.target.value))}>
+                      <option value={140}>Short</option>
+                      <option value={180}>Medium</option>
+                      <option value={240}>Long</option>
+                      <option value={300}>Extra long</option>
+                    </select>
+                  </div>
+                )}
                 <div className="field"><label>Capacity</label>
                   <input type="number" min="1" value={state.tableDraft.capacity} onChange={e => actions.updateTableDraftField("capacity", e.target.value)} />
                 </div>
@@ -1786,6 +1872,10 @@ export default function App() {
   }
   function deselectTable() { patch({ selectedTableId: null, tableDraft: null }); }
   function updateTableDraftField(field, value) { patch({ tableDraft: { ...state.tableDraft, [field]: value } }); }
+  function setTableShape(shape) {
+    const needsLength = shape === "oval" || shape === "banquet";
+    patch({ tableDraft: { ...state.tableDraft, shape, size2: needsLength ? (state.tableDraft.size2 || 180) : state.tableDraft.size2 } });
+  }
 
   async function addTable() {
     const n = state.seatingTables.length + 1;
@@ -1893,6 +1983,11 @@ export default function App() {
       showToast("Couldn't save that shape's position.");
     }
   }
+  function downloadFloorPlan() {
+    const occupancy = {};
+    Object.values(state.seatingAssignments).forEach(a => { occupancy[a.tableId] = (occupancy[a.tableId] || 0) + 1; });
+    exportFloorPlanPNG(state.seatingTables, state.seatingObjects, occupancy, `${CONFIG.coupleNames} — Reception Floor Plan`);
+  }
   function armGuest(memberId, inviteCode) {
     patch({ armedGuest: state.armedGuest?.memberId === memberId ? null : { memberId, inviteCode } });
   }
@@ -1978,7 +2073,8 @@ export default function App() {
     sendBroadcast,
     previewInvite, exitPreview, toggleRow, copyLink, exportCSV,
     loadSeating, selectTable, deselectTable, updateTableDraftField, addTable, saveTableDraft, deleteTable, moveTable, armGuest, assignSeat,
-    selectObject, deselectObject, updateObjectDraftField, addObject, saveObjectDraft, deleteObject, moveObject
+    selectObject, deselectObject, updateObjectDraftField, addObject, saveObjectDraft, deleteObject, moveObject,
+    setTableShape, downloadFloorPlan
   };
 
   /* ========================= MASTER RENDER ========================= */

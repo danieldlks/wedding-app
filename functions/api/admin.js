@@ -135,10 +135,11 @@ async function saveHousehold(db, p) {
 async function saveTable(db, p) {
   const id = String(p.id || "").trim() || genId();
   const label = String(p.label || "").trim() || "Table";
-  const shape = p.shape === "rect" ? "rect" : "round";
+  const shape = ["rect", "oval", "banquet"].includes(p.shape) ? p.shape : "round";
   const x = Number.isFinite(Number(p.x)) ? Number(p.x) : 100;
   const y = Number.isFinite(Number(p.y)) ? Number(p.y) : 100;
   const size = Math.max(30, Number(p.size) || 90);
+  const size2 = p.size2 != null && Number.isFinite(Number(p.size2)) ? Math.max(30, Number(p.size2)) : null;
   const rotation = Number(p.rotation) || 0;
   const capacity = Math.max(1, Number(p.capacity) || 8);
 
@@ -146,12 +147,12 @@ async function saveTable(db, p) {
   const createdAt = existing?.created_at || new Date().toISOString();
 
   await db.prepare(`
-    INSERT INTO seating_tables (id, label, shape, x, y, size, rotation, capacity, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO seating_tables (id, label, shape, x, y, size, size2, rotation, capacity, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       label = excluded.label, shape = excluded.shape, x = excluded.x, y = excluded.y,
-      size = excluded.size, rotation = excluded.rotation, capacity = excluded.capacity
-  `).bind(id, label, shape, x, y, size, rotation, capacity, createdAt).run();
+      size = excluded.size, size2 = excluded.size2, rotation = excluded.rotation, capacity = excluded.capacity
+  `).bind(id, label, shape, x, y, size, size2, rotation, capacity, createdAt).run();
 
   return listSeating(db);
 }

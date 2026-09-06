@@ -4,6 +4,52 @@ Notable changes to the RSVP app, newest first. See `plan.md`/`design.md` for the
 broader feature history (v1 → v3); this file tracks discrete fixes and changes
 made along the way.
 
+## 2026-09-06 — Seat map polish: room texture, oval/banquet tables, grid-snap, PNG export
+
+**Feature:** Four self-contained additions to the seat map, chosen because
+they're all additive and don't change any existing behavior (unlike admin
+pan/zoom or smart alignment guides, deliberately deferred — see the GitHub
+issue filed alongside this).
+
+- **Room background** — a soft radial gradient plus a faint dot grid instead
+  of a flat fill, so the canvas reads as a floor rather than a blank canvas.
+- **Oval and banquet table shapes** — alongside round/rect, for a head table
+  or a long banquet-style table. Refactored the table-shape math (hit-testing,
+  seat layout, drawing, badge placement) behind one `tableDims()` function
+  first, so adding two more shapes was a small diff instead of four separate
+  near-duplicate branches.
+- **Grid-snap** — dragging a table, shape, or wall endpoint now snaps to a
+  50-unit grid — the same spacing as the new background dots, so the grid
+  visibly explains the snapping rather than it feeling arbitrary.
+- **PNG export** — a "Download floor plan" button in the admin Seating tab
+  renders the current floor plan (tables with capacity/occupancy, all
+  landmarks, a title) to a downloadable PNG for handing to a venue or
+  caterer. Extracted the shared drawing code into one `drawFloorPlan()`
+  function used by both the live canvas and the export, so the two can't
+  visually drift apart from each other over time.
+
+**Deploy note:** while verifying this, found that production's
+`seating_tables`/`seat_assignments` tables (created by an earlier deploy,
+before per-seat assignment and now `size2` existed) are missing the
+`seat_index` and `size2` columns added since — and already have a small
+amount of real usage (1 table, 2 assignments), not just empty scaffolding.
+`schema.sql`'s `CREATE TABLE IF NOT EXISTS` won't retrofit those columns onto
+an existing table, so the two `ALTER TABLE ... ADD COLUMN` statements now
+documented as comments in `schema.sql` need to run by hand once before the
+next `db:migrate:remote`, rather than assuming the file is fully idempotent
+against production's current state.
+
+**Verified:** Local smoke test — created oval/banquet tables via the admin
+API with valid geometry. Playwright (local-only): room texture and both new
+shapes render correctly with capacity-appropriate seat layouts, dragging a
+table snaps its position to exact grid multiples (confirmed via the API
+response, not just visually), and the PNG export downloads a correctly
+labeled, occupancy-annotated floor plan.
+
+**Files:** `schema.sql`, `functions/_lib/db.js`, `functions/api/admin.js`, `src/App.jsx`.
+
+---
+
 ## 2026-09-06 — Add floor plan landmarks (bar, doors, walls) to the seat map
 
 **Feature:** The Seating tab now has a shape palette (+ Circle, + Square,
