@@ -497,9 +497,15 @@ function GuestSeating({ state, actions }) {
     return () => { cancelled = true; clearInterval(id); };
   }, [state.inviteCode]);
 
+  // The room now includes every table, not just the guest's own — but the
+  // default/recenter view should still zoom to *their* seat, not fit the
+  // whole room, or "find your seat" turns back into "find it yourself."
+  const myTableIds = new Set((seating?.mySeats || []).map(s => s.tableId));
+  const myTables = (seating?.tables || []).filter(t => myTableIds.has(t.id));
+
   useEffect(() => {
-    if (seating && seating.tables.length > 0 && !fitted) {
-      setTransform(fitSeatTransform(seating.tables));
+    if (seating && myTables.length > 0 && !fitted) {
+      setTransform(fitSeatTransform(myTables));
       setFitted(true);
     }
   }, [seating, fitted]);
@@ -507,7 +513,7 @@ function GuestSeating({ state, actions }) {
   // Colors keyed by sorted table id (not array order) so they stay stable across polls.
   const highlightColors = {};
   const highlightSeatIndices = {};
-  const sortedTableIds = [...new Set((seating?.mySeats || []).map(s => s.tableId))].sort();
+  const sortedTableIds = [...myTableIds].sort();
   sortedTableIds.forEach((tid, i) => { highlightColors[tid] = colorForIndex(i); });
   (seating?.mySeats || []).forEach(s => {
     if (!highlightSeatIndices[s.tableId]) highlightSeatIndices[s.tableId] = new Set();
@@ -529,7 +535,7 @@ function GuestSeating({ state, actions }) {
             <div className="zoom-controls">
               <button onClick={() => setTransform(t => zoomSeatTransform(t, 1.25))} aria-label="Zoom in">+</button>
               <button onClick={() => setTransform(t => zoomSeatTransform(t, 1 / 1.25))} aria-label="Zoom out">−</button>
-              <button onClick={() => setTransform(fitSeatTransform(seating.tables))} aria-label="Recenter">⦿</button>
+              <button onClick={() => setTransform(fitSeatTransform(myTables))} aria-label="Recenter">⦿</button>
             </div>
           </div>
           <div className="seat-legend">

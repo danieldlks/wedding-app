@@ -1,11 +1,12 @@
 import { rowToTable, rowToFloorObject } from "../_lib/db.js";
 
-// Guest-facing: given an invite code, return only the table(s) that
-// household's own members are seated at (not the whole floor plan) — a
-// guest shouldn't be able to see where every other household is sitting.
-// Floor objects (bar, doors, walls, etc.) carry no guest info, so they're
-// returned in full — they're what makes the mini floor plan read as an
-// actual room instead of a table floating in space.
+// Guest-facing: returns the full floor plan (every table + every landmark)
+// so a guest can see the whole room, but WHO's sitting where stays scoped —
+// mySeats only ever contains this invite code's own household. Tables carry
+// no guest-identifying info themselves (position/shape/label/capacity are
+// host-authored, not personal data), so showing all of them is safe; the
+// canvas also only ever highlights/labels the requester's own seat(s), never
+// anyone else's, so nothing here leaks another household's assignment.
 export async function onRequestGet({ request, env }) {
   const url = new URL(request.url);
   const code = (url.searchParams.get("code") || "").trim().toUpperCase();
@@ -21,11 +22,7 @@ export async function onRequestGet({ request, env }) {
   if (assignmentRows.length === 0) return Response.json({ tables: [], mySeats: [], objects: [] });
 
   const memberNameById = Object.fromEntries(JSON.parse(household.members).map(m => [m.id, m.name]));
-  const tableIds = [...new Set(assignmentRows.map(r => r.table_id))];
-  const placeholders = tableIds.map(() => "?").join(",");
-  const { results: tableRows } = await env.DB.prepare(
-    `SELECT * FROM seating_tables WHERE id IN (${placeholders})`
-  ).bind(...tableIds).all();
+  const { results: tableRows } = await env.DB.prepare("SELECT * FROM seating_tables").all();
   const { results: objectRows } = await env.DB.prepare("SELECT * FROM floor_objects").all();
 
   const mySeats = assignmentRows
