@@ -36,3 +36,22 @@ CREATE TABLE IF NOT EXISTS seat_assignments (
   seat_index INTEGER NOT NULL DEFAULT 0,
   assigned_at TEXT NOT NULL
 );
+
+-- Non-seating floor plan landmarks (bar, doors, dance floor, barriers/walls)
+-- so the seat map reads as an actual room instead of tables floating in
+-- space. No capacity/assignment logic — just a shape, a free-text label, and
+-- a position — so unlike seating_tables, these are safe to show to every
+-- guest regardless of where they're sitting. 'line' uses (x,y)-(x2,y2) as
+-- its two endpoints (for angled walls/barriers) and ignores `size`; the
+-- other three shapes use (x,y) as center and `size` as diameter/side length.
+CREATE TABLE IF NOT EXISTS floor_objects (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL,   -- 'circle' | 'rect' | 'triangle' | 'line'
+  label TEXT,
+  x REAL NOT NULL DEFAULT 100,
+  y REAL NOT NULL DEFAULT 100,
+  size REAL NOT NULL DEFAULT 60,
+  x2 REAL,
+  y2 REAL,
+  created_at TEXT NOT NULL
+);

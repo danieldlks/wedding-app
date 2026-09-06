@@ -44,10 +44,24 @@ export function rowToTable(row) {
   };
 }
 
+export function rowToFloorObject(row) {
+  return {
+    id: row.id,
+    type: row.type,
+    label: row.label || "",
+    x: row.x,
+    y: row.y,
+    size: row.size,
+    x2: row.x2,
+    y2: row.y2
+  };
+}
+
 export async function listSeating(db) {
   const { results: tableRows } = await db.prepare("SELECT * FROM seating_tables ORDER BY created_at ASC").all();
   const { results: assignmentRows } = await db.prepare("SELECT member_id, table_id, seat_index FROM seat_assignments").all();
+  const { results: objectRows } = await db.prepare("SELECT * FROM floor_objects ORDER BY created_at ASC").all();
   const assignments = {};
   for (const r of assignmentRows) assignments[r.member_id] = { tableId: r.table_id, seatIndex: r.seat_index };
-  return { tables: tableRows.map(rowToTable), assignments };
+  return { tables: tableRows.map(rowToTable), assignments, objects: objectRows.map(rowToFloorObject) };
 }

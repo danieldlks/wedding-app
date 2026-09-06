@@ -488,7 +488,7 @@ function GuestSeating({ state, actions }) {
   useEffect(() => {
     let cancelled = false;
     function fetchSeating() {
-      apiGetSeating(state.inviteCode).then(data => { if (!cancelled) setSeating(data || { tables: [], mySeats: [] }); });
+      apiGetSeating(state.inviteCode).then(data => { if (!cancelled) setSeating(data || { tables: [], mySeats: [], objects: [] }); });
     }
     fetchSeating();
     // Light polling so a last-minute reassignment on the day shows up even if
@@ -525,7 +525,7 @@ function GuestSeating({ state, actions }) {
       {seating && seating.mySeats.length > 0 && (
         <>
           <div className="seating-canvas-wrap">
-            <SeatingCanvas tables={seating.tables} highlightColors={highlightColors} highlightSeatIndices={highlightSeatIndices} viewTransform={transform} onViewTransformChange={setTransform} />
+            <SeatingCanvas tables={seating.tables} objects={seating.objects} highlightColors={highlightColors} highlightSeatIndices={highlightSeatIndices} viewTransform={transform} onViewTransformChange={setTransform} />
             <div className="zoom-controls">
               <button onClick={() => setTransform(t => zoomSeatTransform(t, 1.25))} aria-label="Zoom in">+</button>
               <button onClick={() => setTransform(t => zoomSeatTransform(t, 1 / 1.25))} aria-label="Zoom out">−</button>
@@ -995,6 +995,48 @@ function hitTestTable(tables, x, y) {
   }
   return null;
 }
+// Floor objects (bar, doors, walls...): geometry shared by drawing and hit-testing.
+function triangleVertices(o) {
+  const r = o.size / 2;
+  return [-90, 30, 150].map(deg => {
+    const rad = (deg * Math.PI) / 180;
+    return [o.x + Math.cos(rad) * r, o.y + Math.sin(rad) * r];
+  });
+}
+function triSign(p1, p2, p3) { return (p1[0] - p3[0]) * (p2[1] - p3[1]) - (p2[0] - p3[0]) * (p1[1] - p3[1]); }
+function pointInTriangle(px, py, pts) {
+  const p = [px, py];
+  const d1 = triSign(p, pts[0], pts[1]), d2 = triSign(p, pts[1], pts[2]), d3 = triSign(p, pts[2], pts[0]);
+  const hasNeg = d1 < 0 || d2 < 0 || d3 < 0, hasPos = d1 > 0 || d2 > 0 || d3 > 0;
+  return !(hasNeg && hasPos);
+}
+function pointToSegmentDistance(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const lenSq = dx * dx + dy * dy;
+  let t = lenSq ? ((px - x1) * dx + (py - y1) * dy) / lenSq : 0;
+  t = clamp(t, 0, 1);
+  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+// Returns null (no hit), "body" (move the whole shape), or for lines "p1"/"p2"
+// (drag just that endpoint) so a wall/barrier can be stretched, not just moved.
+function hitTestObject(o, x, y) {
+  if (o.type === "line") {
+    if (Math.hypot(x - o.x, y - o.y) <= 10) return "p1";
+    if (Math.hypot(x - o.x2, y - o.y2) <= 10) return "p2";
+    return pointToSegmentDistance(x, y, o.x, o.y, o.x2, o.y2) <= 8 ? "body" : null;
+  }
+  const dx = x - o.x, dy = y - o.y;
+  if (o.type === "circle") return dx * dx + dy * dy <= (o.size / 2) * (o.size / 2) ? "body" : null;
+  if (o.type === "triangle") return pointInTriangle(x, y, triangleVertices(o)) ? "body" : null;
+  return Math.abs(dx) <= o.size / 2 && Math.abs(dy) <= o.size / 2 ? "body" : null; // rect
+}
+function hitTestObjects(objects, x, y) {
+  for (let i = objects.length - 1; i >= 0; i--) {
+    const handle = hitTestObject(objects[i], x, y);
+    if (handle) return { object: objects[i], handle };
+  }
+  return null;
+}
 // Seat layout, shared by drawing and by the admin seat-picker panel so seat
 // N always means the same physical chair everywhere it's referenced.
 function getSeatPositions(t) {
@@ -1041,19 +1083,25 @@ function zoomSeatTransform(t, factor) {
 }
 
 function SeatingCanvas({
-  tables, editable, selectedTableId, onSelectTable, onDragTableEnd, occupancy,
-  occupiedSeats, highlightColors, highlightSeatIndices, viewTransform, onViewTransformChange
+  tables, objects, editable, selectedTableId, onSelectTable, onDragTableEnd, occupancy,
+  occupiedSeats, highlightColors, highlightSeatIndices,
+  selectedObjectId, onSelectObject, onObjectDragEnd,
+  viewTransform, onViewTransformChange
 }) {
   const canvasRef = useRef(null);
   const dragStartRef = useRef(null);
   const panStartRef = useRef(null);
-  const [liveDrag, setLiveDrag] = useState(null);
+  const [liveDrag, setLiveDrag] = useState(null); // { kind: "table"|"object", id, x, y, x2, y2 }
   const vtRef = useRef(viewTransform);
   const cbRef = useRef(onViewTransformChange);
   vtRef.current = viewTransform;
   cbRef.current = onViewTransformChange;
 
-  const effectiveTables = liveDrag ? tables.map(t => (t.id === liveDrag.id ? { ...t, x: liveDrag.x, y: liveDrag.y } : t)) : tables;
+  const objs = objects || [];
+  const effectiveTables = liveDrag?.kind === "table" ? tables.map(t => (t.id === liveDrag.id ? { ...t, x: liveDrag.x, y: liveDrag.y } : t)) : tables;
+  const effectiveObjects = liveDrag?.kind === "object"
+    ? objs.map(o => (o.id === liveDrag.id ? { ...o, ...(liveDrag.x != null && { x: liveDrag.x, y: liveDrag.y }), ...(liveDrag.x2 != null && { x2: liveDrag.x2, y2: liveDrag.y2 }) } : o))
+    : objs;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1091,6 +1139,52 @@ function SeatingCanvas({
     ctx.strokeStyle = "rgba(169,129,76,.4)";
     ctx.lineWidth = 2 / zoom;
     ctx.strokeRect(10, 10, SEAT_LW - 20, SEAT_LH - 20);
+
+    // Floor objects draw first (background layer) so tables visually sit on top of them.
+    effectiveObjects.forEach(o => {
+      const isSelected = editable && selectedObjectId === o.id;
+      ctx.save();
+      if (o.type === "line") {
+        ctx.strokeStyle = isSelected ? "#6E7F63" : "#3A3F37";
+        ctx.lineWidth = isSelected ? 7 : 5;
+        ctx.lineCap = "round";
+        ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(o.x2, o.y2); ctx.stroke();
+        if (isSelected) {
+          [[o.x, o.y], [o.x2, o.y2]].forEach(([px, py]) => {
+            ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI * 2);
+            ctx.fillStyle = "#6E7F63"; ctx.fill();
+          });
+        }
+        if (o.label) {
+          ctx.fillStyle = "#202B22";
+          ctx.font = "600 12px 'Work Sans', sans-serif";
+          ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+          ctx.fillText(o.label, (o.x + o.x2) / 2, (o.y + o.y2) / 2 - 8);
+        }
+      } else {
+        ctx.translate(o.x, o.y);
+        ctx.fillStyle = "rgba(216,200,165,.4)";
+        ctx.strokeStyle = isSelected ? "#6E7F63" : "rgba(74,81,72,.5)";
+        ctx.lineWidth = isSelected ? 3 : 1.5;
+        if (o.type === "circle") {
+          ctx.beginPath(); ctx.arc(0, 0, o.size / 2, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        } else if (o.type === "triangle") {
+          const pts = triangleVertices(o);
+          ctx.beginPath();
+          pts.forEach(([px, py], i) => (i === 0 ? ctx.moveTo(px - o.x, py - o.y) : ctx.lineTo(px - o.x, py - o.y)));
+          ctx.closePath(); ctx.fill(); ctx.stroke();
+        } else {
+          roundRectPath(ctx, -o.size / 2, -o.size / 2, o.size, o.size, 4); ctx.fill(); ctx.stroke();
+        }
+        if (o.label) {
+          ctx.fillStyle = "#202B22";
+          ctx.font = "600 12px 'Work Sans', sans-serif";
+          ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText(o.label, 0, 0);
+        }
+      }
+      ctx.restore();
+    });
 
     effectiveTables.forEach(t => {
       const isSelected = editable && selectedTableId === t.id;
@@ -1143,20 +1237,34 @@ function SeatingCanvas({
       ctx.restore();
     });
     ctx.restore();
-  }, [effectiveTables, editable, selectedTableId, occupancy, occupiedSeats, highlightColors, highlightSeatIndices, viewTransform]);
+  }, [effectiveTables, effectiveObjects, editable, selectedTableId, selectedObjectId, occupancy, occupiedSeats, highlightColors, highlightSeatIndices, viewTransform]);
 
   function handlePointerDown(e) {
     const canvas = canvasRef.current;
     const pt = seatToLogical(e, canvas);
     if (editable) {
-      const hit = hitTestTable(tables, pt.x, pt.y);
-      if (hit) {
-        onSelectTable(hit.id);
-        dragStartRef.current = { id: hit.id, startTableX: hit.x, startTableY: hit.y, startPtX: pt.x, startPtY: pt.y };
+      const tableHit = hitTestTable(tables, pt.x, pt.y);
+      if (tableHit) {
+        onSelectTable(tableHit.id);
+        onSelectObject(null);
+        dragStartRef.current = { kind: "table", id: tableHit.id, startX: tableHit.x, startY: tableHit.y, startPtX: pt.x, startPtY: pt.y };
         canvas.setPointerCapture(e.pointerId);
-      } else {
-        onSelectTable(null);
+        return;
       }
+      const objHit = hitTestObjects(objs, pt.x, pt.y);
+      if (objHit) {
+        onSelectObject(objHit.object.id);
+        onSelectTable(null);
+        dragStartRef.current = {
+          kind: "object", id: objHit.object.id, handle: objHit.handle,
+          startX: objHit.object.x, startY: objHit.object.y, startX2: objHit.object.x2, startY2: objHit.object.y2,
+          startPtX: pt.x, startPtY: pt.y
+        };
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+      onSelectTable(null);
+      onSelectObject(null);
     } else {
       panStartRef.current = { startPanX: (viewTransform?.panX || 0), startPanY: (viewTransform?.panY || 0), startPtX: pt.x, startPtY: pt.y };
       canvas.setPointerCapture(e.pointerId);
@@ -1165,16 +1273,41 @@ function SeatingCanvas({
   function handlePointerMove(e) {
     const canvas = canvasRef.current;
     const pt = seatToLogical(e, canvas);
-    if (editable && dragStartRef.current) {
-      const d = dragStartRef.current;
-      setLiveDrag({ id: d.id, x: clamp(d.startTableX + (pt.x - d.startPtX), 0, SEAT_LW), y: clamp(d.startTableY + (pt.y - d.startPtY), 0, SEAT_LH) });
+    const d = dragStartRef.current;
+    if (editable && d) {
+      const dx = pt.x - d.startPtX, dy = pt.y - d.startPtY;
+      if (d.kind === "table") {
+        setLiveDrag({ kind: "table", id: d.id, x: clamp(d.startX + dx, 0, SEAT_LW), y: clamp(d.startY + dy, 0, SEAT_LH) });
+      } else if (d.handle === "p1") {
+        setLiveDrag({ kind: "object", id: d.id, x: clamp(d.startX + dx, 0, SEAT_LW), y: clamp(d.startY + dy, 0, SEAT_LH) });
+      } else if (d.handle === "p2") {
+        setLiveDrag({ kind: "object", id: d.id, x2: clamp(d.startX2 + dx, 0, SEAT_LW), y2: clamp(d.startY2 + dy, 0, SEAT_LH) });
+      } else if (d.startX2 != null) {
+        // dragging a line's body translates both endpoints together
+        setLiveDrag({
+          kind: "object", id: d.id,
+          x: clamp(d.startX + dx, 0, SEAT_LW), y: clamp(d.startY + dy, 0, SEAT_LH),
+          x2: clamp(d.startX2 + dx, 0, SEAT_LW), y2: clamp(d.startY2 + dy, 0, SEAT_LH)
+        });
+      } else {
+        setLiveDrag({ kind: "object", id: d.id, x: clamp(d.startX + dx, 0, SEAT_LW), y: clamp(d.startY + dy, 0, SEAT_LH) });
+      }
     } else if (!editable && panStartRef.current) {
       const p = panStartRef.current;
       onViewTransformChange({ ...(viewTransform || { zoom: 1 }), panX: p.startPanX + (pt.x - p.startPtX), panY: p.startPanY + (pt.y - p.startPtY) });
     }
   }
   function handlePointerUp() {
-    if (editable && dragStartRef.current && liveDrag) onDragTableEnd(liveDrag.id, liveDrag.x, liveDrag.y);
+    const d = dragStartRef.current;
+    if (editable && d && liveDrag) {
+      if (d.kind === "table") onDragTableEnd(liveDrag.id, liveDrag.x, liveDrag.y);
+      else {
+        const changes = {};
+        if (liveDrag.x != null) { changes.x = liveDrag.x; changes.y = liveDrag.y; }
+        if (liveDrag.x2 != null) { changes.x2 = liveDrag.x2; changes.y2 = liveDrag.y2; }
+        onObjectDragEnd(liveDrag.id, changes);
+      }
+    }
     dragStartRef.current = null;
     panStartRef.current = null;
     setLiveDrag(null);
@@ -1227,6 +1360,7 @@ function AdminSeating({ state, actions }) {
   });
 
   const selectedTable = state.seatingTables.find(t => t.id === state.selectedTableId);
+  const selectedObject = state.seatingObjects.find(o => o.id === state.selectedObjectId);
   const seats = selectedTable
     ? Array.from({ length: selectedTable.capacity }, (_, i) => {
         const entry = Object.entries(state.seatingAssignments).find(([, a]) => a.tableId === selectedTable.id && a.seatIndex === i);
@@ -1247,10 +1381,17 @@ function AdminSeating({ state, actions }) {
   return (
     <>
       <p className="lede" style={{ textAlign: "left", margin: "0 0 16px" }}>
-        Tap a table to see its seats. Drag a guest onto an empty seat — or tap a guest, then tap the seat. Drag tables to arrange the room.
+        Tap a table to see its seats. Drag a guest onto an empty seat — or tap a guest, then tap the seat.
+        Drag tables and shapes to arrange the room; drag a wall's endpoints to angle or stretch it.
       </p>
       <div className="seating-toolbar">
         <button className="btn btn-primary" style={{ flex: "none" }} onClick={actions.addTable} disabled={state.loading}>+ Add table</button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="btn btn-ghost" style={{ flex: "none" }} onClick={() => actions.addObject("circle")} disabled={state.loading}>+ Circle</button>
+          <button className="btn btn-ghost" style={{ flex: "none" }} onClick={() => actions.addObject("rect")} disabled={state.loading}>+ Square</button>
+          <button className="btn btn-ghost" style={{ flex: "none" }} onClick={() => actions.addObject("triangle")} disabled={state.loading}>+ Triangle</button>
+          <button className="btn btn-ghost" style={{ flex: "none" }} onClick={() => actions.addObject("line")} disabled={state.loading}>+ Wall / barrier</button>
+        </div>
       </div>
       <div className="seating-layout">
         <div className="seating-sidebar">
@@ -1274,12 +1415,16 @@ function AdminSeating({ state, actions }) {
           <div className="seating-canvas-wrap">
             <SeatingCanvas
               tables={state.seatingTables}
+              objects={state.seatingObjects}
               editable
               selectedTableId={state.selectedTableId}
               onSelectTable={actions.selectTable}
               onDragTableEnd={actions.moveTable}
               occupancy={occupancy}
               occupiedSeats={occupiedSeats}
+              selectedObjectId={state.selectedObjectId}
+              onSelectObject={actions.selectObject}
+              onObjectDragEnd={actions.moveObject}
             />
           </div>
           {selectedTable && state.tableDraft && (
@@ -1330,6 +1475,28 @@ function AdminSeating({ state, actions }) {
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+          {selectedObject && state.objectDraft && (
+            <div className="table-editor-panel">
+              <h4>Edit {selectedObject.type === "line" ? "wall / barrier" : selectedObject.type}</h4>
+              <div className="table-editor-row">
+                <div className="field" style={{ flex: 2 }}><label>Label</label>
+                  <input type="text" placeholder="e.g. Bar, Entrance, Dance floor" value={state.objectDraft.label}
+                    onChange={e => actions.updateObjectDraftField("label", e.target.value)} />
+                </div>
+                {selectedObject.type !== "line" && (
+                  <div className="field"><label>Size</label>
+                    <input type="number" min="10" value={state.objectDraft.size}
+                      onChange={e => actions.updateObjectDraftField("size", Number(e.target.value))} />
+                  </div>
+                )}
+              </div>
+              <div className="btn-row" style={{ marginTop: 0 }}>
+                <button className="btn btn-ghost" onClick={actions.deselectObject}>Close</button>
+                <button className="btn btn-ghost" style={{ color: "var(--error)", borderColor: "var(--error)" }} onClick={actions.deleteObject}>Delete</button>
+                <button className="btn btn-primary" onClick={actions.saveObjectDraft} disabled={state.loading}>Save</button>
+              </div>
             </div>
           )}
         </div>
@@ -1398,10 +1565,13 @@ export default function App() {
     // admin: seating
     seatingTables: [],
     seatingAssignments: {},
+    seatingObjects: [],
     seatingLoaded: false,
     seatingLoading: false,
     selectedTableId: null,
     tableDraft: null,
+    selectedObjectId: null,
+    objectDraft: null,
     armedGuest: null
   });
 
@@ -1602,7 +1772,7 @@ export default function App() {
     if (!silent) patch({ seatingLoading: true });
     try {
       const data = await apiAdmin(state.adminPassword, "list-seating");
-      patch({ seatingLoading: false, seatingLoaded: true, seatingTables: data.tables, seatingAssignments: data.assignments });
+      patch({ seatingLoading: false, seatingLoaded: true, seatingTables: data.tables, seatingAssignments: data.assignments, seatingObjects: data.objects });
     } catch (e) {
       if (!silent) {
         patch({ seatingLoading: false });
@@ -1664,6 +1834,63 @@ export default function App() {
       patch({ seatingTables: data.tables, seatingAssignments: data.assignments });
     } catch (e) {
       showToast("Couldn't save the table's position.");
+    }
+  }
+  function selectObject(id) {
+    const o = id ? state.seatingObjects.find(o => o.id === id) : null;
+    patch({ selectedObjectId: id, objectDraft: o ? { ...o } : null });
+  }
+  function deselectObject() { patch({ selectedObjectId: null, objectDraft: null }); }
+  function updateObjectDraftField(field, value) { patch({ objectDraft: { ...state.objectDraft, [field]: value } }); }
+
+  async function addObject(type) {
+    const n = state.seatingObjects.length + 1;
+    const baseX = 150 + ((n * 83) % 700), baseY = 150 + ((n * 47) % 400);
+    const obj = type === "line"
+      ? { id: genId(), type, label: "", x: baseX, y: baseY, size: 10, x2: baseX + 120, y2: baseY }
+      : { id: genId(), type, label: "", x: baseX, y: baseY, size: 60, x2: null, y2: null };
+    patch({ loading: true });
+    try {
+      const data = await apiAdmin(state.adminPassword, "save-object", obj);
+      patch({ loading: false, seatingObjects: data.objects, selectedObjectId: obj.id, objectDraft: { ...obj }, selectedTableId: null, tableDraft: null });
+    } catch (e) {
+      patch({ loading: false });
+      showToast("Couldn't add that.");
+    }
+  }
+  async function saveObjectDraft() {
+    const d = state.objectDraft;
+    patch({ loading: true });
+    try {
+      const data = await apiAdmin(state.adminPassword, "save-object", { ...d, label: d.label.trim() });
+      patch({ loading: false, seatingObjects: data.objects });
+    } catch (e) {
+      patch({ loading: false });
+      showToast("Couldn't save that.");
+    }
+  }
+  async function deleteObject() {
+    const id = state.selectedObjectId;
+    if (!id) return;
+    patch({ loading: true });
+    try {
+      const data = await apiAdmin(state.adminPassword, "delete-object", { id });
+      patch({ loading: false, seatingObjects: data.objects, selectedObjectId: null, objectDraft: null });
+    } catch (e) {
+      patch({ loading: false });
+      showToast("Couldn't delete that.");
+    }
+  }
+  async function moveObject(id, changes) {
+    const o = state.seatingObjects.find(o => o.id === id);
+    if (!o) return;
+    const updated = { ...o, ...changes };
+    patch({ seatingObjects: state.seatingObjects.map(oo => (oo.id === id ? updated : oo)) });
+    try {
+      const data = await apiAdmin(state.adminPassword, "save-object", updated);
+      patch({ seatingObjects: data.objects });
+    } catch (e) {
+      showToast("Couldn't save that shape's position.");
     }
   }
   function armGuest(memberId, inviteCode) {
@@ -1750,7 +1977,8 @@ export default function App() {
     startAddHousehold, startEditHousehold, cancelHouseholdDraft, updateHouseholdField, updateHMemberName, addHMember, removeHMember, toggleHEvent, saveHousehold, deleteHousehold,
     sendBroadcast,
     previewInvite, exitPreview, toggleRow, copyLink, exportCSV,
-    loadSeating, selectTable, deselectTable, updateTableDraftField, addTable, saveTableDraft, deleteTable, moveTable, armGuest, assignSeat
+    loadSeating, selectTable, deselectTable, updateTableDraftField, addTable, saveTableDraft, deleteTable, moveTable, armGuest, assignSeat,
+    selectObject, deselectObject, updateObjectDraftField, addObject, saveObjectDraft, deleteObject, moveObject
   };
 
   /* ========================= MASTER RENDER ========================= */

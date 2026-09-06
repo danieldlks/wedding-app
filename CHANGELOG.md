@@ -4,6 +4,36 @@ Notable changes to the RSVP app, newest first. See `plan.md`/`design.md` for the
 broader feature history (v1 → v3); this file tracks discrete fixes and changes
 made along the way.
 
+## 2026-09-06 — Add floor plan landmarks (bar, doors, walls) to the seat map
+
+**Feature:** The Seating tab now has a shape palette (+ Circle, + Square,
++ Triangle, + Wall/barrier) for placing non-seating landmarks on the floor
+plan — a bar, DJ booth, entrance, dance floor, a wall segment — each with a
+free-text label. These are a separate `floor_objects` table from
+`seating_tables`, since they carry no capacity or guest assignment, just a
+shape, position, and label. Walls/barriers are lines with two independently
+draggable endpoints (drag either end to stretch or angle it; drag the middle
+to move the whole segment) rather than a single draggable point, since a
+wall's whole point is often *not* being axis-aligned.
+
+**Guest-visible:** These landmarks now render on the guest's "Find My Seat"
+map too, alongside their highlighted seat — "near the bar, away from the
+door" is exactly the kind of context a static seat number can't give. Since
+they carry no guest data, the `/api/seating` endpoint returns all of them
+regardless of who's asking, unlike tables which stay scoped to the
+requesting household.
+
+**Verified:** Local smoke test — created one of each shape via the admin API,
+confirmed the guest endpoint returns them alongside only the household's own
+table. Playwright (local-only) confirmed the palette buttons render, dragging
+a wall's endpoint reshapes it and persists the new coordinates to D1, and the
+guest view renders all four landmark shapes correctly at their positions.
+
+**Files:** `schema.sql`, `functions/_lib/db.js`, `functions/api/admin.js`,
+`functions/api/seating.js`, `src/App.jsx`.
+
+---
+
 ## 2026-09-06 — Upgrade seat map to per-seat assignment
 
 **Feature:** The seat map from the previous entry assigned guests to a whole

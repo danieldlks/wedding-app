@@ -72,6 +72,16 @@ export async function onRequestPost({ request, env }) {
       return Response.json(await listSeating(env.DB));
     }
 
+    case "save-object":
+      return Response.json(await saveFloorObject(env.DB, payload || {}));
+
+    case "delete-object": {
+      const id = String(payload?.id || "").trim();
+      if (!id) return new Response("Missing id", { status: 400 });
+      await env.DB.prepare("DELETE FROM floor_objects WHERE id = ?").bind(id).run();
+      return Response.json(await listSeating(env.DB));
+    }
+
     case "broadcast": {
       const subject = String(payload?.subject || "").trim();
       const message = String(payload?.message || "").trim();
@@ -142,6 +152,30 @@ async function saveTable(db, p) {
       label = excluded.label, shape = excluded.shape, x = excluded.x, y = excluded.y,
       size = excluded.size, rotation = excluded.rotation, capacity = excluded.capacity
   `).bind(id, label, shape, x, y, size, rotation, capacity, createdAt).run();
+
+  return listSeating(db);
+}
+
+async function saveFloorObject(db, p) {
+  const id = String(p.id || "").trim() || genId();
+  const type = ["circle", "rect", "triangle", "line"].includes(p.type) ? p.type : "rect";
+  const label = String(p.label || "").trim();
+  const x = Number.isFinite(Number(p.x)) ? Number(p.x) : 100;
+  const y = Number.isFinite(Number(p.y)) ? Number(p.y) : 100;
+  const size = Math.max(10, Number(p.size) || 60);
+  const x2 = p.x2 != null && Number.isFinite(Number(p.x2)) ? Number(p.x2) : null;
+  const y2 = p.y2 != null && Number.isFinite(Number(p.y2)) ? Number(p.y2) : null;
+
+  const existing = await db.prepare("SELECT created_at FROM floor_objects WHERE id = ?").bind(id).first();
+  const createdAt = existing?.created_at || new Date().toISOString();
+
+  await db.prepare(`
+    INSERT INTO floor_objects (id, type, label, x, y, size, x2, y2, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      type = excluded.type, label = excluded.label, x = excluded.x, y = excluded.y,
+      size = excluded.size, x2 = excluded.x2, y2 = excluded.y2
+  `).bind(id, type, label, x, y, size, x2, y2, createdAt).run();
 
   return listSeating(db);
 }
