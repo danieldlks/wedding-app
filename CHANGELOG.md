@@ -4,6 +4,51 @@ Notable changes to the RSVP app, newest first. See `plan.md`/`design.md` for the
 broader feature history (v1 → v3); this file tracks discrete fixes and changes
 made along the way.
 
+## 2026-09-07 — Fix: seat map "adding a shape crashes localhost"
+
+**Issue reported:** after adding a shape (or a wall/barrier) in the admin
+Seating tab, `wrangler pages dev` would sometimes die entirely, and further
+add-shape attempts would then silently fail.
+
+**Root cause (the crash):** NOT an application bug. `wrangler pages dev`'s
+own DevTools-inspector connection (`InspectorProxyWorker`, a background
+`Runtime.getIsolateId` heartbeat every 10s) intermittently loses its
+WebSocket ("Network connection lost") and wrangler treats that as fatal,
+killing the whole dev server. This is a known, still-open upstream bug —
+see [cloudflare/workers-sdk#4562](https://github.com/cloudflare/workers-sdk/issues/4562)
+and its more recent duplicates/regressions (#15317, #15421) — reproducible
+independent of anything this app does; confirmed it also crashes with zero
+shapes added, just sitting idle. Upgrading wrangler 4.125.0 → 4.129.0 did
+not fix it (same crash, same stack, on the latest version). Mitigated with
+a `pages:dev:resilient` npm script that auto-restarts wrangler when this
+happens — local D1 state lives on disk, so a crash doesn't lose data, just
+needs a page refresh.
+
+**Root cause (the "can't add another shape after"):** a real bug, found
+while investigating. The admin Seating tab polls in the background every
+5s; that poll and a manual add/move/delete/assign call could resolve out of
+order (e.g. a poll issued just before a click resolving just after it), and
+since both just overwrote `seatingTables`/`seatingObjects`/`seatingAssignments`
+unconditionally, the stale (older) response could silently revert a shape
+that had just been added — which looks exactly like "I added it and it
+didn't work." Fixed with a monotonic request-sequence guard
+(`seatingMutate()` in `src/App.jsx`): a response is only applied if it's
+still the most recently *issued* seating request by the time it comes back;
+anything superseded by a newer request is dropped.
+
+**Verified:** reproduced the actual wrangler crash directly (confirmed via
+its own debug log, not just inferred), confirmed it's independent of the
+app by hitting it during idle time with no shapes added, confirmed
+upgrading wrangler doesn't fix it, and confirmed `pages:dev:resilient`
+auto-recovers within ~1s of a kill -9 to the wrangler process, with D1 data
+intact after. Also ran an extended 70+ second test adding six shapes across
+multiple poll cycles with the sequence-guard fix in place — no data loss,
+no reverted shapes.
+
+**Files:** `src/App.jsx`, `package.json`, `README.md`.
+
+---
+
 ## 2026-09-06 — Seat map polish: room texture, oval/banquet tables, grid-snap, PNG export
 
 **Feature:** Four self-contained additions to the seat map, chosen because

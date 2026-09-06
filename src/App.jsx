@@ -1663,6 +1663,22 @@ export default function App() {
 
   const patch = p => setState(s => ({ ...s, ...p }));
 
+  // Seating requests (background polling + every add/move/delete/assign) can
+  // resolve out of order — e.g. a 5s poll fired before a manual "add shape"
+  // click can still land after it. Without a guard, that stale response
+  // overwrites the newer state and the just-added shape silently vanishes,
+  // which looks exactly like "adding a shape doesn't work." This ref tracks
+  // the most recently *issued* seating request; a response only gets applied
+  // if it's still the newest one by the time it comes back.
+  const seatingSeqRef = useRef(0);
+  async function seatingMutate(action, payload) {
+    const mySeq = ++seatingSeqRef.current;
+    const data = await apiAdmin(state.adminPassword, action, payload);
+    if (seatingSeqRef.current !== mySeq) return null; // superseded by a newer request; drop it
+    patch({ seatingTables: data.tables, seatingAssignments: data.assignments, seatingObjects: data.objects });
+    return data;
+  }
+
   useEffect(() => { init(); }, []);
 
   async function init() {
@@ -1857,8 +1873,9 @@ export default function App() {
   async function loadSeating(silent) {
     if (!silent) patch({ seatingLoading: true });
     try {
-      const data = await apiAdmin(state.adminPassword, "list-seating");
-      patch({ seatingLoading: false, seatingLoaded: true, seatingTables: data.tables, seatingAssignments: data.assignments, seatingObjects: data.objects });
+      const data = await seatingMutate("list-seating");
+      if (data) patch({ seatingLoading: false, seatingLoaded: true });
+      else if (!silent) patch({ seatingLoading: false });
     } catch (e) {
       if (!silent) {
         patch({ seatingLoading: false });
@@ -1882,8 +1899,9 @@ export default function App() {
     const table = { id: genId(), label: `Table ${n}`, shape: "round", x: 140 + ((n * 97) % 720), y: 110 + ((n * 61) % 460), size: 90, rotation: 0, capacity: 8 };
     patch({ loading: true });
     try {
-      const data = await apiAdmin(state.adminPassword, "save-table", table);
-      patch({ loading: false, seatingTables: data.tables, seatingAssignments: data.assignments, selectedTableId: table.id, tableDraft: { ...table } });
+      const data = await seatingMutate("save-table", table);
+      if (data) patch({ loading: false, selectedTableId: table.id, tableDraft: { ...table } });
+      else patch({ loading: false });
     } catch (e) {
       patch({ loading: false });
       showToast("Couldn't add a table.");
@@ -1895,9 +1913,9 @@ export default function App() {
     const payload = { ...d, label: d.label.trim(), capacity: Math.max(1, Number(d.capacity) || 1) };
     patch({ loading: true });
     try {
-      const data = await apiAdmin(state.adminPassword, "save-table", payload);
+      await seatingMutate("save-table", payload);
       // Keep the panel open (rather than closing it) so seats can be assigned right after saving details.
-      patch({ loading: false, seatingTables: data.tables, seatingAssignments: data.assignments });
+      patch({ loading: false });
     } catch (e) {
       patch({ loading: false });
       showToast("Couldn't save the table.");
@@ -1908,8 +1926,9 @@ export default function App() {
     if (!id) return;
     patch({ loading: true });
     try {
-      const data = await apiAdmin(state.adminPassword, "delete-table", { id });
-      patch({ loading: false, seatingTables: data.tables, seatingAssignments: data.assignments, selectedTableId: null, tableDraft: null });
+      const data = await seatingMutate("delete-table", { id });
+      if (data) patch({ loading: false, selectedTableId: null, tableDraft: null });
+      else patch({ loading: false });
     } catch (e) {
       patch({ loading: false });
       showToast("Couldn't delete the table.");
@@ -1920,8 +1939,7 @@ export default function App() {
     if (!t) return;
     patch({ seatingTables: state.seatingTables.map(tt => (tt.id === id ? { ...tt, x, y } : tt)) });
     try {
-      const data = await apiAdmin(state.adminPassword, "save-table", { ...t, x, y });
-      patch({ seatingTables: data.tables, seatingAssignments: data.assignments });
+      await seatingMutate("save-table", { ...t, x, y });
     } catch (e) {
       showToast("Couldn't save the table's position.");
     }
@@ -1941,8 +1959,9 @@ export default function App() {
       : { id: genId(), type, label: "", x: baseX, y: baseY, size: 60, x2: null, y2: null };
     patch({ loading: true });
     try {
-      const data = await apiAdmin(state.adminPassword, "save-object", obj);
-      patch({ loading: false, seatingObjects: data.objects, selectedObjectId: obj.id, objectDraft: { ...obj }, selectedTableId: null, tableDraft: null });
+      const data = await seatingMutate("save-object", obj);
+      if (data) patch({ loading: false, selectedObjectId: obj.id, objectDraft: { ...obj }, selectedTableId: null, tableDraft: null });
+      else patch({ loading: false });
     } catch (e) {
       patch({ loading: false });
       showToast("Couldn't add that.");
@@ -1952,8 +1971,8 @@ export default function App() {
     const d = state.objectDraft;
     patch({ loading: true });
     try {
-      const data = await apiAdmin(state.adminPassword, "save-object", { ...d, label: d.label.trim() });
-      patch({ loading: false, seatingObjects: data.objects });
+      await seatingMutate("save-object", { ...d, label: d.label.trim() });
+      patch({ loading: false });
     } catch (e) {
       patch({ loading: false });
       showToast("Couldn't save that.");
@@ -1964,8 +1983,9 @@ export default function App() {
     if (!id) return;
     patch({ loading: true });
     try {
-      const data = await apiAdmin(state.adminPassword, "delete-object", { id });
-      patch({ loading: false, seatingObjects: data.objects, selectedObjectId: null, objectDraft: null });
+      const data = await seatingMutate("delete-object", { id });
+      if (data) patch({ loading: false, selectedObjectId: null, objectDraft: null });
+      else patch({ loading: false });
     } catch (e) {
       patch({ loading: false });
       showToast("Couldn't delete that.");
@@ -1977,8 +1997,7 @@ export default function App() {
     const updated = { ...o, ...changes };
     patch({ seatingObjects: state.seatingObjects.map(oo => (oo.id === id ? updated : oo)) });
     try {
-      const data = await apiAdmin(state.adminPassword, "save-object", updated);
-      patch({ seatingObjects: data.objects });
+      await seatingMutate("save-object", updated);
     } catch (e) {
       showToast("Couldn't save that shape's position.");
     }
@@ -1994,8 +2013,9 @@ export default function App() {
   async function assignSeat(memberId, inviteCode, tableId, seatIndex) {
     patch({ loading: true });
     try {
-      const data = await apiAdmin(state.adminPassword, "assign-seat", { memberId, inviteCode, tableId, seatIndex });
-      patch({ loading: false, seatingTables: data.tables, seatingAssignments: data.assignments, armedGuest: null });
+      const data = await seatingMutate("assign-seat", { memberId, inviteCode, tableId, seatIndex });
+      if (data) patch({ loading: false, armedGuest: null });
+      else patch({ loading: false });
     } catch (e) {
       patch({ loading: false });
       showToast(e.status === 409 ? "That seat is already taken — pick another." : "Couldn't update that seat assignment.");

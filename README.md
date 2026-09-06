@@ -57,6 +57,17 @@ npm run pages:dev     # builds + runs the full stack (frontend + /api + D1) at h
 `wrangler pages dev` instance on port 8788 — handy for fast frontend iteration
 while a `wrangler pages dev` is running in another terminal.)
 
+**If `wrangler pages dev` randomly dies** with `Error in ProxyController: Error
+inside ProxyWorker` / `Network connection lost.` in the terminal, that's a known
+upstream bug in wrangler's own local DevTools-inspector connection, not this
+app — see [cloudflare/workers-sdk#4562](https://github.com/cloudflare/workers-sdk/issues/4562)
+and its follow-ups (still open as of wrangler 4.129). It can happen at any
+point in a long-running session, unrelated to what you were doing in the app
+at the time. Local D1 state lives on disk (`.wrangler/state/`), so a crash
+doesn't lose anything you'd already saved — just refresh the page after it
+restarts. Run `npm run pages:dev:resilient` instead of `pages:dev` to
+auto-restart it when this happens.
+
 ## Deploy
 
 ```
