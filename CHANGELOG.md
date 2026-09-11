@@ -4,6 +4,34 @@ Notable changes to the RSVP app, newest first. See `plan.md`/`design.md` for the
 broader feature history (v1 → v3); this file tracks discrete fixes and changes
 made along the way.
 
+## 2026-09-07 — Guest seat map shows the full floor plan, not just your own table
+
+**Change:** `/api/seating` previously returned only the table(s) a household's
+own members were seated at. It now returns every table on the floor plan (so
+a guest can see the whole room — where the head table is, how their table
+relates to the dance floor, etc.) while `mySeats` still only ever contains
+that invite code's own household. Tables carry no guest-identifying data
+themselves (position/shape/label/capacity are host-authored, not personal),
+so returning all of them is safe — no household can see *who* is sitting
+anywhere but their own seat.
+
+**Frontend fix that had to go with it:** the guest view's default/recenter
+zoom used to fit to `seating.tables`, which was fine when that list was just
+the guest's own table(s). Now that it's every table in the room, fitting to
+the full list would zoom out to the whole floor plan instead of the guest's
+seat — undoing the "find your exact seat, zoomed in" point of the page. Fixed
+by deriving `myTables` (the subset of tables the guest is actually seated at)
+and fitting/recentering to that, while the canvas still renders the full
+`seating.tables` list for room context.
+
+**Verified:** confirmed via two real test households seated at two different
+tables — both now see both tables in the response, but each one's `mySeats`
+array contains only their own two members, never the other household's.
+
+**Files:** `functions/api/seating.js`, `src/App.jsx`.
+
+---
+
 ## 2026-09-07 — Fix: seat map "adding a shape crashes localhost"
 
 **Issue reported:** after adding a shape (or a wall/barrier) in the admin
