@@ -64,5 +64,23 @@ export async function listSeating(db) {
   const { results: objectRows } = await db.prepare("SELECT * FROM floor_objects ORDER BY created_at ASC").all();
   const assignments = {};
   for (const r of assignmentRows) assignments[r.member_id] = { tableId: r.table_id, seatIndex: r.seat_index };
-  return { tables: tableRows.map(rowToTable), assignments, objects: objectRows.map(rowToFloorObject) };
+  const reveal = await getSeatingRevealSetting(db);
+  return {
+    tables: tableRows.map(rowToTable), assignments, objects: objectRows.map(rowToFloorObject),
+    revealMode: reveal.mode, revealAt: reveal.revealAt
+  };
+}
+
+export async function getSeatingRevealSetting(db) {
+  const { results } = await db.prepare(
+    "SELECT key, value FROM app_settings WHERE key IN ('seating_reveal_mode', 'seating_reveal_at')"
+  ).all();
+  const map = Object.fromEntries(results.map(r => [r.key, r.value]));
+  return { mode: map.seating_reveal_mode || "locked", revealAt: map.seating_reveal_at || null };
+}
+
+export function isSeatingRevealed(setting) {
+  if (setting.mode === "open") return true;
+  if (setting.mode === "scheduled" && setting.revealAt) return Date.now() >= new Date(setting.revealAt).getTime();
+  return false;
 }
