@@ -568,7 +568,14 @@ function GuestSeating({ state, actions }) {
       <h2>Find Your Seat</h2>
       <p className="lede">Your reception table for the day.</p>
       {seating === null && <p className="helptext" style={{ textAlign: "center" }}>Loading…</p>}
-      {seating && seating.mySeats.length === 0 && (
+      {seating && seating.locked && (
+        <div className="seat-empty"><div className="em-ic">✦</div>
+          {seating.revealAt
+            ? `Seating opens ${new Date(seating.revealAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} — check back then!`
+            : "Seating hasn't opened yet — check back closer to the big day!"}
+        </div>
+      )}
+      {seating && !seating.locked && seating.mySeats.length === 0 && (
         <div className="seat-empty"><div className="em-ic">✦</div>Seating hasn't been finalised yet — check back closer to the big day!</div>
       )}
       {seating && seating.mySeats.length > 0 && (
@@ -1459,6 +1466,62 @@ function findGuestByMemberId(guestList, memberId) {
   return { memberId, name: "Unknown guest", inviteCode: null };
 }
 
+// datetime-local inputs work in the viewer's local time with no timezone
+// info; we store revealAt as a UTC ISO string, so converting for display in
+// the input has to go through local Date components both ways or the
+// picker silently shows the wrong wall-clock time.
+function isoToLocalInputValue(iso) {
+  const d = new Date(iso);
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function SeatingRevealPanel({ state, actions, selectStyle }) {
+  const [mode, setMode] = useState(state.seatingRevealMode);
+  const [revealAt, setRevealAt] = useState(state.seatingRevealAt ? isoToLocalInputValue(state.seatingRevealAt) : "");
+
+  const isRevealedNow = state.seatingRevealMode === "open" ||
+    (state.seatingRevealMode === "scheduled" && state.seatingRevealAt && Date.now() >= new Date(state.seatingRevealAt).getTime());
+
+  const statusText = state.seatingRevealMode === "open"
+    ? "🔓 Open — guests can see their seat right now."
+    : state.seatingRevealMode === "scheduled" && state.seatingRevealAt
+      ? (isRevealedNow
+          ? `🔓 Open — the scheduled time (${new Date(state.seatingRevealAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}) has passed, so guests can see their seat now.`
+          : `🕐 Scheduled — guests will be able to see their seat starting ${new Date(state.seatingRevealAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}.`)
+      : "🔒 Locked — guests cannot see their seat yet, no matter how they access the page.";
+
+  function save() {
+    actions.saveSeatingReveal(mode, mode === "scheduled" && revealAt ? new Date(revealAt).toISOString() : null);
+  }
+
+  return (
+    <div className="table-editor-panel" style={{ marginTop: 0, marginBottom: 22 }}>
+      <h4>Guest seat access</h4>
+      <p className="lede" style={{ textAlign: "left", margin: "0 0 16px" }}>{statusText}</p>
+      <div className="table-editor-row">
+        <div className="field">
+          <label>Mode</label>
+          <select style={selectStyle} value={mode} onChange={e => setMode(e.target.value)}>
+            <option value="locked">Locked — hidden from every guest</option>
+            <option value="scheduled">Scheduled — reveal automatically at a set time</option>
+            <option value="open">Open now</option>
+          </select>
+        </div>
+        {mode === "scheduled" && (
+          <div className="field">
+            <label>Reveal at</label>
+            <input type="datetime-local" value={revealAt} onChange={e => setRevealAt(e.target.value)} />
+          </div>
+        )}
+      </div>
+      <div className="btn-row" style={{ marginTop: 0 }}>
+        <button className="btn btn-primary" onClick={save} disabled={state.loading || (mode === "scheduled" && !revealAt)}>Save</button>
+      </div>
+    </div>
+  );
+}
+
 function AdminSeating({ state, actions }) {
   useEffect(() => { if (!state.seatingLoaded && !state.seatingLoading) actions.loadSeating(); }, [state.seatingLoaded, state.seatingLoading]);
 
@@ -1508,6 +1571,7 @@ function AdminSeating({ state, actions }) {
 
   return (
     <>
+      <SeatingRevealPanel state={state} actions={actions} selectStyle={selectStyle} />
       <p className="lede" style={{ textAlign: "left", margin: "0 0 16px" }}>
         Tap a table to see its seats. Drag a guest onto an empty seat — or tap a guest, then tap the seat.
         Drag tables and shapes to arrange the room; drag a wall's endpoints to angle or stretch it.
@@ -2204,6 +2268,8 @@ export default function App() {
     seatingTables: [],
     seatingAssignments: {},
     seatingObjects: [],
+    seatingRevealMode: "locked",
+    seatingRevealAt: null,
     seatingLoaded: false,
     seatingLoading: false,
     selectedTableId: null,
@@ -2227,8 +2293,18 @@ export default function App() {
     const mySeq = ++seatingSeqRef.current;
     const data = await apiAdmin(state.adminPassword, action, payload);
     if (seatingSeqRef.current !== mySeq) return null; // superseded by a newer request; drop it
-    patch({ seatingTables: data.tables, seatingAssignments: data.assignments, seatingObjects: data.objects });
+    patch({ seatingTables: data.tables, seatingAssignments: data.assignments, seatingObjects: data.objects, seatingRevealMode: data.revealMode, seatingRevealAt: data.revealAt });
     return data;
+  }
+  async function saveSeatingReveal(mode, revealAt) {
+    patch({ loading: true });
+    try {
+      await seatingMutate("save-seating-reveal", { mode, revealAt });
+      patch({ loading: false });
+    } catch (e) {
+      patch({ loading: false });
+      showToast("Couldn't save the seating reveal setting.");
+    }
   }
 
   useEffect(() => { init(); }, []);
@@ -2646,7 +2722,7 @@ export default function App() {
     previewInvite, exitPreview, toggleRow, copyLink, exportCSV,
     loadSeating, selectTable, deselectTable, updateTableDraftField, addTable, saveTableDraft, deleteTable, moveTable, armGuest, assignSeat,
     selectObject, deselectObject, updateObjectDraftField, addObject, saveObjectDraft, deleteObject, moveObject,
-    setTableShape, downloadFloorPlan
+    setTableShape, downloadFloorPlan, saveSeatingReveal
   };
 
   /* ========================= MASTER RENDER ========================= */

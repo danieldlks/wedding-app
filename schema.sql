@@ -68,3 +68,16 @@ CREATE TABLE IF NOT EXISTS floor_objects (
   y2 REAL,
   created_at TEXT NOT NULL
 );
+
+-- Generic global settings store — currently just the guest seating-reveal
+-- gate, kept as a key/value table rather than a dedicated single-row table
+-- so a future admin-configurable toggle doesn't need its own migration.
+-- Keys used today: 'seating_reveal_mode' ('locked' | 'scheduled' | 'open',
+-- absence = 'locked') and 'seating_reveal_at' (ISO 8601 UTC timestamp,
+-- only meaningful when mode = 'scheduled'). See isSeatingRevealed() in
+-- functions/_lib/db.js — this is enforced server-side in
+-- functions/api/seating.js, not just hidden in the guest UI.
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);

@@ -4,6 +4,38 @@ Notable changes to the RSVP app, newest first. See `plan.md`/`design.md` for the
 broader feature history (v1 → v3); this file tracks discrete fixes and changes
 made along the way.
 
+## 2026-09-12 — Add admin-controlled seating reveal gate
+
+**Feature:** Guests can no longer see "Find My Seat" until the admin allows
+it — either by flipping it open manually or scheduling an exact reveal
+time (e.g. the wedding day itself). Three modes, stored in a new generic
+`app_settings` key-value table: **Locked** (hidden from every guest, the
+default), **Scheduled** (auto-opens the moment a chosen date/time passes,
+checked live on every request — no cron job needed), and **Open now**
+(manual override). Controlled from a new "Guest seat access" panel at the
+top of the admin Seating tab.
+
+**Enforced server-side, not just hidden in the UI:** `functions/api/seating.js`
+checks the reveal setting *before* touching any seat data and returns an
+empty/locked response if it's not open yet — a guest can't bypass this by
+inspecting network requests, since the API itself refuses to hand back
+seating data until the gate opens. When locked, the guest page shows a
+friendly "Seating opens [time] — check back then!" (or a generic message
+if no schedule is set) instead of the seat map; the existing 20s polling
+means a guest with the page already open sees it unlock automatically.
+
+**Verified:** Backend — confirmed locked-by-default (no settings row),
+open mode, and both sides of scheduled mode (future timestamp stays
+locked, past timestamp auto-opens) via direct API calls. Full UI — admin
+panel saves correctly and shows accurate status text, guest page reflects
+the same state/time consistently, reset to `locked` after testing so
+nothing was left in a revealed state.
+
+**Files:** `schema.sql`, `functions/_lib/db.js`, `functions/api/admin.js`,
+`functions/api/seating.js`, `src/App.jsx`.
+
+---
+
 ## 2026-09-12 — Add admin-only "Venue Display" — full seating chart for a lobby screen/poster
 
 **Feature:** A new full-screen view, reached only via a "🖥 Open venue display"

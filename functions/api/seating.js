@@ -1,4 +1,4 @@
-import { rowToTable, rowToFloorObject } from "../_lib/db.js";
+import { rowToTable, rowToFloorObject, getSeatingRevealSetting, isSeatingRevealed } from "../_lib/db.js";
 
 // Guest-facing: returns the full floor plan (every table + every landmark)
 // so a guest can see the whole room, but WHO's sitting where stays scoped —
@@ -7,6 +7,10 @@ import { rowToTable, rowToFloorObject } from "../_lib/db.js";
 // host-authored, not personal data), so showing all of them is safe; the
 // canvas also only ever highlights/labels the requester's own seat(s), never
 // anyone else's, so nothing here leaks another household's assignment.
+//
+// Also gated behind the admin-configured seating-reveal setting (locked /
+// scheduled / open) — enforced HERE, not just hidden in the guest UI, so a
+// guest can't just inspect network requests to see their seat early.
 export async function onRequestGet({ request, env }) {
   const url = new URL(request.url);
   const code = (url.searchParams.get("code") || "").trim().toUpperCase();
@@ -14,6 +18,11 @@ export async function onRequestGet({ request, env }) {
 
   const household = await env.DB.prepare("SELECT members FROM households WHERE invite_code = ?").bind(code).first();
   if (!household) return new Response("Not found", { status: 404 });
+
+  const reveal = await getSeatingRevealSetting(env.DB);
+  if (!isSeatingRevealed(reveal)) {
+    return Response.json({ tables: [], mySeats: [], objects: [], locked: true, revealAt: reveal.mode === "scheduled" ? reveal.revealAt : null });
+  }
 
   const { results: assignmentRows } = await env.DB.prepare(
     "SELECT member_id, table_id, seat_index FROM seat_assignments WHERE invite_code = ?"

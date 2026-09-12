@@ -33,6 +33,20 @@ export async function onRequestPost({ request, env }) {
     case "list-seating":
       return Response.json(await listSeating(env.DB));
 
+    case "save-seating-reveal": {
+      const mode = ["locked", "scheduled", "open"].includes(payload?.mode) ? payload.mode : "locked";
+      const revealAt = mode === "scheduled" && payload?.revealAt ? String(payload.revealAt) : null;
+      await env.DB.prepare(`
+        INSERT INTO app_settings (key, value) VALUES ('seating_reveal_mode', ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      `).bind(mode).run();
+      await env.DB.prepare(`
+        INSERT INTO app_settings (key, value) VALUES ('seating_reveal_at', ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      `).bind(revealAt).run();
+      return Response.json(await listSeating(env.DB));
+    }
+
     case "save-table":
       return Response.json(await saveTable(env.DB, payload || {}));
 
