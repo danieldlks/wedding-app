@@ -4,6 +4,36 @@ Notable changes to the RSVP app, newest first. See `plan.md`/`design.md` for the
 broader feature history (v1 → v3); this file tracks discrete fixes and changes
 made along the way.
 
+## 2026-09-12 — Add admin-only "Venue Display" — full seating chart for a lobby screen/poster
+
+**Feature:** A new full-screen view, reached only via a "🖥 Open venue display"
+button in the admin Seating tab (never a public URL), showing every seated
+guest's name alongside the floor plan — the large-format "find your name,
+find your table" board a couple would display on a lobby screen/tablet or
+print as a poster. Deliberately separate from the guest-facing "Find My Seat"
+page, which stays scoped to a guest's own household — Venue Display is meant
+to show everyone, which is normal for physical seating-chart signage but has
+to stay behind the admin password rather than a link any guest could open.
+
+Guests are listed alphabetically with a live search box; typing filters
+instantly. Clicking a name (or a search result) highlights their exact seat
+on the floor plan and smoothly pans/zooms the canvas to center on their
+table, reusing the same `SeatingCanvas`/highlight mechanism the personal
+"Find My Seat" page already uses — no new rendering code, no new backend
+endpoint, since the Seating tab already has every household, table, and
+assignment loaded by the time this view opens.
+
+**Verified:** Local smoke test with two real seated households — search
+filters correctly while preserving the current highlight, clicking a guest
+animates to and highlights their table, "show whole room" resets cleanly,
+and exiting returns to the admin dashboard. Also separately confirmed the
+personal "Find My Seat" guest page is unaffected and has no link to this
+view, preserving the existing per-household privacy scoping.
+
+**Files:** `src/App.jsx`.
+
+---
+
 ## 2026-09-07 — Guest seat map shows the full floor plan, not just your own table
 
 **Change:** `/api/seating` previously returned only the table(s) a household's

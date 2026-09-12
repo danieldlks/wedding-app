@@ -300,6 +300,34 @@ const CSS = `
 .seat-empty{text-align:center;padding:50px 20px;color:var(--ink-soft);}
 .seat-empty .em-ic{font-family:var(--display);font-size:40px;color:var(--gold-soft);margin-bottom:10px;}
 @media(max-width:720px){.seating-sidebar{width:100%;max-height:220px;}}
+
+/* venue display */
+.venue-display{min-height:100vh;background:var(--paper);}
+.venue-header{background:radial-gradient(ellipse at 50% -20%,rgba(169,129,76,.22),transparent 60%),var(--ink);color:var(--paper);text-align:center;padding:48px 40px 34px;position:relative;overflow:hidden;}
+.venue-header::before{content:"";position:absolute;inset:14px;border:1px solid rgba(216,200,165,.32);pointer-events:none;}
+.venue-header .eyebrow{font-size:12px;letter-spacing:.26em;text-transform:uppercase;font-weight:600;color:var(--gold-soft);margin:0 0 14px;}
+.venue-header h1{font-family:var(--display);font-weight:500;font-style:italic;font-size:clamp(34px,5vw,54px);line-height:1.05;margin:0 0 8px;}
+.venue-header .sub{font-family:var(--display);font-size:clamp(14px,1.6vw,17px);color:var(--gold-soft);margin:0;}
+.venue-exit{position:absolute;top:20px;right:24px;background:none;border:1px solid rgba(216,200,165,.5);color:var(--gold-soft);font-size:12.5px;padding:8px 14px;border-radius:16px;}
+.venue-main{max-width:1360px;margin:0 auto;display:grid;grid-template-columns:1.15fr 1fr;gap:0;}
+.venue-panel{padding:36px 40px;}
+.venue-panel + .venue-panel{border-left:1px solid var(--gold-soft);}
+.venue-panel .panel-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:18px;gap:16px;}
+.venue-panel .panel-head h2{font-family:var(--display);font-weight:600;font-size:24px;margin:0;}
+.venue-panel .panel-head .count{font-size:12px;color:var(--ink-soft);white-space:nowrap;}
+.venue-search input{width:100%;font-size:15px;padding:11px 16px;border:1px solid var(--gold-soft);border-radius:3px;margin-bottom:22px;background:#fff;}
+.venue-search input:focus{outline:none;border-color:var(--sage);box-shadow:0 0 0 3px rgba(110,127,99,.15);}
+.venue-columns{column-count:2;column-gap:32px;}
+.venue-columns .letter-group{break-inside:avoid;margin-bottom:18px;}
+.venue-columns .letter-group h3{font-family:var(--display);font-size:14px;font-weight:600;color:var(--gold);text-transform:uppercase;letter-spacing:.14em;margin:0 0 6px;border-bottom:1px solid var(--gold-soft);padding-bottom:3px;}
+.venue-guest-row{display:flex;width:100%;align-items:baseline;gap:6px;padding:4px 0;font-size:13.5px;background:none;border:none;text-align:left;color:var(--ink);}
+.venue-guest-row .guest-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.venue-guest-row .leader{flex:1;border-bottom:1px dotted var(--gold-soft);height:1em;transform:translateY(-3px);min-width:8px;}
+.venue-guest-row .badge{flex-shrink:0;font-size:11px;font-weight:600;color:var(--ink);background:var(--paper-2);border:1px solid var(--gold-soft);border-radius:11px;padding:2.5px 9px;}
+.venue-guest-row.active .badge{background:var(--gold);color:#fff;border-color:var(--gold);}
+.venue-guest-row.active .guest-name{color:var(--sage-dark);font-weight:600;}
+.no-match{text-align:center;color:var(--ink-soft);font-style:italic;padding:20px 0;}
+@media(max-width:880px){.venue-main{grid-template-columns:1fr;}.venue-panel + .venue-panel{border-left:none;border-top:1px solid var(--gold-soft);}.venue-columns{column-count:1;}}
 `;
 
 /* =========================================================
@@ -1471,6 +1499,7 @@ function AdminSeating({ state, actions }) {
           <button className="btn btn-ghost" style={{ flex: "none" }} onClick={() => actions.addObject("triangle")} disabled={state.loading}>+ Triangle</button>
           <button className="btn btn-ghost" style={{ flex: "none" }} onClick={() => actions.addObject("line")} disabled={state.loading}>+ Wall / barrier</button>
           <button className="btn btn-ghost" style={{ flex: "none" }} onClick={actions.downloadFloorPlan}>⬇ Download floor plan</button>
+          <button className="btn btn-ghost" style={{ flex: "none" }} onClick={() => actions.patch({ view: "venue-display" })}>🖥 Open venue display</button>
         </div>
       </div>
       <div className="seating-layout">
@@ -1597,6 +1626,139 @@ function AdminSeating({ state, actions }) {
   );
 }
 
+// Full-screen, admin-only: a large-format "find your name, find your table"
+// display meant for a lobby screen/tablet or a printed poster — distinct from
+// the personal per-household "Find My Seat" guest page (GuestSeating above),
+// which deliberately hides everyone else's assignment. This one shows every
+// seated guest, which is expected for physical venue signage but is gated
+// behind admin auth (reached only via a button in the Seating tab) rather
+// than a public URL, since nothing here should be reachable without the
+// admin password.
+function VenueDisplay({ state, actions }) {
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState(null); // { memberId, tableId, seatIndex, tableLabel } | null
+  const [transform, setTransform] = useState(() => fitSeatTransform(state.seatingTables));
+  const animGenRef = useRef(0);
+
+  const roster = [];
+  Object.entries(state.guestList).forEach(([code, rec]) => {
+    rec.members.forEach(m => {
+      const a = state.seatingAssignments[m.id];
+      if (!a) return;
+      const table = state.seatingTables.find(t => t.id === a.tableId);
+      roster.push({ memberId: m.id, name: m.name, tableId: a.tableId, seatIndex: a.seatIndex, tableLabel: table ? table.label : "Table" });
+    });
+  });
+  roster.sort((a, b) => a.name.localeCompare(b.name));
+
+  const q = query.trim().toLowerCase();
+  const filtered = q ? roster.filter(g => g.name.toLowerCase().includes(q)) : roster;
+  const groups = {};
+  const letters = [];
+  filtered.forEach(g => {
+    const letter = g.name[0].toUpperCase();
+    if (!groups[letter]) { groups[letter] = []; letters.push(letter); }
+    groups[letter].push(g);
+  });
+
+  function animateTo(target) {
+    const myGen = ++animGenRef.current;
+    const from = transform;
+    const start = performance.now();
+    function step(now) {
+      if (animGenRef.current !== myGen) return; // superseded by a newer selection — drop this animation
+      const t = Math.min(1, (now - start) / 450);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setTransform({
+        panX: from.panX + (target.panX - from.panX) * eased,
+        panY: from.panY + (target.panY - from.panY) * eased,
+        zoom: from.zoom + (target.zoom - from.zoom) * eased
+      });
+      if (t < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+
+  function selectGuest(g) {
+    setSelected(g);
+    const table = state.seatingTables.find(t => t.id === g.tableId);
+    if (table) animateTo(fitSeatTransform([table]));
+  }
+  function showWholeRoom() {
+    setSelected(null);
+    animateTo(fitSeatTransform(state.seatingTables));
+  }
+
+  const highlightColors = selected ? { [selected.tableId]: "#A9814C" } : {};
+  const highlightSeatIndices = selected ? { [selected.tableId]: new Set([selected.seatIndex]) } : {};
+
+  return (
+    <div className="venue-display">
+      <div className="venue-header">
+        <div className="eyebrow">Reception Seating</div>
+        <h1>{CONFIG.coupleNames}</h1>
+        <div className="sub">Find your name below, then your table on the floor plan</div>
+        <button className="venue-exit" onClick={() => actions.patch({ view: "admin" })}>&larr; Exit venue display</button>
+      </div>
+      <div className="venue-main">
+        <div className="venue-panel">
+          <div className="panel-head">
+            <h2>Guest List</h2>
+            <span className="count">{q ? `${filtered.length} of ${roster.length}` : `${roster.length} guests`}</span>
+          </div>
+          <div className="venue-search">
+            <input type="text" value={query} placeholder="Search a name…" autoComplete="off"
+              onChange={e => setQuery(e.target.value)} />
+          </div>
+          <div className="venue-columns">
+            {letters.map(letter => (
+              <div className="letter-group" key={letter}>
+                <h3>{letter}</h3>
+                {groups[letter].map(g => (
+                  <button key={g.memberId}
+                    className={`venue-guest-row ${selected?.memberId === g.memberId ? "active" : ""}`}
+                    onClick={() => selectGuest(g)}>
+                    <span className="guest-name">{g.name}</span>
+                    <span className="leader"></span>
+                    <span className="badge">{g.tableLabel}</span>
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+          {filtered.length === 0 && <p className="no-match">No names match that search.</p>}
+        </div>
+        <div className="venue-panel">
+          <div className="panel-head">
+            <h2>Floor Plan</h2>
+            <span className="count">{state.seatingTables.length} tables</span>
+          </div>
+          <div className="seating-canvas-wrap">
+            <SeatingCanvas
+              tables={state.seatingTables}
+              objects={state.seatingObjects}
+              highlightColors={highlightColors}
+              highlightSeatIndices={highlightSeatIndices}
+              viewTransform={transform}
+              onViewTransformChange={setTransform}
+            />
+            <div className="zoom-controls">
+              <button onClick={() => setTransform(t => zoomSeatTransform(t, 1.25))} aria-label="Zoom in">+</button>
+              <button onClick={() => setTransform(t => zoomSeatTransform(t, 1 / 1.25))} aria-label="Zoom out">−</button>
+              <button onClick={showWholeRoom} aria-label="Show whole room">⦿</button>
+            </div>
+          </div>
+          {selected && (
+            <p className="helptext" style={{ marginTop: 14, textAlign: "center" }}>
+              <strong>{selected.name}</strong> is seated at <strong>{selected.tableLabel}</strong>.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Admin({ state, actions }) {
   return (
     <div className="admin-shell">
@@ -1628,7 +1790,7 @@ function Admin({ state, actions }) {
 export default function App() {
   const [state, setState] = useState({
     ready: false,
-    view: "no-invite", // no-invite | invalid-invite | guest-landing | guest-menu | guest-location | guest-details | guest-seating | guest-form | guest-confirm | admin-login | admin
+    view: "no-invite", // no-invite | invalid-invite | guest-landing | guest-menu | guest-location | guest-details | guest-seating | guest-form | guest-confirm | admin-login | admin | venue-display
     inviteCode: null,
     currentRecord: null,
     previewMode: false,
@@ -2123,6 +2285,7 @@ export default function App() {
     case "guest-confirm": body = <GuestConfirm state={state} />; break;
     case "admin-login": body = <AdminLogin state={state} actions={actions} />; break;
     case "admin": body = <Admin state={state} actions={actions} />; break;
+    case "venue-display": body = <VenueDisplay state={state} actions={actions} />; break;
     default: body = <NoInvite />;
   }
 
