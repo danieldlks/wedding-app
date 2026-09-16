@@ -44,6 +44,17 @@ function inviteUrl(code) {
 function qrSrc(code) {
   return `https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=8&data=${encodeURIComponent(inviteUrl(code))}`;
 }
+// CSV injection guard: several exported fields (guest name, dietary note,
+// household message) are guest-controlled via the public RSVP form. Excel/
+// Sheets treats a cell starting with =, +, -, @, tab, or CR as a live
+// formula regardless of CSV quoting, so a guest name like
+// =HYPERLINK("http://evil.com") would execute the moment the admin opens
+// the export. Prefixing with a leading apostrophe forces the cell to be
+// read as literal text instead.
+function csvSafe(v) {
+  const s = String(v ?? "");
+  return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+}
 
 /* =========================================================
    BACKEND — Cloudflare Pages Functions under /api
@@ -2702,7 +2713,7 @@ export default function App() {
         ]);
       });
     });
-    const csv = rows.map(r => r.map(v => '"' + String(v ?? "").replace(/"/g, '""') + '"').join(",")).join("\n");
+    const csv = rows.map(r => r.map(v => '"' + csvSafe(v).replace(/"/g, '""') + '"').join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
