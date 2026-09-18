@@ -4,6 +4,37 @@ Notable changes to the RSVP app, newest first. See `plan.md`/`design.md` for the
 broader feature history (v1 → v3); this file tracks discrete fixes and changes
 made along the way.
 
+## 2026-09-16 — Fix: CSV export vulnerable to formula injection
+
+**Issue:** found during a security review. `exportCSV()` in `src/App.jsx`
+correctly quoted/escaped values for CSV *syntax* but not for spreadsheet
+*formula interpretation*. Guests can set their own name (and dietary
+note, and household message) via the public RSVP form, and those values
+flow directly into the admin's CSV export. A guest name like
+`=HYPERLINK("http://evil.com","Click me")` would execute as a live
+formula the instant the admin opened the exported file in Excel/Sheets —
+CSV quoting doesn't prevent this, since formula interpretation happens on
+the cell's leading character regardless of surrounding quotes.
+
+**Fix:** added `csvSafe()`, which prefixes any exported value starting
+with `=`, `+`, `-`, `@`, tab, or carriage return with a leading
+apostrophe — the standard way to force a spreadsheet to treat a cell as
+literal text. Applied to every cell in the export, before the existing
+CSV-quote escaping.
+
+**Verified:** end-to-end — submitted a real RSVP through `/api/rsvp` with
+a `=HYPERLINK(...)` name, a `+1-800-EVIL-CMD` dietary note, and a
+`@SUM(1+1)*cmd|calc` household message, then exported CSV through the
+actual admin UI (Playwright) and confirmed all three came out prefixed
+(`'=HYPERLINK(...)`, `'+1-800-...`, `'@SUM(...)`) in the downloaded file.
+Also unit-tested `csvSafe()` against normal values (plain names, an
+apostrophe-containing name, empty/null) to confirm no regressions to
+existing export formatting.
+
+**Files:** `src/App.jsx`.
+
+---
+
 ## 2026-09-12 — Add admin-controlled seating reveal gate
 
 **Feature:** Guests can no longer see "Find My Seat" until the admin allows
