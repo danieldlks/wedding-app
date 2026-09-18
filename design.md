@@ -1,5 +1,13 @@
 # Wedding & Engagement RSVP — High-Level Design
 
+> **Note (2026-09-18):** §1–§7 below describe the **original v1 architecture**
+> — a single self-contained `rsvp.html` with no build step or backend. That
+> file no longer exists in this repo; it was superseded by the React rebuild
+> in §8 and then by the Cloudflare Pages + D1 backend in §9, which is what
+> the app actually runs today. §1–§7 are kept for historical context on how
+> the design evolved, not as a description of the current app — see README.md
+> for the current architecture and setup.
+
 ## 1. Overview
 
 The application is a **single self-contained HTML file** (`rsvp.html`) — HTML, CSS
@@ -148,7 +156,7 @@ stationery:
 
 ---
 
-## 8. Version 2 — Personalized Invites (`RsvpApp.jsx`)
+## 8. Version 2 — Personalized Invites (`RsvpApp.jsx`, later restructured into `src/App.jsx` — see §9 and the CHANGELOG)
 
 ### 8.1 What's Different From v1
 

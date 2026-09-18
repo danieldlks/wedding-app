@@ -4,6 +4,26 @@ Notable changes to the RSVP app, newest first. See `plan.md`/`design.md` for the
 broader feature history (v1 → v3); this file tracks discrete fixes and changes
 made along the way.
 
+## 2026-09-18 — Remove unused legacy prototype files
+
+**Cleanup:** found while auditing the repo for redundant files. `RsvpApp.jsx`,
+`rsvp.html`, and `rsvp_1.html` were leftovers from before the app was
+restructured into `src/App.jsx` + the Cloudflare Pages Functions backend —
+`RsvpApp.jsx` is literally the pre-backend prototype the CHANGELOG's
+2026-08-29 entry describes moving away from. Confirmed zero references to
+any of the three anywhere in the codebase: not vite's entry point (that's
+`index.html` → `src/main.jsx`), not in `vite.config.js`'s build config
+(no multi-page `rollupOptions.input`), not imported by any `.js`/`.jsx`
+file, not mentioned in `package.json` or `wrangler.toml`.
+
+**Verified:** `npm run build` produces the identical output bundle
+(`index-C7eonRVs.js`, same hash as before removal) — confirms these files
+contributed nothing to the build.
+
+**Files removed:** `RsvpApp.jsx`, `rsvp.html`, `rsvp_1.html`.
+
+---
+
 ## 2026-09-16 — Fix: CSV export vulnerable to formula injection
 
 **Issue:** found during a security review. `exportCSV()` in `src/App.jsx`

@@ -46,10 +46,15 @@ Three open questions were resolved before building:
 
 1. `plan.md` — this document
 2. `design.md` — high-level design of how the application works
-3. `rsvp.html` — the working application (single file, ready to open in a browser
-   or host anywhere)
+3. `rsvp.html` — the v1 working application (single file, ready to open in a
+   browser or host anywhere). Superseded by the React rebuild in §6, and since
+   removed from the repo — no longer needed for reference.
 
 ## 5. Suggested Next Steps (v1)
+
+*(Historical — v1's `rsvp.html` no longer exists. The equivalent configuration
+today is the `CONFIG` object at the top of `src/App.jsx`; see README.md for
+current setup/hosting instructions.)*
 
 - Personalize `CONFIG` in `rsvp.html` (couple names, event details, RSVP deadline,
   dietary options, admin password) before sharing the link with guests.
@@ -87,9 +92,10 @@ from the couple — delivered via a **QR code** unique to each household, rebuil
 - The admin dashboard gained a **Guest List** tab (add/edit/delete households,
   generate and preview QR codes/links) alongside the existing **Responses & Stats**
   tab.
-- Rebuilt in **React** (`RsvpApp.jsx`) rather than plain HTML/JS, for cleaner,
-  more maintainable state and a codebase that's a more natural starting point if
-  this is ever extended into a hosted product.
+- Rebuilt in **React** (`RsvpApp.jsx`, later restructured into `src/App.jsx` —
+  see the CHANGELOG) rather than plain HTML/JS, for cleaner, more maintainable
+  state and a codebase that's a more natural starting point if this is ever
+  extended into a hosted product.
 
 ### 6.3 Note on "Future-Proofing as a Business Opportunity"
 
