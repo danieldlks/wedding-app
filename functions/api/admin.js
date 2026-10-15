@@ -26,6 +26,9 @@ export async function onRequestPost({ request, env }) {
       const p = payload || {};
       if (!Array.isArray(p.members) || p.members.length === 0) return new Response("Missing members", { status: 400 });
       if (!Array.isArray(p.invitedEvents) || p.invitedEvents.length === 0) return new Response("Missing invitedEvents", { status: 400 });
+      const email = String(p.contactEmail || "").trim();
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return new Response("Invalid contact email", { status: 400 });
+      if (String(p.contactPhone || "").trim().length > 40) return new Response("Contact phone too long", { status: 400 });
       return Response.json(await saveHousehold(env.DB, p));
     }
 
@@ -165,14 +168,16 @@ async function saveHousehold(db, p) {
   const householdName = String(p.householdName || "").trim() || members.map(m => m.name).join(" & ");
 
   await db.prepare(`
-    INSERT INTO households (invite_code, household_name, members, invited_events, allow_plus_one, personal_note, created_at, response)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO households (invite_code, household_name, members, invited_events, allow_plus_one, personal_note, contact_email, contact_phone, created_at, response)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(invite_code) DO UPDATE SET
       household_name = excluded.household_name,
       members = excluded.members,
       invited_events = excluded.invited_events,
       allow_plus_one = excluded.allow_plus_one,
-      personal_note = excluded.personal_note
+      personal_note = excluded.personal_note,
+      contact_email = excluded.contact_email,
+      contact_phone = excluded.contact_phone
   `).bind(
     code,
     householdName,
@@ -180,6 +185,8 @@ async function saveHousehold(db, p) {
     JSON.stringify(p.invitedEvents),
     p.allowPlusOne ? 1 : 0,
     p.personalNote || "",
+    String(p.contactEmail || "").trim(),
+    String(p.contactPhone || "").trim(),
     createdAt,
     existingResponse
   ).run();

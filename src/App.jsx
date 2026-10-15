@@ -1012,6 +1012,17 @@ function HouseholdEditor({ state, actions }) {
         Allow this household to add an extra guest
       </label>
       <div className="field" style={{ marginTop: 14 }}>
+        <label>Contact email (optional)</label>
+        <input type="email" value={d.contactEmail} placeholder="name@example.com" autoComplete="off"
+          onChange={e => actions.updateHouseholdField("contactEmail", e.target.value)} />
+        <div className="helptext">Lets you email this household reminders and updates before they reply. Pre-fills their RSVP form.</div>
+      </div>
+      <div className="field">
+        <label>Contact phone (optional)</label>
+        <input type="tel" value={d.contactPhone} placeholder="04xx xxx xxx" autoComplete="off"
+          onChange={e => actions.updateHouseholdField("contactPhone", e.target.value)} />
+      </div>
+      <div className="field">
         <label>Personal note (shown on their RSVP page)</label>
         <textarea placeholder="We're so excited to have you at the ceremony!" value={d.personalNote}
           onChange={e => actions.updateHouseholdField("personalNote", e.target.value)} />
@@ -1072,7 +1083,8 @@ function AdminGuestList({ state, actions }) {
               <div className="row-body">
                 {rec.personalNote && <div className="member-detail"><em>Note shown to guest:</em> "{rec.personalNote}"</div>}
                 {rec.members.map(m => <div className="member-detail" key={m.id}>{m.name}</div>)}
-                {rec.response && <div className="member-detail">Contact: {rec.response.contactEmail} {rec.response.contactPhone ? "· " + rec.response.contactPhone : ""}</div>}
+                {(rec.contactEmail || rec.contactPhone) && <div className="member-detail">Contact (entered by you): {[rec.contactEmail, rec.contactPhone].filter(Boolean).join(" · ")}</div>}
+                {rec.response && <div className="member-detail">Contact (from their RSVP): {rec.response.contactEmail} {rec.response.contactPhone ? "· " + rec.response.contactPhone : ""}</div>}
                 <div className="row-actions">
                   <button onClick={() => actions.patch({ qrModalCode: code })}>Show QR code</button>
                   <button onClick={() => actions.copyLink(code)}>Copy link</button>
@@ -2703,8 +2715,8 @@ export default function App() {
       step: 1,
       draft: {
         members,
-        contactEmail: rec.response ? rec.response.contactEmail : "",
-        contactPhone: rec.response ? rec.response.contactPhone : "",
+        contactEmail: rec.response ? rec.response.contactEmail : (rec.contactEmail || ""),
+        contactPhone: rec.response ? rec.response.contactPhone : (rec.contactPhone || ""),
         notes: rec.response ? rec.response.notes : ""
       },
       errors: {}
@@ -2793,7 +2805,7 @@ export default function App() {
 
   /* ---------- admin: guest list management ---------- */
   function newHouseholdDraft() {
-    return { householdName: "", members: [{ id: genId(), name: "" }], invitedEvents: CONFIG.events.map(e => e.id), allowPlusOne: false, personalNote: "" };
+    return { householdName: "", members: [{ id: genId(), name: "" }], invitedEvents: CONFIG.events.map(e => e.id), allowPlusOne: false, personalNote: "", contactEmail: "", contactPhone: "" };
   }
   function startAddHousehold() { patch({ householdDraft: newHouseholdDraft(), editingCode: null }); }
   function startEditHousehold(code) {
@@ -2804,7 +2816,9 @@ export default function App() {
         members: rec.members.map(m => ({ ...m })),
         invitedEvents: [...rec.invitedEvents],
         allowPlusOne: rec.allowPlusOne,
-        personalNote: rec.personalNote || ""
+        personalNote: rec.personalNote || "",
+        contactEmail: rec.contactEmail || "",
+        contactPhone: rec.contactPhone || ""
       },
       editingCode: code
     });
@@ -2834,6 +2848,7 @@ export default function App() {
     const d = state.householdDraft;
     if (d.members.some(m => !m.name.trim())) { showToast("Every guest needs a name."); return; }
     if (d.invitedEvents.length === 0) { showToast("Select at least one event this household is invited to."); return; }
+    if (d.contactEmail.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(d.contactEmail.trim())) { showToast("That contact email doesn't look right."); return; }
     patch({ loading: true });
     try {
       const all = await apiAdmin(state.adminPassword, "save-household", {
@@ -2842,7 +2857,9 @@ export default function App() {
         members: d.members.map(m => ({ id: m.id, name: m.name.trim() })),
         invitedEvents: d.invitedEvents,
         allowPlusOne: d.allowPlusOne,
-        personalNote: d.personalNote
+        personalNote: d.personalNote,
+        contactEmail: d.contactEmail.trim(),
+        contactPhone: d.contactPhone.trim()
       });
       patch({ loading: false, guestList: all, householdDraft: null, editingCode: null });
       showToast(state.editingCode ? "Household updated." : "Household added — QR code ready to share.");
@@ -3077,8 +3094,8 @@ export default function App() {
           ...CONFIG.events.map(ev => (rec.invitedEvents.includes(ev.id) ? (rec.response ? (m.attending[ev.id] ? "Yes" : "No") : "Awaiting reply") : "Not invited")),
           (m.dietaryTags || []).join("; "),
           m.dietaryNote || "",
-          rec.response ? rec.response.contactEmail : "",
-          rec.response ? rec.response.contactPhone : "",
+          rec.response?.contactEmail || rec.contactEmail || "",
+          rec.response?.contactPhone || rec.contactPhone || "",
           rec.response ? rec.response.notes : "",
           rec.response ? rec.response.submittedAt : ""
         ]);

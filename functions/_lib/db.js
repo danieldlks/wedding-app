@@ -6,6 +6,10 @@ export function rowToRecord(row) {
     invitedEvents: JSON.parse(row.invited_events),
     allowPlusOne: !!row.allow_plus_one,
     personalNote: row.personal_note || "",
+    // Optional contact details the admin enters when creating the household, so
+    // they can be emailed before replying (the RSVP form collects its own).
+    contactEmail: row.contact_email || "",
+    contactPhone: row.contact_phone || "",
     createdAt: row.created_at,
     response: row.response ? JSON.parse(row.response) : null
   };
