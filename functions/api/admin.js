@@ -1,4 +1,5 @@
-import { rowToRecord, genId, genInviteCode, listAllRecords, listSeating, getSiteSettings, putSetting, isValidDate } from "../_lib/db.js";
+import { rowToRecord, genId, genInviteCode, listAllRecords, listSeating, getSiteSettings, putSetting, isValidDate, resolveEvents } from "../_lib/db.js";
+import { isValidTimeZone } from "../_lib/time.js";
 import { sendEmail } from "../_lib/email.js";
 import { renderUpdateEmail, renderReminderEmail, recipientFor } from "../_lib/templates.js";
 import { ADMIN_HOSTS, EVENTS } from "../_lib/config.js";
@@ -78,6 +79,40 @@ export async function onRequestPost({ request, env }) {
           const n = raw === "" || raw == null ? "" : Number(raw);
           if (n !== "" && !(Number.isInteger(n) && n >= 0 && n <= 100000)) return new Response(`Invalid capacity for ${ev.id}`, { status: 400 });
           writes.push([`event_capacity_${ev.id}`, n]);
+        }
+      }
+      // Event details: only name/date/time/time zone/venue/address are editable;
+      // ids (and so which households are invited) stay fixed in code.
+      const eventEdits = payload?.events || {};
+      for (const ev of EVENTS) {
+        if (!(ev.id in eventEdits)) continue;
+        const e = eventEdits[ev.id] || {};
+        const clean = {
+          name: String(e.name || "").trim(),
+          date: String(e.date || "").trim(),
+          time: String(e.time || "").trim(),
+          timeZone: String(e.timeZone || "").trim(),
+          venue: String(e.venue || "").trim(),
+          address: String(e.address || "").trim(),
+        };
+        if (!clean.name || clean.name.length > 100) return new Response(`Event name for ${ev.id} is required (max 100 characters)`, { status: 400 });
+        if (!isValidDate(clean.date)) return new Response(`Invalid date for ${ev.id}`, { status: 400 });
+        if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(clean.time)) return new Response(`Invalid start time for ${ev.id}`, { status: 400 });
+        if (!isValidTimeZone(clean.timeZone)) return new Response(`Invalid time zone for ${ev.id}`, { status: 400 });
+        if (!clean.venue || clean.venue.length > 150) return new Response(`Venue for ${ev.id} is required (max 150 characters)`, { status: 400 });
+        if (clean.address.length > 300) return new Response(`Address for ${ev.id} is too long (max 300 characters)`, { status: 400 });
+        writes.push([`event_details_${ev.id}`, JSON.stringify(clean)]);
+      }
+      // Guest information (Details page items). An empty list is allowed and
+      // means "show none"; null/"reset" clears the override back to the code defaults.
+      if ("guestInfo" in (payload || {})) {
+        const items = payload.guestInfo;
+        if (items === null) writes.push(["guest_info_items", ""]);
+        else {
+          if (!Array.isArray(items) || items.length > 20) return new Response("Guest information must be a list of at most 20 items", { status: 400 });
+          const clean = items.map(i => ({ title: String(i?.title || "").trim(), body: String(i?.body || "").trim() }));
+          if (clean.some(i => !i.title || i.title.length > 80 || i.body.length > 1000)) return new Response("Each item needs a title (max 80 characters) and text up to 1000 characters", { status: 400 });
+          writes.push(["guest_info_items", JSON.stringify(clean)]);
         }
       }
       if (payload?.announcement) {
@@ -163,8 +198,9 @@ export async function onRequestPost({ request, env }) {
       const note = String(payload?.message || "").trim();
       if (!subject || subject.length > 200) return new Response("Subject is required (max 200 characters)", { status: 400 });
       if (note.length > 2000) return new Response("Note too long (max 2000 characters)", { status: 400 });
-      const { deadlines } = await getSiteSettings(env.DB);
-      return Response.json({ results: await sendEmailBatch(env, codes, record => ({ subject, html: renderReminderEmail(record, deadlines, note) }), { skipReplied: true }) });
+      const settings = await getSiteSettings(env.DB);
+      const events = resolveEvents(settings);
+      return Response.json({ results: await sendEmailBatch(env, codes, record => ({ subject, html: renderReminderEmail(record, settings.deadlines, note, events) }), { skipReplied: true }) });
     }
 
     default:

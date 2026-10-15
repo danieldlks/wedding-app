@@ -1,31 +1,35 @@
-import { eventName, COUPLE_NAMES, SITE_BASE_URL, TIME_ZONE } from "./config.js";
+import { COUPLE_NAMES, SITE_BASE_URL } from "./config.js";
+import { todayYmdIn } from "./time.js";
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-function memberLines(record) {
+// `events` = resolveEvents(settings) from db.js: the admin's current event names.
+function nameOf(events, id) { return events?.[id]?.name || id; }
+
+function memberLines(record, events) {
   return record.response.members.map(m => {
-    const attending = record.invitedEvents.filter(id => m.attending[id]).map(eventName);
+    const attending = record.invitedEvents.filter(id => m.attending[id]).map(id => nameOf(events, id));
     const diet = (m.dietaryTags || []).join(", ") + (m.dietaryNote ? ` — ${m.dietaryNote}` : "");
     return `<li><strong>${escapeHtml(m.name)}</strong> — ${attending.length ? escapeHtml(attending.join(", ")) : "Not attending"}${diet ? ` — Dietary: ${escapeHtml(diet)}` : ""}</li>`;
   }).join("");
 }
 
-export function renderGuestConfirmationEmail(record) {
+export function renderGuestConfirmationEmail(record, events) {
   return `
     <p>Hi ${escapeHtml(record.householdName)},</p>
     <p>Thanks for your RSVP! Here's what we've got on file:</p>
-    <ul>${memberLines(record)}</ul>
+    <ul>${memberLines(record, events)}</ul>
     ${record.response.notes ? `<p><em>Your message:</em> ${escapeHtml(record.response.notes)}</p>` : ""}
     <p>You can reopen your invite link anytime to update your response.</p>
   `;
 }
 
-export function renderAdminNotifyEmail(record) {
+export function renderAdminNotifyEmail(record, events) {
   return `
     <p><strong>${escapeHtml(record.householdName)}</strong> just RSVP'd.</p>
-    <ul>${memberLines(record)}</ul>
+    <ul>${memberLines(record, events)}</ul>
     <p>Contact: ${escapeHtml(record.response.contactEmail)}${record.response.contactPhone ? " · " + escapeHtml(record.response.contactPhone) : ""}</p>
     ${record.response.notes ? `<p><em>Message:</em> ${escapeHtml(record.response.notes)}</p>` : ""}
   `;
@@ -54,19 +58,17 @@ export function formatYmd(ymd) {
   const [y, m, d] = ymd.split("-").map(Number);
   return `${WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]} ${d} ${MONTHS[m - 1]} ${y}`;
 }
-function todayYmd() {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-}
 
 // Admin "RSVP reminder" email: personalised with the household's own invited
 // events and reply-by dates, plus a button straight to their invitation.
-export function renderReminderEmail(record, deadlines, note) {
-  const today = todayYmd();
+// A reply-by date counts as passed once that date is over in the event's own time zone.
+export function renderReminderEmail(record, deadlines, note, events) {
   const link = `${SITE_BASE_URL}?invite=${encodeURIComponent(record.inviteCode)}`;
   const lines = record.invitedEvents.map(id => {
     const d = deadlines[id];
+    const today = todayYmdIn(events?.[id]?.timeZone || "Australia/Adelaide");
     const when = !d ? "" : d < today ? " — the reply date has passed, but we'd still love to hear from you" : ` — please reply by <strong>${formatYmd(d)}</strong>`;
-    return `<li>${escapeHtml(eventName(id))}${when}</li>`;
+    return `<li>${escapeHtml(nameOf(events, id))}${when}</li>`;
   }).join("");
   return `
     <p>Hi ${escapeHtml(record.householdName)},</p>
