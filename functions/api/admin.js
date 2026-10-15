@@ -1,13 +1,20 @@
 import { rowToRecord, genId, genInviteCode, listAllRecords, listSeating } from "../_lib/db.js";
 import { sendEmail } from "../_lib/email.js";
 import { renderBroadcastEmail } from "../_lib/templates.js";
+import { ADMIN_HOSTS } from "../_lib/config.js";
 
 export async function onRequestPost({ request, env }) {
+  // Checked before the password so guesses sent via a *.pages.dev address
+  // (outside the custom domain's rate-limiting rule) are never evaluated.
+  if (!ADMIN_HOSTS.includes(new URL(request.url).hostname)) {
+    return new Response("Admin access is only available at daniel-and-faith.com", { status: 403 });
+  }
+
   let body;
   try { body = await request.json(); } catch { return new Response("Invalid JSON", { status: 400 }); }
 
   const { password, action, payload } = body;
-  if (!env.ADMIN_PASSWORD || password !== env.ADMIN_PASSWORD) {
+  if (!(await passwordMatches(password, env.ADMIN_PASSWORD))) {
     return new Response("Unauthorized", { status: 401 });
   }
 
@@ -210,4 +217,18 @@ async function broadcast(env, subject, message) {
     }
   }
   return { sent, failed };
+}
+
+// Constant-time password check. A plain `!==` can return sooner the earlier
+// the first mismatched character is, which in theory leaks how much of a
+// guess is right. Hashing both sides first gives timingSafeEqual (a Workers
+// extension to Web Crypto) two equal-length inputs, so the compare takes the
+// same time regardless of the guess's content or length.
+async function passwordMatches(given, expected) {
+  if (typeof given !== "string" || !expected) return false;
+  const enc = new TextEncoder();
+  const [a, b] = await Promise.all(
+    [given, expected].map(s => crypto.subtle.digest("SHA-256", enc.encode(s)))
+  );
+  return crypto.subtle.timingSafeEqual(a, b);
 }
