@@ -8,3 +8,10 @@ export const EVENTS = [
 export function eventName(id) {
   return EVENTS.find(e => e.id === id)?.name || id;
 }
+
+// Hostnames allowed to use /api/admin. The Cloudflare rate-limiting rule on
+// /api/admin only covers the custom domain's zone, so the same site's
+// *.pages.dev addresses (the project subdomain and every per-deployment hash
+// URL) would otherwise be a way around it. localhost/127.0.0.1 keep
+// `npm run pages:dev` working. Keep in sync with CONFIG.siteBaseUrl.
+export const ADMIN_HOSTS = ["daniel-and-faith.com", "localhost", "127.0.0.1"];

@@ -2450,7 +2450,8 @@ export default function App() {
       const all = await apiAdmin(state.adminInput, "list");
       patch({ loading: false, adminAuthed: true, adminPassword: state.adminInput, view: "admin", guestList: all, adminTab: "guestlist" });
     } catch (e) {
-      patch({ loading: false, adminError: "Incorrect password." });
+      // 403 = signing in from a *.pages.dev address, which functions/api/admin.js refuses (see ADMIN_HOSTS)
+      patch({ loading: false, adminError: e.status === 403 ? `Admin sign-in only works at ${CONFIG.siteBaseUrl.replace(/^https?:\/\//, "")}.` : "Incorrect password." });
     }
   }
   async function refreshAdmin() {
