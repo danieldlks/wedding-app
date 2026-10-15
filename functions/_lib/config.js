@@ -19,3 +19,5 @@ export const ADMIN_HOSTS = ["daniel-and-faith.com", "localhost", "127.0.0.1"];
 // Used in guest emails. Keep in sync with CONFIG.coupleNames / CONFIG.siteBaseUrl in src/App.jsx.
 export const COUPLE_NAMES = "Daniel & Faith";
 export const SITE_BASE_URL = "https://daniel-and-faith.com";
+// "Today" for deciding whether a reply-by date has passed in reminder emails.
+export const TIME_ZONE = "Australia/Adelaide";

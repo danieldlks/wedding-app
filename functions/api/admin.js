@@ -1,6 +1,6 @@
 import { rowToRecord, genId, genInviteCode, listAllRecords, listSeating, getSiteSettings, putSetting, isValidDate } from "../_lib/db.js";
 import { sendEmail } from "../_lib/email.js";
-import { renderUpdateEmail, recipientFor } from "../_lib/templates.js";
+import { renderUpdateEmail, renderReminderEmail, recipientFor } from "../_lib/templates.js";
 import { ADMIN_HOSTS, EVENTS } from "../_lib/config.js";
 
 export async function onRequestPost({ request, env }) {
@@ -154,6 +154,19 @@ export async function onRequestPost({ request, env }) {
       return Response.json({ results: await sendEmailBatch(env, codes, record => ({ subject, html: renderUpdateEmail(record, message) })) });
     }
 
+    case "send-reminders": {
+      // Same batching as send-emails; the message is an optional personal note.
+      // Households that have replied in the meantime are skipped, never nagged.
+      const codes = Array.isArray(payload?.codes) ? payload.codes.map(c => String(c).trim().toUpperCase()).filter(Boolean) : [];
+      if (codes.length === 0 || codes.length > EMAIL_BATCH_SIZE) return new Response(`Send 1-${EMAIL_BATCH_SIZE} households per request`, { status: 400 });
+      const subject = String(payload?.subject || "").trim();
+      const note = String(payload?.message || "").trim();
+      if (!subject || subject.length > 200) return new Response("Subject is required (max 200 characters)", { status: 400 });
+      if (note.length > 2000) return new Response("Note too long (max 2000 characters)", { status: 400 });
+      const { deadlines } = await getSiteSettings(env.DB);
+      return Response.json({ results: await sendEmailBatch(env, codes, record => ({ subject, html: renderReminderEmail(record, deadlines, note) }), { skipReplied: true }) });
+    }
+
     default:
       return new Response("Unknown action", { status: 400 });
   }
@@ -255,7 +268,7 @@ const EMAIL_BATCH_SIZE = 10;
 // Sends one email per household (sequentially, to stay well inside the
 // relay's and Gmail's rate limits) and reports each household's outcome, so
 // the admin page can show exactly who didn't get it.
-async function sendEmailBatch(env, codes, render) {
+async function sendEmailBatch(env, codes, render, { skipReplied = false } = {}) {
   const placeholders = codes.map(() => "?").join(",");
   const { results: rows } = await env.DB.prepare(`SELECT * FROM households WHERE invite_code IN (${placeholders})`).bind(...codes).all();
   const byCode = Object.fromEntries(rows.map(r => [r.invite_code, rowToRecord(r)]));
@@ -263,6 +276,7 @@ async function sendEmailBatch(env, codes, render) {
   for (const code of codes) {
     const record = byCode[code];
     if (!record) { out.push({ code, status: "skipped", reason: "not found" }); continue; }
+    if (skipReplied && record.response) { out.push({ code, status: "skipped", reason: "already replied" }); continue; }
     const to = recipientFor(record);
     if (!to) { out.push({ code, status: "skipped", reason: "no email" }); continue; }
     try {

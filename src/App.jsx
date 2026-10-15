@@ -11,10 +11,10 @@ const CONFIG = {
   events: [
     // "datetime" is a real ISO timestamp (used by the countdown widget); "date"/"time" above stay as the
     // human-readable strings shown elsewhere. Keep both in sync if you change the schedule.
-    { id: "engagement", name: "Engagement Party", date: "Saturday 20 February 2027", time: "2:30 PM", datetime: "2027-02-20T14:30:00+10:30", venue: "SUNDAY" },
+    { id: "engagement", name: "Engagement Party", shortName: "Engagement Party", date: "Saturday 20 February 2027", time: "2:30 PM", datetime: "2027-02-20T14:30:00+10:30", venue: "SUNDAY" },
     // seated: true = this event has the reception seating plan (Find My Seat, and its
     // capacity in admin Settings is the total of the seating tables' capacities).
-    { id: "wedding", seated: true, name: "Wedding Ceremony & Reception", date: "Friday 06 August 2027", time: "3:30 PM", datetime: "2027-08-06T15:30:00+09:30", venue: "Longview Vineyard" }
+    { id: "wedding", seated: true, name: "Wedding Ceremony & Reception", shortName: "Wedding", date: "Friday 06 August 2027", time: "3:30 PM", datetime: "2027-08-06T15:30:00+09:30", venue: "Longview Vineyard" }
   ],
   // RSVP deadlines are set per event by the admin (Settings tab), not here — see design.md §11.
   dietaryOptions: ["Vegetarian", "Vegan", "Gluten-free", "Dairy-free", "Nut allergy", "Other"],
@@ -426,7 +426,10 @@ const CSS = `
 .reminder-cta{flex:none;min-height:44px;padding:0 18px;border:none;border-radius:22px;background:var(--ink);color:#fff;font-size:14px;font-weight:600;}
 /* Admin: Email guests panel */
 .email-panel{padding:18px;margin-bottom:22px;border-radius:12px;}
-.email-panel h3{font-family:var(--display);font-size:22px;font-weight:600;margin:0 0 6px;}
+.email-panel h3{font-family:var(--display);font-size:22px;font-weight:600;margin:0 0 12px;}
+.segmented{display:flex;background:var(--paper-2);border-radius:12px;padding:4px;margin-bottom:14px;}
+.segmented button{flex:1;min-height:40px;border:none;background:none;border-radius:9px;font-size:14px;font-weight:600;color:var(--ink-soft);}
+.segmented button.on{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(32,43,34,.15);}
 select.settings-input{-webkit-appearance:auto;appearance:auto;}
 .email-summary{font-size:13.5px;margin-top:8px;color:var(--ink-soft);}
 .email-summary strong{color:var(--ink);}
@@ -452,6 +455,7 @@ select.settings-input{-webkit-appearance:auto;appearance:auto;}
 @media(min-width:600px){.settings-grid{grid-template-columns:1fr 1fr;}}
 .settings-card .field{margin-bottom:14px;}
 .settings-input{display:block;width:100%;min-height:46px;padding:10px 12px;border:1px solid var(--gold-soft);border-radius:10px;background:#fff;font-size:16px;color:var(--ink);-webkit-appearance:none;appearance:none;}
+.field input.settings-input,.field textarea.settings-input,.field select.settings-input{border-radius:10px;font-size:16px;padding:10px 12px;}
 .settings-input:focus{outline:none;border-color:var(--sage);box-shadow:0 0 0 3px rgba(110,127,99,.15);}
 .settings-input::-webkit-date-and-time-value{text-align:left;}
 textarea.settings-input{min-height:96px;resize:vertical;line-height:1.5;}
@@ -1124,9 +1128,16 @@ function emailAudiences() {
     { id: "not-replied", label: "Haven't replied yet", match: r => !r.response },
     { id: "replied", label: "Have replied", match: r => !!r.response },
     ...CONFIG.events.flatMap(ev => [
-      { id: `invited:${ev.id}`, label: `Invited to the ${ev.name}`, match: r => r.invitedEvents.includes(ev.id) },
-      { id: `attending:${ev.id}`, label: `Attending the ${ev.name}`, match: r => !!r.response && r.invitedEvents.includes(ev.id) && r.response.members.some(m => m.attending?.[ev.id]) },
+      { id: `invited:${ev.id}`, label: `Invited — ${ev.shortName || ev.name}`, match: r => r.invitedEvents.includes(ev.id) },
+      { id: `attending:${ev.id}`, label: `Attending — ${ev.shortName || ev.name}`, match: r => !!r.response && r.invitedEvents.includes(ev.id) && r.response.members.some(m => m.attending?.[ev.id]) },
     ]),
+  ];
+}
+// Reminder emails only ever go to households that haven't replied.
+function reminderAudiences() {
+  return [
+    { id: "not-replied", label: "Everyone who hasn't replied", match: r => !r.response },
+    ...CONFIG.events.map(ev => ({ id: `not-replied:${ev.id}`, label: `Not replied — ${ev.shortName || ev.name}`, match: r => !r.response && r.invitedEvents.includes(ev.id) })),
   ];
 }
 // Must match EMAIL_BATCH_SIZE in functions/api/admin.js (the server rejects larger batches).
@@ -1153,11 +1164,11 @@ function EmailSendStatus({ state, actions, retryPayload }) {
       {r.failed.length > 0 && (
         <>
           <ul className="email-list">
-            {r.failed.map(f => <li key={f.code}>{state.guestList[f.code]?.householdName || f.code}{f.reason === "no email" ? " — no email on file" : ""}</li>)}
+            {r.failed.map(f => <li key={f.code}>{state.guestList[f.code]?.householdName || f.code}{f.reason === "no email" ? " — no email on file" : f.reason === "already replied" ? " — replied in the meantime, so skipped" : ""}</li>)}
           </ul>
-          {r.failed.some(f => f.reason !== "no email") && retryPayload && (
+          {r.failed.some(f => f.status === "failed") && retryPayload && (
             <button className="btn btn-ghost" style={{ marginTop: 8 }} disabled={state.emailSending}
-              onClick={() => actions.sendGuestEmails(r.failed.filter(f => f.reason !== "no email").map(f => f.code), retryPayload)}>Retry the ones that failed</button>
+              onClick={() => actions.sendGuestEmails(r.failed.filter(f => f.status === "failed").map(f => f.code), retryPayload)}>Retry the ones that failed</button>
           )}
         </>
       )}
@@ -1166,6 +1177,84 @@ function EmailSendStatus({ state, actions, retryPayload }) {
 }
 
 function EmailGuestsPanel({ state, actions }) {
+  const reminder = state.emailKind === "reminder";
+  return (
+    <div className="row-card email-panel">
+      <h3>Email guests</h3>
+      <div className="segmented" role="tablist" aria-label="Email type">
+        <button role="tab" aria-selected={!reminder} className={!reminder ? "on" : ""} disabled={state.emailSending}
+          onClick={() => actions.patch({ emailKind: "update", emailResult: null })}>Update</button>
+        <button role="tab" aria-selected={reminder} className={reminder ? "on" : ""} disabled={state.emailSending}
+          onClick={() => actions.patch({ emailKind: "reminder", emailResult: null })}>RSVP reminder</button>
+      </div>
+      {reminder ? <ReminderEmailForm state={state} actions={actions} /> : <UpdateEmailForm state={state} actions={actions} />}
+    </div>
+  );
+}
+
+function AudienceSummary({ withEmail, noEmail, skippedLabel = "no email" }) {
+  return (
+    <>
+      <div className="email-summary">
+        <strong>{withEmail.length}</strong> household{withEmail.length === 1 ? "" : "s"} will receive this
+        {noEmail.length > 0 && <> · {noEmail.length} {noEmail.length === 1 ? "has" : "have"} {skippedLabel} and will be skipped</>}
+      </div>
+      {noEmail.length > 0 && (
+        <details className="email-skipped">
+          <summary>Show who'll be skipped</summary>
+          <ul className="email-list">{noEmail.map(([code, r]) => <li key={code}>{r.householdName}</li>)}</ul>
+        </details>
+      )}
+      {withEmail.length > GMAIL_DAILY_LIMIT && (
+        <div className="settings-warn">Gmail only sends to about {GMAIL_DAILY_LIMIT} people a day — some of these may fail. Use "Retry" tomorrow for any that do.</div>
+      )}
+    </>
+  );
+}
+
+function ReminderEmailForm({ state, actions }) {
+  const audiences = reminderAudiences();
+  const aud = audiences.find(a => a.id === state.reminderAudience) || audiences[0];
+  const matched = Object.entries(state.guestList).filter(([, r]) => aud.match(r));
+  const withEmail = matched.filter(([, r]) => recipientEmail(r));
+  const noEmail = matched.filter(([, r]) => !recipientEmail(r));
+  const payload = { kind: "reminder", subject: state.reminderSubject.trim(), message: state.reminderNote.trim() };
+  const deadlines = state.siteSettings.deadlines || {};
+  return (
+    <>
+      <p className="settings-help">
+        A personal nudge to households that haven't replied. Each one gets its own event list with the reply-by dates from
+        Settings{Object.keys(deadlines).length === 0 ? " (none set yet)" : ""}, and an "Open your invitation" button that
+        goes straight to their RSVP. Anyone who replies before you send is skipped automatically.
+      </p>
+      <div className="field">
+        <label htmlFor="reminder-audience">Send to</label>
+        <select id="reminder-audience" className="settings-input" value={aud.id} disabled={state.emailSending}
+          onChange={e => actions.patch({ reminderAudience: e.target.value, emailResult: null })}>
+          {audiences.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
+        </select>
+        <AudienceSummary withEmail={withEmail} noEmail={noEmail} />
+      </div>
+      <div className="field">
+        <label htmlFor="reminder-subject">Subject</label>
+        <input id="reminder-subject" className="settings-input" type="text" maxLength={200} value={state.reminderSubject}
+          onChange={e => actions.patch({ reminderSubject: e.target.value })} />
+      </div>
+      <div className="field">
+        <label htmlFor="reminder-note">Personal note (optional)</label>
+        <textarea id="reminder-note" className="settings-input" maxLength={2000} value={state.reminderNote} placeholder="e.g. We're finalising numbers with the venue soon!"
+          onChange={e => actions.patch({ reminderNote: e.target.value })} />
+      </div>
+      <button className="btn btn-primary email-send" disabled={state.emailSending || withEmail.length === 0 || !payload.subject}
+        onClick={() => actions.sendGuestEmails(withEmail.map(([code]) => code), payload)}>
+        {state.emailSending ? <><span className="spinner" />Sending…</> : `Send reminder to ${withEmail.length} household${withEmail.length === 1 ? "" : "s"}`}
+      </button>
+      <EmailSendStatus state={state} actions={actions} retryPayload={payload} />
+    </>
+  );
+}
+
+function UpdateEmailForm({ state, actions }) {
   const audiences = emailAudiences();
   const aud = audiences.find(a => a.id === state.emailAudience) || audiences[0];
   const matched = Object.entries(state.guestList).filter(([, r]) => aud.match(r));
@@ -1173,8 +1262,7 @@ function EmailGuestsPanel({ state, actions }) {
   const noEmail = matched.filter(([, r]) => !recipientEmail(r));
   const payload = { kind: "update", subject: state.emailSubject.trim(), message: state.emailMessage.trim() };
   return (
-    <div className="row-card email-panel">
-      <h3>Email guests</h3>
+    <>
       <p className="settings-help">
         Send an update to a group of households. Households that have replied get it at their RSVP email; the rest at the
         contact email you entered for them on the Guest List.
@@ -1185,19 +1273,7 @@ function EmailGuestsPanel({ state, actions }) {
           onChange={e => actions.patch({ emailAudience: e.target.value, emailResult: null })}>
           {audiences.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
         </select>
-        <div className="email-summary">
-          <strong>{withEmail.length}</strong> household{withEmail.length === 1 ? "" : "s"} will receive this
-          {noEmail.length > 0 && <> · {noEmail.length} {noEmail.length === 1 ? "has" : "have"} no email and will be skipped</>}
-        </div>
-        {noEmail.length > 0 && (
-          <details className="email-skipped">
-            <summary>Show who'll be skipped</summary>
-            <ul className="email-list">{noEmail.map(([code, r]) => <li key={code}>{r.householdName}</li>)}</ul>
-          </details>
-        )}
-        {withEmail.length > GMAIL_DAILY_LIMIT && (
-          <div className="settings-warn">Gmail only sends to about {GMAIL_DAILY_LIMIT} people a day — some of these may fail. Use "Retry" tomorrow for any that do.</div>
-        )}
+        <AudienceSummary withEmail={withEmail} noEmail={noEmail} />
       </div>
       <div className="field">
         <label htmlFor="email-subject">Subject</label>
@@ -1214,7 +1290,7 @@ function EmailGuestsPanel({ state, actions }) {
         {state.emailSending ? <><span className="spinner" />Sending…</> : `Send to ${withEmail.length} household${withEmail.length === 1 ? "" : "s"}`}
       </button>
       <EmailSendStatus state={state} actions={actions} retryPayload={payload} />
-    </div>
+    </>
   );
 }
 
@@ -2721,7 +2797,11 @@ export default function App() {
     householdDraft: null,
     editingCode: null,
     // admin: email guests (see EmailGuestsPanel)
+    emailKind: "update", // update | reminder
     emailAudience: "all",
+    reminderAudience: "not-replied",
+    reminderSubject: "A friendly reminder to RSVP",
+    reminderNote: "",
     emailSubject: "",
     emailMessage: "",
     emailSending: false,
