@@ -234,7 +234,29 @@ const CSS = `
 .summary .srow{padding:8px 0;font-size:13.5px;border-bottom:1px solid rgba(169,129,76,.25);}
 .summary .srow:last-child{border-bottom:none;}
 .summary .slabel{color:var(--ink-soft);}
-.login-box{max-width:380px;margin:80px auto;background:#fff;border:1px solid var(--gold-soft);padding:34px 30px;box-shadow:var(--shadow);}
+.login-stage{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:40px 16px;position:relative;overflow:hidden;background:radial-gradient(ellipse at 50% 0%,rgba(110,127,99,.18),transparent 60%),radial-gradient(ellipse at 50% 100%,rgba(169,129,76,.14),transparent 55%),var(--paper);}
+.login-stage::before,.login-stage::after{content:"";position:absolute;left:50%;top:58%;border-radius:50%;border:1px solid rgba(169,129,76,.22);transform:translate(-50%,-50%);pointer-events:none;}
+.login-stage::before{width:min(1100px,170vw);height:min(1100px,170vw);}
+.login-stage::after{width:min(1400px,220vw);height:min(1400px,220vw);border-color:rgba(169,129,76,.12);}
+.login-box{position:relative;z-index:1;width:100%;max-width:400px;background:linear-gradient(180deg,#EEF1E8 0,#fff 42%);border:1px solid rgba(216,200,165,.7);border-radius:24px;padding:40px 32px 30px;box-shadow:0 30px 60px -30px rgba(32,43,34,.35),0 0 0 6px rgba(255,255,255,.5);text-align:center;}
+.login-icon{width:56px;height:56px;margin:0 auto 20px;border-radius:16px;background:#fff;display:flex;align-items:center;justify-content:center;color:var(--ink);box-shadow:0 10px 24px -12px rgba(32,43,34,.4),inset 0 0 0 1px rgba(216,200,165,.5);}
+.login-box h2{font-family:var(--display);font-weight:600;font-size:30px;margin:4px 0 6px;color:var(--ink);}
+.login-sub{color:var(--ink-soft);font-size:14.5px;line-height:1.5;margin:0 0 26px;}
+.login-input{display:flex;align-items:center;gap:10px;background:var(--paper-2);border:1px solid transparent;border-radius:14px;padding:0 6px 0 14px;transition:border-color .15s,box-shadow .15s;}
+.login-input:focus-within{border-color:var(--sage);box-shadow:0 0 0 3px rgba(110,127,99,.15);background:#fff;}
+.login-input.has-err{border-color:var(--error);}
+.login-input > svg{flex:none;color:var(--ink-soft);}
+.login-input input{flex:1;min-width:0;border:none;background:transparent;padding:14px 0;font-size:15.5px;color:var(--ink);outline:none;}
+.login-eye{flex:none;width:40px;height:40px;display:flex;align-items:center;justify-content:center;border:none;background:none;color:var(--ink-soft);border-radius:10px;cursor:pointer;}
+.login-eye:hover{color:var(--ink);background:rgba(32,43,34,.06);}
+.login-eye:focus-visible{outline:2px solid var(--sage);outline-offset:1px;}
+.login-err{color:var(--error);font-size:13px;text-align:left;margin:8px 4px 0;}
+.login-submit{width:100%;margin-top:22px;padding:15px 18px;border:none;border-radius:14px;background:var(--ink);color:#fff;font-size:15px;font-weight:600;letter-spacing:.02em;box-shadow:0 10px 20px -10px rgba(32,43,34,.6),inset 0 1px 0 rgba(255,255,255,.12);cursor:pointer;}
+.login-submit:hover{background:#2C3A2F;}
+.login-submit:active{transform:scale(.99);}
+.login-submit:disabled{opacity:.6;cursor:not-allowed;}
+.login-back{margin-top:16px;background:none;border:none;color:var(--ink-soft);font-size:13.5px;cursor:pointer;padding:6px;}
+.login-back:hover{color:var(--ink);text-decoration:underline;}
 .footer-link{position:fixed;bottom:10px;right:12px;font-size:11px;color:rgba(75,81,72,.4);background:none;border:none;text-decoration:underline;z-index:5;}
 .preview-banner{position:sticky;top:0;background:var(--gold);color:var(--ink);padding:10px 16px;text-align:center;font-size:13px;font-weight:600;z-index:20;}
 .preview-banner button{margin-left:10px;background:var(--ink);color:#fff;border:none;padding:5px 12px;border-radius:14px;font-size:12px;}
@@ -776,26 +798,36 @@ function GuestConfirm({ state }) {
 }
 
 function AdminLogin({ state, actions }) {
+  const [showPassword, setShowPassword] = useState(false);
+  const iconProps = { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true };
   return (
-    <div className="stage" style={{ background: "var(--paper)" }}>
-      <div className="login-box">
-        <div className="card-eyebrow eyebrow" style={{ textAlign: "center", color: "var(--gold)" }}>{CONFIG.coupleNames}</div>
-        <h2 style={{ textAlign: "center" }}>Admin sign in</h2>
-        <div className={`field ${state.adminError ? "has-err" : ""}`} style={{ marginTop: 20 }}>
-          <label>Password</label>
-          <input type="password" autoComplete="current-password" value={state.adminInput}
-            onChange={e => actions.patch({ adminInput: e.target.value })}
-            onKeyDown={e => { if (e.key === "Enter") actions.submitAdminLogin(); }}
-            placeholder="Enter admin password" />
-          {state.adminError && <div className="err">{state.adminError}</div>}
+    <div className="login-stage">
+      <form className="login-box" onSubmit={e => { e.preventDefault(); actions.submitAdminLogin(); }}>
+        <div className="login-icon">
+          <svg {...iconProps} width={24} height={24}><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" /><path d="M10 17l5-5-5-5" /><path d="M15 12H3" /></svg>
         </div>
-        <div className="btn-row">
-          <button className="btn btn-ghost" onClick={actions.exitToPublic}>Back</button>
-          <button className="btn btn-primary" onClick={actions.submitAdminLogin} disabled={state.loading}>
-            {state.loading ? <><span className="spinner" />Checking…</> : "Sign in"}
+        <div className="eyebrow" style={{ color: "var(--gold)" }}>{CONFIG.coupleNames}</div>
+        <h2>Admin Sign In</h2>
+        <p className="login-sub">Enter the admin password to manage guests, seating and RSVPs.</p>
+        <div className={`login-input ${state.adminError ? "has-err" : ""}`}>
+          <svg {...iconProps}><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+          <input type={showPassword ? "text" : "password"} autoComplete="current-password" value={state.adminInput}
+            onChange={e => actions.patch({ adminInput: e.target.value })}
+            placeholder="Password" aria-label="Admin password"
+            aria-invalid={!!state.adminError} aria-describedby={state.adminError ? "admin-login-err" : undefined} />
+          <button type="button" className="login-eye" onClick={() => setShowPassword(s => !s)}
+            aria-label={showPassword ? "Hide password" : "Show password"} aria-pressed={showPassword}>
+            {showPassword
+              ? <svg {...iconProps}><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg>
+              : <svg {...iconProps}><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-2.6 3.6M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6" /><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" /><path d="M3 3l18 18" /></svg>}
           </button>
         </div>
-      </div>
+        {state.adminError && <div className="login-err" id="admin-login-err" role="alert">{state.adminError}</div>}
+        <button type="submit" className="login-submit" disabled={state.loading}>
+          {state.loading ? <><span className="spinner" />Checking…</> : "Sign in"}
+        </button>
+        <button type="button" className="login-back" onClick={actions.exitToPublic}>← Back to the site</button>
+      </form>
     </div>
   );
 }
