@@ -1,4 +1,4 @@
-import { rowToRecord } from "../_lib/db.js";
+import { rowToRecord, getSiteSettings, resolveEvents } from "../_lib/db.js";
 import { sendEmail } from "../_lib/email.js";
 import { renderGuestConfirmationEmail, renderAdminNotifyEmail } from "../_lib/templates.js";
 
@@ -30,10 +30,11 @@ export async function onRequestPost({ request, env }) {
   const record = rowToRecord({ ...row, response: JSON.stringify(response) });
 
   // Best-effort notifications — an email hiccup shouldn't block the guest's RSVP from saving.
+  const events = resolveEvents(await getSiteSettings(env.DB));
   await Promise.allSettled([
-    sendEmail(env, { to: contactEmail, subject: `RSVP confirmed — ${record.householdName}`, html: renderGuestConfirmationEmail(record) }),
+    sendEmail(env, { to: contactEmail, subject: `RSVP confirmed — ${record.householdName}`, html: renderGuestConfirmationEmail(record, events) }),
     env.ADMIN_NOTIFY_EMAIL
-      ? sendEmail(env, { to: env.ADMIN_NOTIFY_EMAIL, subject: `New RSVP from ${record.householdName}`, html: renderAdminNotifyEmail(record) })
+      ? sendEmail(env, { to: env.ADMIN_NOTIFY_EMAIL, subject: `New RSVP from ${record.householdName}`, html: renderAdminNotifyEmail(record, events) })
       : Promise.resolve()
   ]);
 

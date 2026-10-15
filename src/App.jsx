@@ -8,21 +8,29 @@ import { CSS2DRenderer, CSS2DObject } from "three/addons/renderers/CSS2DRenderer
    ========================================================= */
 const CONFIG = {
   coupleNames: "Daniel & Faith",
+  // DEFAULTS only: the admin edits each event's name, date, start time, time
+  // zone, venue and address in Settings → Event details (saved in the
+  // database, no redeploy). Read events via eventsList()/eventById(), never
+  // CONFIG.events directly. The ids are linked to every invitation/RSVP, so
+  // adding or removing an event is still a code change (also update EVENTS in
+  // functions/_lib/config.js). date = 'YYYY-MM-DD', time = 24h 'HH:MM', both
+  // local to timeZone; display text and the countdown are derived from them.
   events: [
-    // "datetime" is a real ISO timestamp (used by the countdown widget); "date"/"time" above stay as the
-    // human-readable strings shown elsewhere. Keep both in sync if you change the schedule.
-    { id: "engagement", name: "Engagement Party", shortName: "Engagement Party", date: "Saturday 20 February 2027", time: "2:30 PM", datetime: "2027-02-20T14:30:00+10:30", venue: "SUNDAY" },
+    { id: "engagement", name: "Engagement Party", date: "2027-02-20", time: "14:30", timeZone: "Australia/Adelaide", venue: "SUNDAY", address: "" },
     // seated: true = this event has the reception seating plan (Find My Seat, and its
     // capacity in admin Settings is the total of the seating tables' capacities).
-    { id: "wedding", seated: true, name: "Wedding Ceremony & Reception", shortName: "Wedding", date: "Friday 06 August 2027", time: "3:30 PM", datetime: "2027-08-06T15:30:00+09:30", venue: "Longview Vineyard" }
+    { id: "wedding", seated: true, name: "Wedding Ceremony & Reception", date: "2027-08-06", time: "15:30", timeZone: "Australia/Adelaide", venue: "Longview Vineyard", address: "" }
   ],
+  // The site's usual time zone. An event in a different zone shows its time
+  // with a label, e.g. "3:30 PM (Perth time)". Keep in sync with TIME_ZONE in functions/_lib/config.js.
+  timeZone: "Australia/Adelaide",
   // RSVP deadlines are set per event by the admin (Settings tab), not here — see design.md §11.
   dietaryOptions: ["Vegetarian", "Vegan", "Gluten-free", "Dairy-free", "Nut allergy", "Other"],
   // Admin password now lives server-side only (a Cloudflare Pages secret) — see functions/api/admin.js.
   // Where this app will live once hosted (used to build QR codes / invite links).
   // Leave blank to fall back to the current browser URL.
   siteBaseUrl: "https://daniel-and-faith.com",
-  // Shown on the guest Details page, in addition to the event list above — edit freely
+  // DEFAULT guest information items for the Details page; the admin edits them in Settings → Guest information.
   details: [
     { title: "Dress Code", body: "Cocktail / semi-formal attire." },
     { title: "Gifts", body: "Your presence is the only present we need — details will follow closer to the date if you'd still like to contribute." }
@@ -38,13 +46,28 @@ function defaultAttending(invitedEvents) {
   (invitedEvents || []).forEach(id => (o[id] = true));
   return o;
 }
-function eventById(id) { return CONFIG.events.find(e => e.id === id); }
+// The effective events and guest-information items: the admin's saved
+// settings over the CONFIG defaults. App() refreshes these from
+// state.siteSettings at the top of every render (applySiteSettings), so every
+// component below reads current values without threading them through props.
+let currentEvents = CONFIG.events;
+let currentGuestInfo = CONFIG.details;
+function applySiteSettings(site) {
+  currentEvents = CONFIG.events.map(e => ({ ...e, ...(site?.events?.[e.id] || {}), id: e.id, seated: e.seated }));
+  currentGuestInfo = Array.isArray(site?.guestInfo) ? site.guestInfo : CONFIG.details;
+}
+function eventsList() { return currentEvents; }
+function guestInfoList() { return currentGuestInfo; }
+function eventById(id) { return currentEvents.find(e => e.id === id); }
+// A shorter label for tight spots (dropdowns): "Wedding Ceremony & Reception" -> "Wedding Ceremony".
+function eventShortName(ev) { return ev.name.split(/ & | and | — | - /)[0]; }
 // Only households invited to the seated event (the reception) have a seat to find or be given.
 function invitedToSeatedEvent(rec) { return rec.invitedEvents.some(id => eventById(id)?.seated); }
 
-// Dates for RSVP deadlines are plain 'YYYY-MM-DD' strings (no time or zone),
-// compared against the viewer's own calendar date. The weekday is derived,
-// never typed, so it can't drift out of sync with the date.
+// Dates are plain 'YYYY-MM-DD' strings and times 24h 'HH:MM', always local to
+// a named IANA time zone. The weekday and display text are derived, never
+// typed, so they can't drift out of sync. Uses only the browser's built-in
+// Intl time-zone data (no library).
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 function parseYmd(ymd) { const [y, m, d] = ymd.split("-").map(Number); return { y, m, d }; }
@@ -52,12 +75,67 @@ function formatYmd(ymd) {
   const { y, m, d } = parseYmd(ymd);
   return `${WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]} ${d} ${MONTHS[m - 1]} ${y}`;
 }
-function daysUntilYmd(ymd, now = new Date()) {
-  const { y, m, d } = parseYmd(ymd);
-  return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
+function isValidTimeZone(tz) {
+  try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return true; } catch { return false; }
 }
-// The event's own local calendar date, from its ISO datetime (e.g. "2027-08-06T15:30:00+09:30" -> "2027-08-06").
-function eventYmd(ev) { return ev.datetime ? ev.datetime.slice(0, 10) : null; }
+// Minutes the zone is ahead of UTC at a given instant (e.g. +630 for Adelaide in summer).
+function tzOffsetMinutes(utcMs, tz) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric"
+  }).formatToParts(new Date(utcMs)).map(p => [p.type, p.value]));
+  const asUtc = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour, +parts.minute, +parts.second);
+  return Math.round((asUtc - Math.floor(utcMs / 1000) * 1000) / 60000);
+}
+// The exact instant of a local date + time in a zone (handles daylight saving).
+function zonedToUtcMs(ymd, hm, tz) {
+  const { y, m, d } = parseYmd(ymd);
+  const [h, mi] = (hm || "00:00").split(":").map(Number);
+  const guess = Date.UTC(y, m - 1, d, h, mi);
+  let ms = guess - tzOffsetMinutes(guess, tz) * 60000;
+  ms = guess - tzOffsetMinutes(ms, tz) * 60000; // second pass for dates that straddle a DST change
+  return ms;
+}
+function todayYmdIn(tz) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+}
+// Whole days from "today in tz" to ymd (0 = today, negative = past). A reply-by
+// date therefore passes at the end of that day in the event's own time zone,
+// wherever the guest is.
+function daysUntilYmd(ymd, tz = CONFIG.timeZone) {
+  const a = parseYmd(ymd), b = parseYmd(todayYmdIn(tz));
+  return Math.round((Date.UTC(a.y, a.m - 1, a.d) - Date.UTC(b.y, b.m - 1, b.d)) / 86400000);
+}
+// 'YYYY-MM-DD' -> "20 Jan" (or "Sat 20 Feb 2027" with long = true), for compact summaries.
+function formatYmdShort(ymd, long = false) {
+  const { y, m, d } = parseYmd(ymd);
+  return long ? `${WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()].slice(0, 3)} ${d} ${MONTHS[m - 1].slice(0, 3)} ${y}` : `${d} ${MONTHS[m - 1].slice(0, 3)}`;
+}
+function formatTime12(hm) {
+  const [h, m] = hm.split(":").map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+}
+// "Australia/Adelaide" -> "Adelaide", "America/Los_Angeles" -> "Los Angeles"
+function tzCity(tz) { return tz.split("/").pop().replace(/_/g, " "); }
+// e.g. "UTC+10:30" and "ACDT" for a zone on a particular date (for the admin's time zone picker).
+function tzOffsetLabel(ymd, hm, tz) {
+  const ms = zonedToUtcMs(ymd, hm, tz);
+  const off = tzOffsetMinutes(ms, tz), sign = off < 0 ? "-" : "+", a = Math.abs(off);
+  const abbr = new Intl.DateTimeFormat("en-AU", { timeZone: tz, timeZoneName: "short" }).formatToParts(new Date(ms)).find(p => p.type === "timeZoneName")?.value || "";
+  const utc = `UTC${sign}${Math.floor(a / 60)}${a % 60 ? ":" + String(a % 60).padStart(2, "0") : ""}`;
+  return abbr && !abbr.startsWith("GMT") && !abbr.startsWith("UTC") ? `${abbr}, ${utc}` : utc;
+}
+// Guest-facing text for an event, derived from its saved fields.
+function eventDateText(ev) { return formatYmd(ev.date); }
+function eventTimeText(ev) {
+  const t = formatTime12(ev.time);
+  return ev.timeZone && ev.timeZone !== CONFIG.timeZone ? `${t} (${tzCity(ev.timeZone)} time)` : t;
+}
+function eventStartMs(ev) { return zonedToUtcMs(ev.date, ev.time, ev.timeZone || CONFIG.timeZone); }
+// The event's own local calendar date.
+function eventYmd(ev) { return ev.date || null; }
+function eventTz(id) { return eventById(id)?.timeZone || CONFIG.timeZone; }
+// Maps search: the address when the admin has entered one (a venue name alone, e.g. "SUNDAY", may not find the place).
+function mapQuery(ev) { return ev.address ? `${ev.venue}, ${ev.address}` : ev.venue; }
 function deadlineFor(site, eventId) { return site?.deadlines?.[eventId] || null; }
 
 // The "Kindly reply by…" sentence for a household, covering only the events
@@ -66,8 +144,8 @@ function deadlineFor(site, eventId) { return site?.deadlines?.[eventId] || null;
 function rsvpDeadlineSentence(eventIds, site) {
   const items = eventIds.map(id => ({ ev: eventById(id), ymd: deadlineFor(site, id) })).filter(x => x.ev && x.ymd);
   if (items.length === 0) return null;
-  const upcoming = items.filter(x => daysUntilYmd(x.ymd) >= 0);
-  const passed = items.filter(x => daysUntilYmd(x.ymd) < 0);
+  const upcoming = items.filter(x => daysUntilYmd(x.ymd, x.ev.timeZone) >= 0);
+  const passed = items.filter(x => daysUntilYmd(x.ymd, x.ev.timeZone) < 0);
   if (upcoming.length === 0) return "The reply date has passed, but we'd still love to hear from you.";
   let out = new Set(upcoming.map(x => x.ymd)).size === 1 && passed.length === 0
     ? `Kindly reply by ${formatYmd(upcoming[0].ymd)}.`
@@ -134,11 +212,11 @@ async function apiAdmin(password, action, payload) {
    ========================================================= */
 function getNextEvent(eventIds) {
   const now = Date.now();
-  const ids = eventIds && eventIds.length ? eventIds : CONFIG.events.map(e => e.id);
+  const ids = eventIds && eventIds.length ? eventIds : eventsList().map(e => e.id);
   const upcoming = ids
     .map(id => eventById(id))
-    .filter(e => e && e.datetime)
-    .map(e => ({ ...e, ts: new Date(e.datetime).getTime() }))
+    .filter(e => e && e.date && e.time)
+    .map(e => ({ ...e, ts: eventStartMs(e) }))
     .filter(e => !isNaN(e.ts) && e.ts > now)
     .sort((a, b) => a.ts - b.ts);
   return upcoming[0] || null;
@@ -429,6 +507,42 @@ const CSS = `
 .reminder-lines{flex:1 1 220px;}
 .reminder-lines > div + div{margin-top:4px;}
 .reminder-cta{flex:none;min-height:44px;padding:0 18px;border:none;border-radius:22px;background:var(--ink);color:#fff;font-size:14px;font-weight:600;}
+/* Admin: Settings accordion (see AdminSettings) */
+.settings-intro{margin-bottom:14px;}
+.settings-intro h3{font-family:var(--display);font-size:28px;font-weight:600;margin:0 0 4px;}
+.settings-intro p{margin:0;font-size:13.5px;color:var(--ink-soft);line-height:1.5;}
+.acc{background:#fff;border:1px solid var(--gold-soft);border-radius:14px;margin-bottom:12px;}
+.acc-h{margin:0;font:inherit;}
+.acc-head{display:flex;align-items:center;gap:12px;width:100%;min-height:72px;padding:14px 16px;background:none;border:0;border-radius:14px;text-align:left;color:var(--ink);font:inherit;cursor:pointer;}
+.acc-head:focus-visible{outline:2px solid var(--sage);outline-offset:-2px;}
+.acc-ic{flex:none;width:40px;height:40px;border-radius:50%;background:var(--paper-2);display:flex;align-items:center;justify-content:center;color:var(--gold);}
+.acc-text{flex:1;min-width:0;}
+.acc-title{display:block;font-family:var(--display);font-size:21px;font-weight:600;line-height:1.2;}
+.acc-sum{display:block;font-size:12.5px;color:var(--ink-soft);margin-top:3px;line-height:1.4;overflow-wrap:anywhere;}
+.acc-dirty{display:inline-block;margin-left:8px;vertical-align:3px;font-family:var(--body);font-size:11px;font-weight:600;color:var(--gold);background:#F6EEDC;border:1px solid var(--gold-soft);border-radius:10px;padding:1px 8px;}
+.acc-chev{flex:none;color:var(--ink-soft);transition:transform .2s;}
+.acc.open .acc-chev{transform:rotate(180deg);}
+@media(prefers-reduced-motion:reduce){.acc-chev{transition:none;}}
+.acc-body{padding:0 16px 16px;}
+.acc .settings-card{background:var(--paper);}
+.settings-events-grid{display:grid;gap:14px;}
+@media(min-width:600px){.acc-head{padding:16px 22px;}.acc-body{padding:0 22px 22px;}}
+@media(min-width:860px){.settings-events-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
+.settings-two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 10px;}
+/* Narrow phones: date and time each get a full row, so the date isn't squeezed into its picker icon. */
+@media(max-width:439px){.settings-two{grid-template-columns:1fr;}}
+/* Inside the white accordion cards the floating Save bar fades to white, not the page's beige. */
+.acc .settings-actions.dirty{background:linear-gradient(rgba(255,255,255,0),#fff 35%);}
+.settings-label-row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:7px;}
+.settings-label-row label{margin-bottom:0;}
+.settings-badge{font-size:11.5px;font-weight:600;color:var(--sage-dark);background:#E4EBDF;border-radius:10px;padding:2px 9px;white-space:nowrap;}
+.settings-preview{background:#fff;border-radius:10px;padding:10px 12px;font-size:13.5px;line-height:1.45;}
+.settings-preview span{color:var(--ink-soft);}
+.settings-item-actions{display:flex;flex-wrap:wrap;gap:8px;}
+.settings-item-actions .settings-clear{min-height:40px;}
+.settings-clear:disabled{opacity:.45;cursor:not-allowed;}
+.settings-clear.danger{color:var(--error);}
+.settings-add{width:100%;min-height:46px;margin-bottom:6px;border:1px dashed var(--gold-soft);border-radius:12px;background:#fff;color:var(--ink-soft);font-size:14px;font-weight:600;}
 /* Admin: Email guests panel */
 .email-panel{padding:18px;margin-bottom:22px;border-radius:12px;}
 .email-panel h3{font-family:var(--display);font-size:22px;font-weight:600;margin:0 0 12px;}
@@ -610,14 +724,15 @@ function GuestLocation({ state, actions }) {
         return (
           <div className="member" style={{ marginBottom: 20 }} key={id}>
             <div className="member-head"><span className="mname">{ev.name}</span></div>
-            <div className="ev-meta" style={{ marginBottom: 12 }}>{ev.date} · {ev.time}</div>
-            <div style={{ fontSize: 14.5, fontWeight: 500, marginBottom: 12 }}>{ev.venue}</div>
+            <div className="ev-meta" style={{ marginBottom: 12 }}>{eventDateText(ev)} · {eventTimeText(ev)}</div>
+            <div style={{ fontSize: 14.5, fontWeight: 500, marginBottom: ev.address ? 4 : 12 }}>{ev.venue}</div>
+            {ev.address && <div className="ev-meta" style={{ marginBottom: 12 }}>{ev.address}</div>}
             <div style={{ border: "1px solid var(--gold-soft)", overflow: "hidden", marginBottom: 12 }}>
-              <iframe title={`Map to ${ev.venue}`} src={`https://maps.google.com/maps?q=${encodeURIComponent(ev.venue)}&z=14&output=embed`}
+              <iframe title={`Map to ${ev.venue}`} src={`https://maps.google.com/maps?q=${encodeURIComponent(mapQuery(ev))}&z=14&output=embed`}
                 width="100%" height="220" style={{ border: 0, display: "block" }} loading="lazy" />
             </div>
             <a className="btn btn-ghost" style={{ display: "block", textAlign: "center", textDecoration: "none", boxSizing: "border-box" }}
-              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(ev.venue)}`} target="_blank" rel="noopener noreferrer">Get Directions</a>
+              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapQuery(ev))}`} target="_blank" rel="noopener noreferrer">Get Directions</a>
           </div>
         );
       })}
@@ -637,7 +752,7 @@ function rsvpReminders(rec, site) {
   return rec.invitedEvents
     .map(id => ({ ev: eventById(id), ymd: deadlineFor(site, id) }))
     .filter(x => x.ev && x.ymd)
-    .map(x => ({ ...x, days: daysUntilYmd(x.ymd) }))
+    .map(x => ({ ...x, days: daysUntilYmd(x.ymd, x.ev.timeZone) }))
     .filter(x => x.days >= 0 && x.days <= REMINDER_WINDOW_DAYS)
     .sort((a, b) => a.days - b.days);
 }
@@ -679,9 +794,9 @@ function RsvpReminderBanner({ state, actions }) {
   );
 }
 
-function DeadlineChip({ ymd }) {
+function DeadlineChip({ ymd, tz }) {
   if (!ymd) return null;
-  const passed = daysUntilYmd(ymd) < 0;
+  const passed = daysUntilYmd(ymd, tz) < 0;
   return (
     <div className={`deadline-chip ${passed ? "passed" : ""}`}>
       {passed ? `RSVP date passed (${formatYmd(ymd)}) — late replies welcome` : `RSVP by ${formatYmd(ymd)}`}
@@ -701,16 +816,16 @@ function GuestDetails({ state, actions }) {
           return (
             <div className="srow" key={id}>
               <div style={{ fontWeight: 600 }}>{ev.name}</div>
-              <div className="slabel" style={{ fontSize: 12.5 }}>{ev.date} · {ev.time}</div>
+              <div className="slabel" style={{ fontSize: 12.5 }}>{eventDateText(ev)} · {eventTimeText(ev)}</div>
               <div className="slabel" style={{ fontSize: 12.5 }}>{ev.venue}</div>
-              <DeadlineChip ymd={deadlineFor(state.siteSettings, id)} />
+              <DeadlineChip ymd={deadlineFor(state.siteSettings, id)} tz={ev.timeZone} />
             </div>
           );
         })}
       </div>
-      {CONFIG.details && CONFIG.details.length > 0 && (
+      {guestInfoList().length > 0 && (
         <div className="summary">
-          {CONFIG.details.map(d => (
+          {guestInfoList().map(d => (
             <div className="srow" key={d.title}>
               <div style={{ fontWeight: 600 }}>{d.title}</div>
               <div className="slabel" style={{ fontSize: 12.5 }}>{d.body}</div>
@@ -874,7 +989,7 @@ function GuestFormStep2({ state, actions }) {
               <div className="attend-row" key={id}>
                 <div>
                   <div className="ev-name">{ev.name}</div>
-                  <div className="ev-meta">{ev.date} · {ev.venue}</div>
+                  <div className="ev-meta">{eventDateText(ev)} · {ev.venue}</div>
                 </div>
                 <div className="toggle-pair">
                   <button className={`toggle-btn yes ${m.attending[id] ? "on" : ""}`} onClick={() => actions.toggleAttend(i, id)}>Yes</button>
@@ -1024,7 +1139,7 @@ function HouseholdEditor({ state, actions }) {
       <button className="add-member-btn" onClick={actions.addHMember} style={{ marginBottom: 18 }}>+ Add guest to household</button>
 
       <label style={{ display: "block", fontSize: 11, letterSpacing: ".12em", textTransform: "uppercase", fontWeight: 600, color: "var(--ink-soft)", marginBottom: 6 }}>Invited to</label>
-      {CONFIG.events.map(ev => (
+      {eventsList().map(ev => (
         <label className="checkbox-row" key={ev.id}>
           <input type="checkbox" checked={d.invitedEvents.includes(ev.id)} onChange={() => actions.toggleHEvent(ev.id)} />
           {ev.name}
@@ -1134,9 +1249,9 @@ function emailAudiences() {
     { id: "all", label: "Everyone", match: () => true },
     { id: "not-replied", label: "Haven't replied yet", match: r => !r.response },
     { id: "replied", label: "Have replied", match: r => !!r.response },
-    ...CONFIG.events.flatMap(ev => [
-      { id: `invited:${ev.id}`, label: `Invited — ${ev.shortName || ev.name}`, match: r => r.invitedEvents.includes(ev.id) },
-      { id: `attending:${ev.id}`, label: `Attending — ${ev.shortName || ev.name}`, match: r => !!r.response && r.invitedEvents.includes(ev.id) && r.response.members.some(m => m.attending?.[ev.id]) },
+    ...eventsList().flatMap(ev => [
+      { id: `invited:${ev.id}`, label: `Invited — ${eventShortName(ev)}`, match: r => r.invitedEvents.includes(ev.id) },
+      { id: `attending:${ev.id}`, label: `Attending — ${eventShortName(ev)}`, match: r => !!r.response && r.invitedEvents.includes(ev.id) && r.response.members.some(m => m.attending?.[ev.id]) },
     ]),
   ];
 }
@@ -1144,7 +1259,7 @@ function emailAudiences() {
 function reminderAudiences() {
   return [
     { id: "not-replied", label: "Everyone who hasn't replied", match: r => !r.response },
-    ...CONFIG.events.map(ev => ({ id: `not-replied:${ev.id}`, label: `Not replied — ${ev.shortName || ev.name}`, match: r => !r.response && r.invitedEvents.includes(ev.id) })),
+    ...eventsList().map(ev => ({ id: `not-replied:${ev.id}`, label: `Not replied — ${eventShortName(ev)}`, match: r => !r.response && r.invitedEvents.includes(ev.id) })),
   ];
 }
 // Must match EMAIL_BATCH_SIZE in functions/api/admin.js (the server rejects larger batches).
@@ -1308,7 +1423,7 @@ function AdminResponses({ state, actions }) {
   if (q) records = records.filter(([code, rec]) => (rec.householdName + " " + rec.members.map(m => m.name).join(" ")).toLowerCase().includes(q));
 
   let totalHouseholds = Object.keys(all).length, responded = 0, totalGuests = 0;
-  const eventCounts = {}; CONFIG.events.forEach(e => (eventCounts[e.id] = { yes: 0 }));
+  const eventCounts = {}; eventsList().forEach(e => (eventCounts[e.id] = { yes: 0 }));
   const dietaryCounts = {};
   Object.values(all).forEach(rec => {
     totalGuests += rec.members.length;
@@ -1328,7 +1443,7 @@ function AdminResponses({ state, actions }) {
         <div className="stat-card"><div className="num">{totalHouseholds}</div><div className="lbl">Households invited</div></div>
         <div className="stat-card"><div className="num">{responded}</div><div className="lbl">Responded</div></div>
         <div className="stat-card"><div className="num">{totalGuests}</div><div className="lbl">Total guests</div></div>
-        {CONFIG.events.map(ev => (
+        {eventsList().map(ev => (
           <div className="stat-card" key={ev.id}><div className="num">{eventCounts[ev.id].yes}</div><div className="lbl">{ev.name} — attending</div></div>
         ))}
       </div>
@@ -2600,27 +2715,227 @@ function eventHeadcount(guestList, eventId) {
 
 function savedCapacityStr(site, id) { return site.capacities?.[id] != null ? String(site.capacities[id]) : ""; }
 
+/* Settings is an accordion of independent sections (one open at a time). Each
+   section keeps its own unsaved draft and Save button; closed sections stay
+   mounted (just hidden), so collapsing one never discards its edits. Each is
+   keyed on its own saved values, so saving one section resets only that one. */
 function AdminSettings({ state, actions }) {
-  const { deadlines, capacities, announcement } = state.siteSettings;
-  // Each section keeps its own unsaved draft; keying on just its saved values
-  // resets a section after it's saved without discarding edits in the other.
+  const [open, setOpen] = useState("events");
+  const toggle = id => () => setOpen(o => (o === id ? null : id));
+  const { deadlines, capacities, announcement, events, guestInfo } = state.siteSettings;
   return (
-    <>
-      <DeadlineSettings key={JSON.stringify([deadlines, capacities])} state={state} actions={actions} />
-      <AnnouncementSettings key={JSON.stringify(announcement)} state={state} actions={actions} />
-    </>
+    <div className="settings-page">
+      <div className="settings-intro">
+        <h3>Settings</h3>
+        <p>Changes show to guests the next time they open their invite — no redeploy needed.</p>
+      </div>
+      <EventSettings key={JSON.stringify(events)} state={state} actions={actions} open={open === "events"} onToggle={toggle("events")} />
+      <DeadlineSettings key={JSON.stringify([deadlines, capacities])} state={state} actions={actions} open={open === "deadlines"} onToggle={toggle("deadlines")} />
+      <AnnouncementSettings key={JSON.stringify(announcement)} state={state} actions={actions} open={open === "announcement"} onToggle={toggle("announcement")} />
+      <GuestInfoSettings key={JSON.stringify(guestInfo)} state={state} actions={actions} open={open === "info"} onToggle={toggle("info")} />
+    </div>
   );
 }
 
-function AnnouncementSettings({ state, actions }) {
+const SETTINGS_ICON_PROPS = { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true };
+const SETTINGS_ICONS = {
+  events: <svg {...SETTINGS_ICON_PROPS}><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></svg>,
+  deadlines: <svg {...SETTINGS_ICON_PROPS}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>,
+  announcement: <svg {...SETTINGS_ICON_PROPS}><path d="M3 11v2a1 1 0 0 0 1 1h3l5 4V6L7 10H4a1 1 0 0 0-1 1z" /><path d="M16 9a4 4 0 0 1 0 6" /></svg>,
+  info: <svg {...SETTINGS_ICON_PROPS}><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7.5v.5" /></svg>,
+};
+
+function SettingsAccordion({ id, title, summary, open, onToggle, dirty, children }) {
+  return (
+    <section className={`acc ${open ? "open" : ""}`}>
+      <h4 className="acc-h">
+        <button type="button" className="acc-head" id={`acc-btn-${id}`} aria-expanded={open} aria-controls={`acc-${id}`} onClick={onToggle}>
+          <span className="acc-ic">{SETTINGS_ICONS[id]}</span>
+          <span className="acc-text">
+            <span className="acc-title">{title}{dirty && <span className="acc-dirty">Unsaved</span>}</span>
+            <span className="acc-sum">{summary}</span>
+          </span>
+          <svg className="acc-chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+        </button>
+      </h4>
+      <div className="acc-body" id={`acc-${id}`} role="region" aria-labelledby={`acc-btn-${id}`} hidden={!open}>{children}</div>
+    </section>
+  );
+}
+
+// Time zone picker: the likely ones first, then every zone the browser knows.
+const COMMON_TIME_ZONES = [
+  ["Australia/Adelaide", "Adelaide"], ["Australia/Darwin", "Darwin"], ["Australia/Brisbane", "Brisbane"],
+  ["Australia/Sydney", "Sydney / Melbourne / Canberra"], ["Australia/Hobart", "Hobart"], ["Australia/Perth", "Perth"],
+  ["Pacific/Auckland", "Auckland"],
+];
+function allTimeZones() { try { return Intl.supportedValuesOf("timeZone"); } catch { return []; } }
+
+function eventDraftFrom(ev) {
+  return { name: ev.name, date: ev.date, time: ev.time, timeZone: ev.timeZone || CONFIG.timeZone, venue: ev.venue, address: ev.address || "" };
+}
+function eventDraftErrors(d) {
+  const e = {};
+  if (!d.name.trim()) e.name = "Give the event a name.";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d.date)) e.date = "Pick a date.";
+  if (!/^\d{2}:\d{2}$/.test(d.time)) e.time = "Pick a start time.";
+  if (!isValidTimeZone(d.timeZone)) e.timeZone = "Pick a time zone.";
+  if (!d.venue.trim()) e.venue = "Add the venue.";
+  return e;
+}
+
+function EventSettings({ state, actions, open, onToggle }) {
+  const savedDraft = Object.fromEntries(eventsList().map(e => [e.id, eventDraftFrom(e)]));
+  const [draft, setDraft] = useState(savedDraft);
+  const set = (id, field, value) => setDraft(d => ({ ...d, [id]: { ...d[id], [field]: value } }));
+  const dirty = JSON.stringify(draft) !== JSON.stringify(savedDraft);
+  const errors = Object.fromEntries(eventsList().map(e => [e.id, eventDraftErrors(draft[e.id])]));
+  const valid = Object.values(errors).every(e => Object.keys(e).length === 0);
+  const extraZones = allTimeZones().filter(z => !COMMON_TIME_ZONES.some(([c]) => c === z));
+  const summary = eventsList().map(e => `${e.name} · ${formatYmdShort(e.date, true)}`).join(" · ")
+    + (eventsList().every(e => (e.timeZone || CONFIG.timeZone) === CONFIG.timeZone) ? ` · ${tzCity(CONFIG.timeZone)} time` : "");
+
+  function save() {
+    const events = Object.fromEntries(Object.entries(draft).map(([id, d]) => [id, { ...d, name: d.name.trim(), venue: d.venue.trim(), address: d.address.trim() }]));
+    actions.saveSettings({ events });
+  }
+
+  return (
+    <SettingsAccordion id="events" title="Event details" summary={summary} open={open} onToggle={onToggle} dirty={dirty}>
+      <p className="settings-help">
+        What guests see on every page and in emails. Each event's time is in its own time zone — daylight saving is
+        handled for you, and the countdown and reply-by cut-off use it wherever the guest is.
+      </p>
+      <div className="settings-events-grid">
+        {eventsList().map(ev => {
+          const d = draft[ev.id], err = errors[ev.id], idp = `event-${ev.id}`;
+          const preview = { ...d, name: d.name || ev.name };
+          return (
+            <div className="settings-card" key={ev.id}>
+              <div className="field">
+                <div className="settings-label-row">
+                  <label htmlFor={`${idp}-name`}>Event name</label>
+                  {ev.seated && <span className="settings-badge">Has seating plan</span>}
+                </div>
+                <input id={`${idp}-name`} className="settings-input" type="text" maxLength={100} value={d.name} onChange={e => set(ev.id, "name", e.target.value)} />
+                {err.name && <div className="settings-warn">{err.name}</div>}
+              </div>
+              <div className="settings-two">
+                <div className="field">
+                  <label htmlFor={`${idp}-date`}>Date</label>
+                  <input id={`${idp}-date`} className="settings-input" type="date" value={d.date} onChange={e => set(ev.id, "date", e.target.value)} />
+                  {err.date && <div className="settings-warn">{err.date}</div>}
+                </div>
+                <div className="field">
+                  <label htmlFor={`${idp}-time`}>Start time</label>
+                  <input id={`${idp}-time`} className="settings-input" type="time" value={d.time} onChange={e => set(ev.id, "time", e.target.value)} />
+                  {err.time && <div className="settings-warn">{err.time}</div>}
+                </div>
+              </div>
+              <div className="field">
+                <label htmlFor={`${idp}-tz`}>Time zone</label>
+                <select id={`${idp}-tz`} className="settings-input" value={d.timeZone} onChange={e => set(ev.id, "timeZone", e.target.value)}>
+                  <optgroup label="Common">
+                    {COMMON_TIME_ZONES.map(([z, label]) => <option key={z} value={z}>{label}</option>)}
+                  </optgroup>
+                  {extraZones.length > 0 && (
+                    <optgroup label="All time zones">
+                      {extraZones.map(z => <option key={z} value={z}>{z.replace(/_/g, " ")}</option>)}
+                    </optgroup>
+                  )}
+                </select>
+                {!err.date && !err.time && !err.timeZone && (
+                  <div className="helptext">{tzOffsetLabel(d.date, d.time, d.timeZone)} on {formatYmdShort(d.date, true)}</div>
+                )}
+              </div>
+              <div className="field">
+                <label htmlFor={`${idp}-venue`}>Venue name</label>
+                <input id={`${idp}-venue`} className="settings-input" type="text" maxLength={150} value={d.venue} onChange={e => set(ev.id, "venue", e.target.value)} />
+                {err.venue && <div className="settings-warn">{err.venue}</div>}
+              </div>
+              <div className="field">
+                <label htmlFor={`${idp}-address`}>Venue address (optional)</label>
+                <input id={`${idp}-address`} className="settings-input" type="text" maxLength={300} value={d.address} placeholder="e.g. 12 Smith St, Adelaide"
+                  onChange={e => set(ev.id, "address", e.target.value)} />
+                <div className="helptext">Used for the map and “Get Directions”. Leave blank to search by venue name.</div>
+              </div>
+              {Object.keys(err).length === 0 && (
+                <div className="settings-preview"><span>Guests see:</span> {eventDateText(preview)} · {eventTimeText(preview)} · {d.venue.trim()}</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <p className="settings-help" style={{ margin: "4px 0 0" }}>Adding or removing an event is a code change, because every invitation and RSVP is linked to it.</p>
+      <div className={`settings-actions ${dirty ? "dirty" : ""}`}>
+        <button className="btn btn-primary" disabled={state.loading || !dirty || !valid} onClick={save}>
+          {state.loading ? <><span className="spinner" />Saving…</> : !dirty ? "Event details saved" : valid ? "Save event details" : "Fix the highlighted fields"}
+        </button>
+      </div>
+    </SettingsAccordion>
+  );
+}
+
+const MAX_GUEST_INFO_ITEMS = 20;
+
+function GuestInfoSettings({ state, actions, open, onToggle }) {
+  const saved = guestInfoList();
+  const [items, setItems] = useState(() => saved.map(i => ({ title: i.title, body: i.body, key: genId() })));
+  const clean = items.map(i => ({ title: i.title.trim(), body: i.body.trim() }));
+  const dirty = JSON.stringify(clean) !== JSON.stringify(saved.map(i => ({ title: i.title, body: i.body })));
+  const missingTitle = clean.some(i => !i.title);
+  const update = (key, field, value) => setItems(list => list.map(i => (i.key === key ? { ...i, [field]: value } : i)));
+  const move = (idx, delta) => setItems(list => {
+    const next = [...list]; const [it] = next.splice(idx, 1); next.splice(idx + delta, 0, it); return next;
+  });
+  const summary = saved.length ? saved.map(i => i.title).join(" · ") : "Nothing extra on the Details page";
+
+  return (
+    <SettingsAccordion id="info" title="Guest information" summary={summary} open={open} onToggle={onToggle} dirty={dirty}>
+      <p className="settings-help">Shown on every guest's Details page, below the events, in this order — dress code, gifts, parking, anything else.</p>
+      {items.length === 0 && <p className="helptext" style={{ marginTop: 0 }}>No items — the Details page will just show the events.</p>}
+      {items.map((it, idx) => (
+        <div className="settings-card guest-info-item" key={it.key}>
+          <div className="field">
+            <label htmlFor={`info-title-${it.key}`}>Title</label>
+            <input id={`info-title-${it.key}`} className="settings-input" type="text" maxLength={80} value={it.title} placeholder="e.g. Parking"
+              onChange={e => update(it.key, "title", e.target.value)} />
+            {!it.title.trim() && <div className="settings-warn">Add a title (or remove this item).</div>}
+          </div>
+          <div className="field">
+            <label htmlFor={`info-body-${it.key}`}>Text</label>
+            <textarea id={`info-body-${it.key}`} className="settings-input" maxLength={1000} value={it.body}
+              onChange={e => update(it.key, "body", e.target.value)} />
+          </div>
+          <div className="settings-item-actions">
+            <button type="button" className="settings-clear" disabled={idx === 0} onClick={() => move(idx, -1)} aria-label={`Move "${it.title || "item"}" up`}>Move up</button>
+            <button type="button" className="settings-clear" disabled={idx === items.length - 1} onClick={() => move(idx, 1)} aria-label={`Move "${it.title || "item"}" down`}>Move down</button>
+            <button type="button" className="settings-clear danger" onClick={() => setItems(list => list.filter(i => i.key !== it.key))} aria-label={`Remove "${it.title || "item"}"`}>Remove</button>
+          </div>
+        </div>
+      ))}
+      {items.length < MAX_GUEST_INFO_ITEMS && (
+        <button type="button" className="settings-add" onClick={() => setItems(list => [...list, { title: "", body: "", key: genId() }])}>+ Add an item</button>
+      )}
+      <div className={`settings-actions ${dirty ? "dirty" : ""}`}>
+        <button className="btn btn-primary" disabled={state.loading || !dirty || missingTitle} onClick={() => actions.saveSettings({ guestInfo: clean })}>
+          {state.loading ? <><span className="spinner" />Saving…</> : !dirty ? "Guest information saved" : missingTitle ? "Every item needs a title" : "Save guest information"}
+        </button>
+      </div>
+    </SettingsAccordion>
+  );
+}
+
+function AnnouncementSettings({ state, actions, open, onToggle }) {
   const saved = state.siteSettings.announcement || { message: "", until: "" };
   const [message, setMessage] = useState(saved.message);
   const [until, setUntil] = useState(saved.until);
   const dirty = message.trim() !== saved.message || (message.trim() ? until : "") !== saved.until;
   const live = activeAnnouncement(state.siteSettings);
+  const summary = live ? `Showing: “${saved.message.length > 48 ? saved.message.slice(0, 48) + "…" : saved.message}”`
+    : saved.message ? "Saved, but its end date has passed — not showing" : "Off — nothing showing to guests";
   return (
-    <div className="settings-section">
-      <h3>Announcement for guests</h3>
+    <SettingsAccordion id="announcement" title="Announcement" summary={summary} open={open} onToggle={onToggle} dirty={dirty}>
       <p className="settings-help">
         A short note shown at the top of every guest's page when they open their invite — no email needed, so it reaches
         everyone, including people who haven't replied yet. Leave it blank to show nothing.
@@ -2660,30 +2975,37 @@ function AnnouncementSettings({ state, actions }) {
           {state.loading ? <><span className="spinner" />Saving…</> : dirty ? (message.trim() ? "Save announcement" : "Remove announcement") : "Announcement saved"}
         </button>
       </div>
-    </div>
+    </SettingsAccordion>
   );
 }
 
-function DeadlineSettings({ state, actions }) {
-  const hasSeated = CONFIG.events.some(e => e.seated);
+function DeadlineSettings({ state, actions, open, onToggle }) {
+  const hasSeated = eventsList().some(e => e.seated);
   useEffect(() => { if (hasSeated && !state.seatingLoaded && !state.seatingLoading) actions.loadSeating(); }, [state.seatingLoaded, state.seatingLoading]);
 
   const saved = state.siteSettings;
-  const [deadlines, setDeadlines] = useState(() => Object.fromEntries(CONFIG.events.map(e => [e.id, saved.deadlines?.[e.id] || ""])));
-  const [capacities, setCapacities] = useState(() => Object.fromEntries(CONFIG.events.filter(e => !e.seated).map(e => [e.id, savedCapacityStr(saved, e.id)])));
-  const dirty = CONFIG.events.some(e => deadlines[e.id] !== (saved.deadlines?.[e.id] || ""))
+  const [deadlines, setDeadlines] = useState(() => Object.fromEntries(eventsList().map(e => [e.id, saved.deadlines?.[e.id] || ""])));
+  const [capacities, setCapacities] = useState(() => Object.fromEntries(eventsList().filter(e => !e.seated).map(e => [e.id, savedCapacityStr(saved, e.id)])));
+  const dirty = eventsList().some(e => deadlines[e.id] !== (saved.deadlines?.[e.id] || ""))
     || Object.entries(capacities).some(([id, v]) => v.trim() !== savedCapacityStr(saved, id));
   const seatCapacity = state.seatingTables.reduce((n, t) => n + (Number(t.capacity) || 0), 0);
 
+  const summaryParts = [];
+  const dlSet = eventsList().filter(e => saved.deadlines?.[e.id]);
+  summaryParts.push(dlSet.length ? `Reply by ${dlSet.map(e => formatYmdShort(saved.deadlines[e.id])).join(" & ")}` : "No reply-by dates set");
+  summaryParts.push(eventsList().map(e => {
+    const att = eventHeadcount(state.guestList, e.id).attending;
+    const cap = e.seated ? (state.seatingLoaded ? seatCapacity : null) : saved.capacities?.[e.id];
+    return cap != null ? `${att} of ${cap}` : `${att}`;
+  }).join(" · ") + " attending");
   return (
-    <div className="settings-section">
-      <h3>RSVP deadlines &amp; numbers</h3>
+    <SettingsAccordion id="deadlines" title="RSVP deadlines & numbers" summary={summaryParts.join(" · ")} open={open} onToggle={onToggle} dirty={dirty}>
       <p className="settings-help">
         Each event has its own reply-by date, shown to guests on their Details page and RSVP form (only for the events
         they're invited to). Guests can still reply after it passes. Capacity is for your reference only — nothing is
         blocked when it's reached.
       </p>
-      {CONFIG.events.map(ev => {
+      {eventsList().map(ev => {
         const hc = eventHeadcount(state.guestList, ev.id);
         const capStr = capacities[ev.id] ?? "";
         const cap = ev.seated ? (state.seatingLoaded ? seatCapacity : null) : (capStr.trim() === "" ? null : Number(capStr));
@@ -2695,7 +3017,7 @@ function DeadlineSettings({ state, actions }) {
           <div className="settings-card" key={ev.id}>
             <div className="settings-card-head">
               <div className="settings-ev-name">{ev.name}</div>
-              <div className="settings-ev-meta">{ev.date} · {ev.time} · {ev.venue}</div>
+              <div className="settings-ev-meta">{eventDateText(ev)} · {eventTimeText(ev)} · {ev.venue}</div>
             </div>
             <div className="settings-grid">
               <div className="field">
@@ -2742,7 +3064,7 @@ function DeadlineSettings({ state, actions }) {
           {state.loading ? <><span className="spinner" />Saving…</> : dirty ? "Save changes" : "All changes saved"}
         </button>
       </div>
-    </div>
+    </SettingsAccordion>
   );
 }
 
@@ -2791,7 +3113,7 @@ export default function App() {
     guestList: {},
     // Admin-set site settings (per-event RSVP deadlines; capacities are admin-only).
     // Guests get theirs from /api/invite, the admin from "get-settings".
-    siteSettings: { deadlines: {}, capacities: {}, announcement: { message: "", until: "" } },
+    siteSettings: { deadlines: {}, capacities: {}, announcement: { message: "", until: "" }, events: {}, guestInfo: null },
     // admin
     adminInput: "",
     adminPassword: "",
@@ -2866,7 +3188,7 @@ export default function App() {
     const data = await apiGetInvite(invite);
     if (data) {
       const { site, ...rec } = data;
-      patch({ ready: true, view: "guest-landing", inviteCode: invite, currentRecord: rec, siteSettings: { deadlines: {}, capacities: {}, announcement: { message: "", until: "" }, ...site } });
+      patch({ ready: true, view: "guest-landing", inviteCode: invite, currentRecord: rec, siteSettings: { deadlines: {}, capacities: {}, announcement: { message: "", until: "" }, events: {}, guestInfo: null, ...site } });
     } else {
       patch({ ready: true, view: "invalid-invite" });
     }
@@ -2978,7 +3300,7 @@ export default function App() {
 
   /* ---------- admin: guest list management ---------- */
   function newHouseholdDraft() {
-    return { householdName: "", members: [{ id: genId(), name: "" }], invitedEvents: CONFIG.events.map(e => e.id), allowPlusOne: false, personalNote: "", contactEmail: "", contactPhone: "" };
+    return { householdName: "", members: [{ id: genId(), name: "" }], invitedEvents: eventsList().map(e => e.id), allowPlusOne: false, personalNote: "", contactEmail: "", contactPhone: "" };
   }
   function startAddHousehold() { patch({ householdDraft: newHouseholdDraft(), editingCode: null }); }
   function startEditHousehold(code) {
@@ -3262,7 +3584,7 @@ export default function App() {
 
   function exportCSV() {
     const all = state.guestList;
-    const rows = [["Household", "Guest name", "Invited events", ...CONFIG.events.map(e => e.name + " - RSVP"), "Dietary tags", "Dietary notes", "Contact email", "Contact phone", "Household message", "Responded at"]];
+    const rows = [["Household", "Guest name", "Invited events", ...eventsList().map(e => e.name + " - RSVP"), "Dietary tags", "Dietary notes", "Contact email", "Contact phone", "Household message", "Responded at"]];
     Object.values(all).forEach(rec => {
       const respMembers = rec.response ? rec.response.members : rec.members.map(m => ({ ...m, attending: {}, dietaryTags: [], dietaryNote: "" }));
       respMembers.forEach(m => {
@@ -3270,7 +3592,7 @@ export default function App() {
           rec.householdName,
           m.name,
           rec.invitedEvents.map(id => eventById(id)?.name).join("; "),
-          ...CONFIG.events.map(ev => (rec.invitedEvents.includes(ev.id) ? (rec.response ? (m.attending[ev.id] ? "Yes" : "No") : "Awaiting reply") : "Not invited")),
+          ...eventsList().map(ev => (rec.invitedEvents.includes(ev.id) ? (rec.response ? (m.attending[ev.id] ? "Yes" : "No") : "Awaiting reply") : "Not invited")),
           (m.dietaryTags || []).join("; "),
           m.dietaryNote || "",
           rec.response?.contactEmail || rec.contactEmail || "",
@@ -3305,6 +3627,7 @@ export default function App() {
   };
 
   /* ========================= MASTER RENDER ========================= */
+  applySiteSettings(state.siteSettings);
   if (!state.ready) return <div className="rsvp-root" />;
 
   let body;
