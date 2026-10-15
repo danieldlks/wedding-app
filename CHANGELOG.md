@@ -69,6 +69,39 @@ desktop widths, with reviewed screenshots. Not yet checked on a physical phone.
 **Files:** `src/App.jsx`, `functions/api/admin.js`, `functions/api/invite.js`,
 `functions/_lib/db.js`, `functions/_lib/templates.js`, `functions/_lib/config.js`,
 `schema.sql`, `design.md`, `plan.md`, `README.md`.
+## 2026-10-10 — 3D venue display: declutter overlapping table labels
+
+**Issue:** #6. The 3D venue display's table/landmark labels are real DOM
+text (`CSS2DRenderer`) so they stay crisp, but that also means they keep a
+fixed on-screen size regardless of camera distance. Zoomed all the way out,
+tables shrink but their labels don't, so neighbouring labels collided into
+unreadable text ("Table 1 ble 2").
+
+**Fix:** added `fp3dDeclutterLabels()`, run every frame after the label
+render. It projects each label to screen space and fades out (opacity, with
+a short transition) any label whose box would overlap one already placed.
+Placement order: the selected table (guest search or click) first, then the
+hovered table, then other tables, then landmarks — ties prefer labels that
+are already showing (so labels don't flicker while orbiting), then whichever
+is nearer the camera. The selected and hovered labels are always shown.
+This is the issue's option 2 (only the hovered/selected label survives when
+crowded), but triggered by *actual* overlap rather than a fixed zoom
+distance — whether labels collide depends on table spacing and viewport
+size, not just zoom, so a fixed threshold would either hide labels
+needlessly on a spacious plan or still let them collide on a tight one. At
+normal zoom on a typical plan nothing overlaps, so nothing changes.
+
+**Verified:** locally (local D1 + `wrangler pages dev`) with four tightly
+clustered temporary tables added to the seeded plan (removed afterwards),
+via Playwright on desktop (1280×800) and mobile (390×844): zero overlapping
+visible labels at default zoom, fully zoomed out, and after "Show whole
+room"; hovering a table whose label was hidden brings its label back;
+clicking it keeps its label shown after the mouse leaves; no console
+errors. `npm run build` passes. 2D view untouched.
+
+**Files:** `src/App.jsx`.
+
+---
 
 ## 2026-09-18 — Remove unused legacy prototype files
 

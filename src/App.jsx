@@ -2218,16 +2218,56 @@ function fp3dLogicalToWorld(x, y) { return [x * FP3D_SCALE, y * FP3D_SCALE]; }
 // the same fixed-resolution bitmap gets stretched soft. Real DOM text via
 // CSS2DRenderer has neither problem — it's rasterized fresh by the browser
 // every frame at whatever size it's shown, and it billboards for free.
-function makeFp3dLabelObject(text) {
+function makeFp3dLabelObject(text, meta) {
   const el = document.createElement("div");
   el.textContent = text;
   el.style.cssText = `
     font: 700 13px 'Work Sans', sans-serif; color: ${FP3D_LABEL_TEXT};
     background: ${FP3D_LABEL_CHIP}; padding: 3px 9px; border-radius: 4px;
     white-space: nowrap; pointer-events: none; user-select: none;
-    box-shadow: 0 1px 3px rgba(32,43,34,.25);
+    box-shadow: 0 1px 3px rgba(32,43,34,.25); transition: opacity .15s;
   `;
-  return new CSS2DObject(el);
+  const obj = new CSS2DObject(el);
+  obj.userData = meta; // { kind: 'table'|'object', tableId? } — read by fp3dDeclutterLabels()
+  return obj;
+}
+
+// Labels are fixed-size DOM chips, so zooming out shrinks the tables but not
+// their labels and neighbours start colliding (issue #6). Rather than hide
+// everything past an arbitrary camera distance — whether labels overlap
+// depends on table spacing and viewport size, not just zoom — this checks
+// actual on-screen overlap every frame and fades out any label that would
+// cover a higher-priority one. Priority: selected table, hovered table, other
+// tables, then landmarks; ties prefer whatever is already showing (so labels
+// don't flicker while orbiting), then whichever is nearer the camera.
+const _fp3dLabelPos = new THREE.Vector3();
+function fp3dDeclutterLabels(s) {
+  const { camera, labels, size, activeTableId, hoveredTableId } = s;
+  const pad = 3;
+  const entries = [];
+  for (const obj of labels) {
+    const el = obj.element;
+    if (el.style.display === "none") continue; // already culled by CSS2DRenderer (off-screen/behind camera)
+    if (!obj.userData.w) { obj.userData.w = el.offsetWidth; obj.userData.h = el.offsetHeight; } // text never changes after build, so measure once
+    _fp3dLabelPos.setFromMatrixPosition(obj.matrixWorld);
+    const dist = _fp3dLabelPos.distanceToSquared(camera.position);
+    _fp3dLabelPos.project(camera);
+    const cx = (_fp3dLabelPos.x + 1) / 2 * size.w, cy = (1 - _fp3dLabelPos.y) / 2 * size.h;
+    const hw = obj.userData.w / 2 + pad, hh = obj.userData.h / 2 + pad;
+    const id = obj.userData.tableId;
+    const rank = id != null && id === activeTableId ? 0
+      : id != null && id === hoveredTableId ? 1
+      : obj.userData.kind === "table" ? 2 : 3;
+    entries.push({ el, rank, dist, shown: el.style.opacity !== "0", x0: cx - hw, x1: cx + hw, y0: cy - hh, y1: cy + hh });
+  }
+  entries.sort((a, b) => a.rank - b.rank || b.shown - a.shown || a.dist - b.dist);
+  const placed = [];
+  for (const e of entries) {
+    const show = e.rank <= 1 || !placed.some(p => e.x0 < p.x1 && e.x1 > p.x0 && e.y0 < p.y1 && e.y1 > p.y0);
+    if (show) placed.push(e);
+    const opacity = show ? "1" : "0";
+    if (e.el.style.opacity !== opacity) e.el.style.opacity = opacity;
+  }
 }
 
 // One mesh (with an edge outline as a child) per table, positioned/sized off
@@ -2268,7 +2308,7 @@ function buildFp3dTableMesh(t) {
   } else {
     mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry), edgeMat));
   }
-  mesh.add(makeFp3dLabelObject(t.label).translateY(FP3D_TABLE_H / 2 + 0.55));
+  mesh.add(makeFp3dLabelObject(t.label, { kind: "table", tableId: t.id }).translateY(FP3D_TABLE_H / 2 + 0.55));
   return mesh;
 }
 
@@ -2310,7 +2350,7 @@ function buildFp3dObjectMesh(o) {
     mesh.position.set(px, FP3D_OBJ_H / 2, py);
   }
   group.add(mesh);
-  if (o.label) group.add(makeFp3dLabelObject(o.label).translateY(FP3D_OBJ_H + 0.4).translateX(mesh.position.x).translateZ(mesh.position.z));
+  if (o.label) group.add(makeFp3dLabelObject(o.label, { kind: "object" }).translateY(FP3D_OBJ_H + 0.4).translateX(mesh.position.x).translateZ(mesh.position.z));
   return group;
 }
 
@@ -2422,16 +2462,22 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
       raycaster.setFromCamera(pointer, camera);
       const hit = raycaster.intersectObjects([...tableMeshesRef.current.values()], false)[0];
       renderer.domElement.style.cursor = hit ? "pointer" : "grab";
+      if (sceneRef.current) sceneRef.current.hoveredTableId = hit ? hit.object.userData.tableId : null;
+    }
+    function onPointerLeave() {
+      if (sceneRef.current) sceneRef.current.hoveredTableId = null;
     }
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
     renderer.domElement.addEventListener("pointerup", onPointerUp);
     renderer.domElement.addEventListener("pointermove", onPointerMove);
+    renderer.domElement.addEventListener("pointerleave", onPointerLeave);
 
     let raf = 0;
     function tick() {
       controls.update();
       renderer.render(scene, camera);
       labelRenderer.render(scene, camera);
+      if (sceneRef.current) fp3dDeclutterLabels(sceneRef.current);
       raf = requestAnimationFrame(tick);
     }
     tick();
@@ -2443,11 +2489,13 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
       labelRenderer.setSize(w, h);
+      sceneRef.current.size = { w, h };
     });
     ro.observe(mount);
 
     sceneRef.current = {
       scene, camera, controls, contentGroup, center,
+      labels: [], size: { w: width, h: height }, activeTableId: null, hoveredTableId: null,
       initialCamPos: camera.position.clone(), initialTarget: center.clone()
     };
 
@@ -2457,6 +2505,7 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
       renderer.domElement.removeEventListener("pointermove", onPointerMove);
+      renderer.domElement.removeEventListener("pointerleave", onPointerLeave);
       controls.dispose();
       renderer.dispose();
       mount.removeChild(renderer.domElement);
@@ -2484,6 +2533,8 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
       tableMeshesRef.current.set(t.id, mesh);
       s.contentGroup.add(mesh);
     });
+    s.labels = [];
+    s.contentGroup.traverse(obj => { if (obj.isCSS2DObject) s.labels.push(obj); });
   }, [tables, objects]);
 
   // Recolor for the externally-driven (guest search) or locally-clicked
@@ -2492,6 +2543,7 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
     const s = sceneRef.current;
     if (!s) return;
     const activeId = focusTableId || clickedTableId;
+    s.activeTableId = activeId;
     tableMeshesRef.current.forEach((mesh, id) => {
       const isActive = id === activeId;
       const [sideMat, topMat] = mesh.material;
