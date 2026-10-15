@@ -6,6 +6,10 @@ export function rowToRecord(row) {
     invitedEvents: JSON.parse(row.invited_events),
     allowPlusOne: !!row.allow_plus_one,
     personalNote: row.personal_note || "",
+    // Optional contact details the admin enters when creating the household, so
+    // they can be emailed before replying (the RSVP form collects its own).
+    contactEmail: row.contact_email || "",
+    contactPhone: row.contact_phone || "",
     createdAt: row.created_at,
     response: row.response ? JSON.parse(row.response) : null
   };
@@ -83,4 +87,51 @@ export function isSeatingRevealed(setting) {
   if (setting.mode === "open") return true;
   if (setting.mode === "scheduled" && setting.revealAt) return Date.now() >= new Date(setting.revealAt).getTime();
   return false;
+}
+
+// Admin-editable site settings, stored as rows in the generic app_settings
+// key/value table (same table as the seating-reveal gate above):
+//   rsvp_deadline_<eventId>  — 'YYYY-MM-DD' (a plain date, no time/zone)
+//   event_capacity_<eventId> — integer headcount, informational only (never enforced)
+//   announcement_message     — free text shown to every guest on their menu page
+//   announcement_until       — optional 'YYYY-MM-DD'; the announcement hides after this date
+// An absent row means "not set". See design.md §11.
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+export async function getSiteSettings(db) {
+  const { results } = await db.prepare(
+    "SELECT key, value FROM app_settings WHERE key LIKE 'rsvp_deadline_%' OR key LIKE 'event_capacity_%' OR key LIKE 'announcement_%'"
+  ).all();
+  const deadlines = {}, capacities = {}, announcement = { message: "", until: "" };
+  for (const { key, value } of results) {
+    if (key.startsWith("rsvp_deadline_") && DATE_RE.test(value || "")) deadlines[key.slice("rsvp_deadline_".length)] = value;
+    if (key.startsWith("event_capacity_") && value != null && value !== "") capacities[key.slice("event_capacity_".length)] = Number(value);
+    if (key === "announcement_message") announcement.message = value || "";
+    if (key === "announcement_until" && DATE_RE.test(value || "")) announcement.until = value;
+  }
+  return { deadlines, capacities, announcement };
+}
+
+// The subset guests are allowed to see — capacities stay admin-only.
+export async function getGuestSiteSettings(db) {
+  const { deadlines, announcement } = await getSiteSettings(db);
+  return { deadlines, announcement };
+}
+
+export async function putSetting(db, key, value) {
+  if (value == null || value === "") {
+    await db.prepare("DELETE FROM app_settings WHERE key = ?").bind(key).run();
+  } else {
+    await db.prepare(`
+      INSERT INTO app_settings (key, value) VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).bind(key, String(value)).run();
+  }
+}
+
+export function isValidDate(s) {
+  if (!DATE_RE.test(s)) return false;
+  const [y, m, d] = s.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
 }

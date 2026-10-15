@@ -11,10 +11,12 @@ const CONFIG = {
   events: [
     // "datetime" is a real ISO timestamp (used by the countdown widget); "date"/"time" above stay as the
     // human-readable strings shown elsewhere. Keep both in sync if you change the schedule.
-    { id: "engagement", name: "Engagement Party", date: "Saturday 20 February 2027", time: "2:30 PM", datetime: "2027-02-20T14:30:00+10:30", venue: "SUNDAY" },
-    { id: "wedding", name: "Wedding Ceremony & Reception", date: "Friday 06 August 2027", time: "3:30 PM", datetime: "2027-08-06T15:30:00+09:30", venue: "Longview Vineyard" }
+    { id: "engagement", name: "Engagement Party", shortName: "Engagement Party", date: "Saturday 20 February 2027", time: "2:30 PM", datetime: "2027-02-20T14:30:00+10:30", venue: "SUNDAY" },
+    // seated: true = this event has the reception seating plan (Find My Seat, and its
+    // capacity in admin Settings is the total of the seating tables' capacities).
+    { id: "wedding", seated: true, name: "Wedding Ceremony & Reception", shortName: "Wedding", date: "Friday 06 August 2027", time: "3:30 PM", datetime: "2027-08-06T15:30:00+09:30", venue: "Longview Vineyard" }
   ],
-  rsvpDeadline: "Thursday 15 April 2027",
+  // RSVP deadlines are set per event by the admin (Settings tab), not here — see design.md §11.
   dietaryOptions: ["Vegetarian", "Vegan", "Gluten-free", "Dairy-free", "Nut allergy", "Other"],
   // Admin password now lives server-side only (a Cloudflare Pages secret) — see functions/api/admin.js.
   // Where this app will live once hosted (used to build QR codes / invite links).
@@ -37,6 +39,42 @@ function defaultAttending(invitedEvents) {
   return o;
 }
 function eventById(id) { return CONFIG.events.find(e => e.id === id); }
+// Only households invited to the seated event (the reception) have a seat to find or be given.
+function invitedToSeatedEvent(rec) { return rec.invitedEvents.some(id => eventById(id)?.seated); }
+
+// Dates for RSVP deadlines are plain 'YYYY-MM-DD' strings (no time or zone),
+// compared against the viewer's own calendar date. The weekday is derived,
+// never typed, so it can't drift out of sync with the date.
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+function parseYmd(ymd) { const [y, m, d] = ymd.split("-").map(Number); return { y, m, d }; }
+function formatYmd(ymd) {
+  const { y, m, d } = parseYmd(ymd);
+  return `${WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]} ${d} ${MONTHS[m - 1]} ${y}`;
+}
+function daysUntilYmd(ymd, now = new Date()) {
+  const { y, m, d } = parseYmd(ymd);
+  return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
+}
+// The event's own local calendar date, from its ISO datetime (e.g. "2027-08-06T15:30:00+09:30" -> "2027-08-06").
+function eventYmd(ev) { return ev.datetime ? ev.datetime.slice(0, 10) : null; }
+function deadlineFor(site, eventId) { return site?.deadlines?.[eventId] || null; }
+
+// The "Kindly reply by…" sentence for a household, covering only the events
+// they're invited to. Late replies are always accepted (nothing is locked),
+// so a passed deadline softens the wording rather than closing anything.
+function rsvpDeadlineSentence(eventIds, site) {
+  const items = eventIds.map(id => ({ ev: eventById(id), ymd: deadlineFor(site, id) })).filter(x => x.ev && x.ymd);
+  if (items.length === 0) return null;
+  const upcoming = items.filter(x => daysUntilYmd(x.ymd) >= 0);
+  const passed = items.filter(x => daysUntilYmd(x.ymd) < 0);
+  if (upcoming.length === 0) return "The reply date has passed, but we'd still love to hear from you.";
+  let out = new Set(upcoming.map(x => x.ymd)).size === 1 && passed.length === 0
+    ? `Kindly reply by ${formatYmd(upcoming[0].ymd)}.`
+    : `Kindly reply by ${upcoming.map(x => `${formatYmd(x.ymd)} for the ${x.ev.name}`).join(" and ")}.`;
+  if (passed.length) out += ` The reply date for the ${passed.map(x => x.ev.name).join(" and ")} has passed, but late replies are welcome.`;
+  return out;
+}
 function inviteUrl(code) {
   const base = CONFIG.siteBaseUrl || (window.location.origin + window.location.pathname);
   return `${base}?invite=${code}`;
@@ -156,11 +194,13 @@ const CSS = `
   --display:'Cormorant Garamond',serif; --body:'Work Sans',-apple-system,BlinkMacSystemFont,sans-serif;
 }
 .rsvp-root *{box-sizing:border-box;}
-.rsvp-root{font-family:var(--body);color:var(--ink);background:var(--paper);min-height:100vh;}
+/* overflow-x:clip stops any stray wide element from making the whole page scroll sideways
+   (unlike overflow:hidden it doesn't create a scroll container, so position:sticky still works). */
+.rsvp-root{font-family:var(--body);color:var(--ink);background:var(--paper);min-height:100vh;min-height:100dvh;overflow-x:clip;}
 .rsvp-root button{font-family:inherit;cursor:pointer;}
 .rsvp-root input,.rsvp-root textarea{font-family:inherit;}
 .eyebrow{font-size:11px;letter-spacing:.22em;text-transform:uppercase;font-weight:600;}
-.hero{min-height:100vh;background:radial-gradient(ellipse at 50% -10%,rgba(169,129,76,.18),transparent 60%),var(--ink);color:var(--paper);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:32px 20px;position:relative;overflow:hidden;}
+.hero{min-height:100vh;min-height:100dvh;background:radial-gradient(ellipse at 50% -10%,rgba(169,129,76,.18),transparent 60%),var(--ink);color:var(--paper);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:32px 20px;position:relative;overflow:hidden;}
 .hero::before{content:"";position:absolute;inset:18px;border:1px solid rgba(216,200,165,.35);pointer-events:none;}
 .hero .eyebrow{color:var(--gold-soft);margin-bottom:18px;}
 .hero h1{font-family:var(--display);font-weight:500;font-size:clamp(36px,8vw,68px);line-height:1.05;margin:0 0 10px;}
@@ -169,7 +209,7 @@ const CSS = `
 .seal{width:108px;height:108px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#C79A5E,var(--gold) 55%,#8A6636 100%);border:none;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-size:32px;color:var(--ink);box-shadow:0 10px 30px -8px rgba(0,0,0,.55),inset 0 2px 4px rgba(255,255,255,.35);transition:transform .3s cubic-bezier(.34,1.56,.64,1);}
 .seal:hover{transform:scale(1.06) rotate(-3deg);}
 .seal-caption{margin-top:16px;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold-soft);font-weight:500;}
-.stage{min-height:100vh;background:linear-gradient(180deg,var(--ink) 0,var(--ink) 120px,var(--paper) 120px);display:flex;justify-content:center;padding:36px 16px 80px;}
+.stage{min-height:100vh;min-height:100dvh;background:linear-gradient(180deg,var(--ink) 0,var(--ink) 120px,var(--paper) 120px);display:flex;justify-content:center;padding:36px 16px 80px;}
 .card{width:100%;max-width:620px;background:var(--paper);border:1px solid var(--gold-soft);box-shadow:var(--shadow);position:relative;}
 .card::before{content:"";position:absolute;inset:8px;border:1px solid rgba(169,129,76,.35);pointer-events:none;}
 .card-inner{padding:38px 26px 32px;}
@@ -180,8 +220,9 @@ const CSS = `
 .countdown{border:1px solid var(--gold-soft);background:var(--paper-2);padding:18px 16px 16px;margin-bottom:24px;text-align:center;}
 .countdown-label{font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;color:var(--ink-soft);margin-bottom:14px;}
 .countdown-label strong{color:var(--gold);font-weight:600;}
-.countdown-grid{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;}
-.countdown-unit{min-width:54px;padding:6px 4px;}
+/* Four equal columns that shrink to fit, so days/hrs/min/sec stay on one row even on a 320px-wide phone. */
+.countdown-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;max-width:300px;margin:0 auto;}
+.countdown-unit{min-width:0;padding:6px 2px;}
 .countdown-num{display:block;font-family:var(--display);font-size:28px;font-weight:600;color:var(--ink);line-height:1;}
 .countdown-unit-label{display:block;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft);margin-top:5px;}
 .personal-note-box{background:var(--paper-2);border-left:3px solid var(--gold);padding:14px 16px;font-family:var(--display);font-style:italic;font-size:16px;line-height:1.5;margin-bottom:26px;}
@@ -234,7 +275,7 @@ const CSS = `
 .summary .srow{padding:8px 0;font-size:13.5px;border-bottom:1px solid rgba(169,129,76,.25);}
 .summary .srow:last-child{border-bottom:none;}
 .summary .slabel{color:var(--ink-soft);}
-.login-stage{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:40px 16px;position:relative;overflow:hidden;background:radial-gradient(ellipse at 50% 0%,rgba(110,127,99,.18),transparent 60%),radial-gradient(ellipse at 50% 100%,rgba(169,129,76,.14),transparent 55%),var(--paper);}
+.login-stage{min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:40px 16px;position:relative;overflow:hidden;background:radial-gradient(ellipse at 50% 0%,rgba(110,127,99,.18),transparent 60%),radial-gradient(ellipse at 50% 100%,rgba(169,129,76,.14),transparent 55%),var(--paper);}
 .login-stage::before,.login-stage::after{content:"";position:absolute;left:50%;top:58%;border-radius:50%;border:1px solid rgba(169,129,76,.22);transform:translate(-50%,-50%);pointer-events:none;}
 .login-stage::before{width:min(1100px,170vw);height:min(1100px,170vw);}
 .login-stage::after{width:min(1400px,220vw);height:min(1400px,220vw);border-color:rgba(169,129,76,.12);}
@@ -262,7 +303,7 @@ const CSS = `
 .preview-banner button{margin-left:10px;background:var(--ink);color:#fff;border:none;padding:5px 12px;border-radius:14px;font-size:12px;}
 
 /* admin */
-.admin-shell{min-height:100vh;background:var(--paper-2);padding:0 0 60px;}
+.admin-shell{min-height:100vh;min-height:100dvh;background:var(--paper-2);padding:0 0 60px;}
 .admin-topbar{background:var(--ink);color:var(--paper);padding:18px 22px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;position:sticky;top:0;z-index:10;}
 .admin-topbar h2{font-family:var(--display);font-weight:500;font-size:20px;margin:0;}
 .admin-topbar .btn-link{color:var(--gold-soft);}
@@ -343,7 +384,7 @@ const CSS = `
 @media(max-width:720px){.seating-sidebar{width:100%;max-height:220px;}}
 
 /* venue display */
-.venue-display{min-height:100vh;background:var(--paper);}
+.venue-display{min-height:100vh;min-height:100dvh;background:var(--paper);}
 .venue-header{background:radial-gradient(ellipse at 50% -20%,rgba(169,129,76,.22),transparent 60%),var(--ink);color:var(--paper);text-align:center;padding:48px 40px 34px;position:relative;overflow:hidden;}
 .venue-header::before{content:"";position:absolute;inset:14px;border:1px solid rgba(216,200,165,.32);pointer-events:none;}
 .venue-header .eyebrow{font-size:12px;letter-spacing:.26em;text-transform:uppercase;font-weight:600;color:var(--gold-soft);margin:0 0 14px;}
@@ -376,6 +417,70 @@ const CSS = `
   .venue-exit{position:static;display:block;margin:0 auto 18px;width:max-content;}
   .seating-canvas-wrap .zoom-controls{position:static;flex-direction:row;justify-content:center;margin-top:10px;}
 }
+/* Guest: per-event RSVP deadline chip (Details page) */
+.deadline-chip{display:inline-block;margin-top:7px;font-size:12px;font-weight:600;color:var(--gold);background:#F6EEDC;border:1px solid var(--gold-soft);border-radius:12px;padding:3px 10px;}
+.deadline-chip.passed{color:var(--ink-soft);background:var(--paper-2);}
+/* Guest: admin-set announcement card on the menu page */
+.announcement{background:#fff;border:1px solid var(--gold-soft);border-radius:10px;padding:14px 16px;margin-bottom:18px;text-align:left;}
+.announcement-eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;font-weight:600;color:var(--gold);margin-bottom:6px;}
+.announcement-body{font-size:14.5px;line-height:1.55;white-space:pre-line;overflow-wrap:anywhere;}
+/* Guest: "N days left to RSVP" nudge on the menu page */
+.reminder-banner{display:flex;flex-wrap:wrap;align-items:center;gap:12px;background:#FBF1DE;border:1px solid var(--gold-soft);border-left:3px solid var(--gold);padding:14px 16px;margin-bottom:20px;font-size:14px;line-height:1.5;}
+.reminder-lines{flex:1 1 220px;}
+.reminder-lines > div + div{margin-top:4px;}
+.reminder-cta{flex:none;min-height:44px;padding:0 18px;border:none;border-radius:22px;background:var(--ink);color:#fff;font-size:14px;font-weight:600;}
+/* Admin: Email guests panel */
+.email-panel{padding:18px;margin-bottom:22px;border-radius:12px;}
+.email-panel h3{font-family:var(--display);font-size:22px;font-weight:600;margin:0 0 12px;}
+.segmented{display:flex;background:var(--paper-2);border-radius:12px;padding:4px;margin-bottom:14px;}
+.segmented button{flex:1;min-height:40px;border:none;background:none;border-radius:9px;font-size:14px;font-weight:600;color:var(--ink-soft);}
+.segmented button.on{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(32,43,34,.15);}
+select.settings-input{-webkit-appearance:auto;appearance:auto;}
+.email-summary{font-size:13.5px;margin-top:8px;color:var(--ink-soft);}
+.email-summary strong{color:var(--ink);}
+.email-skipped{font-size:13px;margin-top:6px;color:var(--ink-soft);}
+.email-skipped summary{cursor:pointer;color:var(--sage-dark);text-decoration:underline;min-height:32px;display:flex;align-items:center;}
+.email-list{margin:6px 0 0;padding-left:20px;font-size:13px;line-height:1.6;}
+.email-send{width:100%;min-height:48px;border-radius:12px;}
+@media(min-width:600px){.email-send{width:auto;min-width:240px;}}
+.email-status{margin-top:14px;padding:12px 14px;background:var(--paper-2);border-radius:10px;font-size:14px;}
+/* Admin tabs scroll sideways on a phone rather than wrapping/overflowing */
+.tabs{overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none;-webkit-overflow-scrolling:touch;}
+.tabs::-webkit-scrollbar{display:none;}
+.tab-btn{flex:none;white-space:nowrap;}
+/* Admin: Settings tab. Inputs are 16px so iOS Safari doesn't zoom the page on focus. */
+.settings-section{margin-bottom:30px;}
+.settings-section > h3{font-family:var(--display);font-size:24px;font-weight:600;margin:0 0 6px;}
+.settings-help{font-size:13.5px;color:var(--ink-soft);line-height:1.55;margin:0 0 16px;}
+.settings-card{background:#fff;border:1px solid var(--gold-soft);border-radius:12px;padding:16px;margin-bottom:14px;}
+.settings-card-head{margin-bottom:12px;}
+.settings-ev-name{font-weight:600;font-size:16px;}
+.settings-ev-meta{font-size:12.5px;color:var(--ink-soft);margin-top:2px;}
+.settings-grid{display:grid;grid-template-columns:1fr;gap:0 14px;}
+@media(min-width:600px){.settings-grid{grid-template-columns:1fr 1fr;}}
+.settings-card .field{margin-bottom:14px;}
+.settings-input{display:block;width:100%;min-height:46px;padding:10px 12px;border:1px solid var(--gold-soft);border-radius:10px;background:#fff;font-size:16px;color:var(--ink);-webkit-appearance:none;appearance:none;}
+.field input.settings-input,.field textarea.settings-input,.field select.settings-input{border-radius:10px;font-size:16px;padding:10px 12px;}
+.settings-input:focus{outline:none;border-color:var(--sage);box-shadow:0 0 0 3px rgba(110,127,99,.15);}
+.settings-input::-webkit-date-and-time-value{text-align:left;}
+textarea.settings-input{min-height:96px;resize:vertical;line-height:1.5;}
+.settings-input-row{display:flex;gap:8px;align-items:center;}
+.settings-input-row .settings-input{flex:1;min-width:0;}
+.settings-clear{flex:none;min-height:46px;padding:0 12px;border:1px solid var(--gold-soft);border-radius:10px;background:var(--paper-2);color:var(--ink-soft);font-size:13px;font-weight:600;}
+.settings-derived{min-height:46px;display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 8px;padding:12px;background:var(--paper-2);border-radius:10px;font-weight:600;font-size:16px;}
+.settings-derived span{font-weight:400;font-size:13px;color:var(--ink-soft);}
+.settings-warn{color:var(--error);font-size:12.5px;margin-top:6px;}
+.headcount{border-top:1px dashed var(--gold-soft);padding-top:12px;}
+.headcount-row{display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px 12px;font-size:14px;}
+.headcount-row .sub{color:var(--ink-soft);font-size:12.5px;}
+.headcount-bar{height:8px;background:var(--paper-2);border-radius:4px;overflow:hidden;margin-top:9px;}
+.headcount-bar > div{height:100%;background:var(--sage);border-radius:4px;}
+.headcount-bar > div.over{background:var(--error);}
+.settings-actions{padding:12px 0 4px;}
+/* Only pinned to the bottom of the screen while there are unsaved changes, so it never covers content otherwise. */
+.settings-actions.dirty{position:sticky;bottom:0;background:linear-gradient(rgba(243,237,223,0),var(--paper-2) 35%);z-index:2;}
+.settings-actions .btn{width:100%;min-height:48px;border-radius:12px;}
+@media(min-width:600px){.settings-actions .btn{width:auto;min-width:220px;}}
 `;
 
 /* =========================================================
@@ -460,6 +565,8 @@ function GuestMenu({ state, actions }) {
   return (
     <div className="stage"><div className="card"><div className="card-inner">
       <div className="card-eyebrow eyebrow" style={{ textAlign: "center" }}>{rec.householdName}</div>
+      <GuestAnnouncement state={state} />
+      <RsvpReminderBanner state={state} actions={actions} />
       <CountdownWidget eventIds={rec.invitedEvents} />
       <h2>Welcome</h2>
       <p className="lede">We can't wait to celebrate with you. What would you like to do?</p>
@@ -476,10 +583,12 @@ function GuestMenu({ state, actions }) {
           <div className="ic">✦</div>
           <div><h3>Details</h3><p>Dates, times, dress code and other info.</p></div>
         </button>
-        <button className="choice-card" onClick={() => actions.patch({ view: "guest-seating" })}>
-          <div className="ic">◈</div>
-          <div><h3>Find My Seat</h3><p>See your table for the reception.</p></div>
-        </button>
+        {invitedToSeatedEvent(rec) && (
+          <button className="choice-card" onClick={() => actions.patch({ view: "guest-seating" })}>
+            <div className="ic">◈</div>
+            <div><h3>Find My Seat</h3><p>See your table for the reception.</p></div>
+          </button>
+        )}
       </div>
       {state.previewMode && (
         <div style={{ textAlign: "center", marginTop: 20 }}>
@@ -519,6 +628,67 @@ function GuestLocation({ state, actions }) {
   );
 }
 
+// Guests who haven't replied see a nudge on their menu page once a deadline
+// is this many days away or closer (and only until it passes).
+const REMINDER_WINDOW_DAYS = 7;
+
+function rsvpReminders(rec, site) {
+  if (rec.response) return [];
+  return rec.invitedEvents
+    .map(id => ({ ev: eventById(id), ymd: deadlineFor(site, id) }))
+    .filter(x => x.ev && x.ymd)
+    .map(x => ({ ...x, days: daysUntilYmd(x.ymd) }))
+    .filter(x => x.days >= 0 && x.days <= REMINDER_WINDOW_DAYS)
+    .sort((a, b) => a.days - b.days);
+}
+
+function activeAnnouncement(site) {
+  const a = site?.announcement;
+  if (!a?.message) return null;
+  if (a.until && daysUntilYmd(a.until) < 0) return null;
+  return a.message;
+}
+
+function GuestAnnouncement({ state }) {
+  const message = activeAnnouncement(state.siteSettings);
+  if (!message) return null;
+  return (
+    <div className="announcement" role="note">
+      <div className="announcement-eyebrow">A note from {CONFIG.coupleNames}</div>
+      <div className="announcement-body">{message}</div>
+    </div>
+  );
+}
+
+function RsvpReminderBanner({ state, actions }) {
+  const items = rsvpReminders(state.currentRecord, state.siteSettings);
+  if (items.length === 0) return null;
+  return (
+    <div className="reminder-banner" role="status">
+      <div className="reminder-lines">
+        {items.map(x => (
+          <div key={x.ev.id}>
+            {x.days === 0
+              ? <>Today is the last day to RSVP for the <strong>{x.ev.name}</strong>.</>
+              : <><strong>{x.days} day{x.days === 1 ? "" : "s"} left</strong> to RSVP for the {x.ev.name} (by {formatYmd(x.ymd)}).</>}
+          </div>
+        ))}
+      </div>
+      <button className="reminder-cta" onClick={actions.startGuestForm}>RSVP now</button>
+    </div>
+  );
+}
+
+function DeadlineChip({ ymd }) {
+  if (!ymd) return null;
+  const passed = daysUntilYmd(ymd) < 0;
+  return (
+    <div className={`deadline-chip ${passed ? "passed" : ""}`}>
+      {passed ? `RSVP date passed (${formatYmd(ymd)}) — late replies welcome` : `RSVP by ${formatYmd(ymd)}`}
+    </div>
+  );
+}
+
 function GuestDetails({ state, actions }) {
   const rec = state.currentRecord;
   return (
@@ -533,6 +703,7 @@ function GuestDetails({ state, actions }) {
               <div style={{ fontWeight: 600 }}>{ev.name}</div>
               <div className="slabel" style={{ fontSize: 12.5 }}>{ev.date} · {ev.time}</div>
               <div className="slabel" style={{ fontSize: 12.5 }}>{ev.venue}</div>
+              <DeadlineChip ymd={deadlineFor(state.siteSettings, id)} />
             </div>
           );
         })}
@@ -548,7 +719,6 @@ function GuestDetails({ state, actions }) {
         </div>
       )}
       {rec.personalNote && <p className="note-quote" style={{ color: "var(--ink)", margin: "0 0 20px" }}>&ldquo;{rec.personalNote}&rdquo;</p>}
-      <p className="lede">Kindly reply by {CONFIG.rsvpDeadline}.</p>
       <div style={{ textAlign: "center", marginTop: 6 }}>
         <button className="btn-link" onClick={() => actions.patch({ view: "guest-menu" })}>&larr; Back</button>
       </div>
@@ -647,7 +817,7 @@ function GuestFormStep1({ state, actions }) {
     <div className="stage"><div className="card"><div className="card-inner">
       <div className="card-eyebrow eyebrow" style={{ textAlign: "center" }}>{rec.householdName}</div>
       <h2>Confirm your details</h2>
-      <p className="lede">Kindly reply by {CONFIG.rsvpDeadline}.</p>
+      <p className="lede">{rsvpDeadlineSentence(rec.invitedEvents, state.siteSettings) || "Let us know who's coming."}</p>
       <StepDots current={1} />
       {d.members.map((m, i) => (
         <div className="field" key={m.id} style={i === 0 ? {} : { marginBottom: 10 }}>
@@ -865,6 +1035,17 @@ function HouseholdEditor({ state, actions }) {
         Allow this household to add an extra guest
       </label>
       <div className="field" style={{ marginTop: 14 }}>
+        <label>Contact email (optional)</label>
+        <input type="email" value={d.contactEmail} placeholder="name@example.com" autoComplete="off"
+          onChange={e => actions.updateHouseholdField("contactEmail", e.target.value)} />
+        <div className="helptext">Lets you email this household reminders and updates before they reply. Pre-fills their RSVP form.</div>
+      </div>
+      <div className="field">
+        <label>Contact phone (optional)</label>
+        <input type="tel" value={d.contactPhone} placeholder="04xx xxx xxx" autoComplete="off"
+          onChange={e => actions.updateHouseholdField("contactPhone", e.target.value)} />
+      </div>
+      <div className="field">
         <label>Personal note (shown on their RSVP page)</label>
         <textarea placeholder="We're so excited to have you at the ceremony!" value={d.personalNote}
           onChange={e => actions.updateHouseholdField("personalNote", e.target.value)} />
@@ -925,7 +1106,8 @@ function AdminGuestList({ state, actions }) {
               <div className="row-body">
                 {rec.personalNote && <div className="member-detail"><em>Note shown to guest:</em> "{rec.personalNote}"</div>}
                 {rec.members.map(m => <div className="member-detail" key={m.id}>{m.name}</div>)}
-                {rec.response && <div className="member-detail">Contact: {rec.response.contactEmail} {rec.response.contactPhone ? "· " + rec.response.contactPhone : ""}</div>}
+                {(rec.contactEmail || rec.contactPhone) && <div className="member-detail">Contact (entered by you): {[rec.contactEmail, rec.contactPhone].filter(Boolean).join(" · ")}</div>}
+                {rec.response && <div className="member-detail">Contact (from their RSVP): {rec.response.contactEmail} {rec.response.contactPhone ? "· " + rec.response.contactPhone : ""}</div>}
                 <div className="row-actions">
                   <button onClick={() => actions.patch({ qrModalCode: code })}>Show QR code</button>
                   <button onClick={() => actions.copyLink(code)}>Copy link</button>
@@ -943,35 +1125,179 @@ function AdminGuestList({ state, actions }) {
   );
 }
 
-function BroadcastPanel({ state, actions, respondedCount }) {
+// Admin "Email guests": who an email goes to. A household's address is its
+// own RSVP email once it has replied, otherwise the contact email the admin
+// entered for it (households with neither are skipped and listed).
+function recipientEmail(rec) { return rec.response?.contactEmail || rec.contactEmail || ""; }
+function emailAudiences() {
+  return [
+    { id: "all", label: "Everyone", match: () => true },
+    { id: "not-replied", label: "Haven't replied yet", match: r => !r.response },
+    { id: "replied", label: "Have replied", match: r => !!r.response },
+    ...CONFIG.events.flatMap(ev => [
+      { id: `invited:${ev.id}`, label: `Invited — ${ev.shortName || ev.name}`, match: r => r.invitedEvents.includes(ev.id) },
+      { id: `attending:${ev.id}`, label: `Attending — ${ev.shortName || ev.name}`, match: r => !!r.response && r.invitedEvents.includes(ev.id) && r.response.members.some(m => m.attending?.[ev.id]) },
+    ]),
+  ];
+}
+// Reminder emails only ever go to households that haven't replied.
+function reminderAudiences() {
+  return [
+    { id: "not-replied", label: "Everyone who hasn't replied", match: r => !r.response },
+    ...CONFIG.events.map(ev => ({ id: `not-replied:${ev.id}`, label: `Not replied — ${ev.shortName || ev.name}`, match: r => !r.response && r.invitedEvents.includes(ev.id) })),
+  ];
+}
+// Must match EMAIL_BATCH_SIZE in functions/api/admin.js (the server rejects larger batches).
+const EMAIL_BATCH_SIZE = 10;
+// Gmail (via the Apps Script relay) allows roughly 100 recipients a day on a personal account.
+const GMAIL_DAILY_LIMIT = 100;
+
+function EmailSendStatus({ state, actions, retryPayload }) {
+  if (state.emailProgress) {
+    const { done, total } = state.emailProgress;
+    return (
+      <div className="email-status" role="status">
+        <div>Sending… {done} of {total}</div>
+        <div className="headcount-bar"><div style={{ width: `${Math.round((done / total) * 100)}%` }} /></div>
+        <div className="helptext">Keep this page open until it finishes.</div>
+      </div>
+    );
+  }
+  const r = state.emailResult;
+  if (!r) return null;
   return (
-    <div className="row-card" style={{ padding: 18, marginBottom: 22 }}>
-      <h3 style={{ fontFamily: "var(--display)", fontSize: 20, marginTop: 0 }}>Send an update</h3>
-      <p className="lede" style={{ margin: "0 0 16px", textAlign: "left" }}>
-        Email everyone who's RSVP'd so far ({respondedCount}) about a change — venue update, reminder, anything else.
-        (Guests who haven't replied yet don't have an email on file until they do.)
-      </p>
-      <div className="field">
-        <label>Subject</label>
-        <input type="text" value={state.broadcastSubject} placeholder="An update from us"
-          onChange={e => actions.patch({ broadcastSubject: e.target.value })} />
-      </div>
-      <div className="field">
-        <label>Message</label>
-        <textarea value={state.broadcastMessage} placeholder="Write your update here…" style={{ minHeight: 110 }}
-          onChange={e => actions.patch({ broadcastMessage: e.target.value })} />
-      </div>
-      <div className="btn-row" style={{ marginTop: 4 }}>
-        <button className="btn btn-primary" onClick={actions.sendBroadcast} disabled={state.broadcastSending || respondedCount === 0}>
-          {state.broadcastSending ? <><span className="spinner" />Sending…</> : "Send update"}
-        </button>
-      </div>
-      {state.broadcastResult && (
-        <p className="helptext" style={{ marginTop: 10 }}>
-          Last send: {state.broadcastResult.sent} delivered{state.broadcastResult.failed ? `, ${state.broadcastResult.failed} failed` : ""}.
-        </p>
+    <div className="email-status" role="status">
+      <div><strong>Sent to {r.sent} household{r.sent === 1 ? "" : "s"}.</strong>{r.failed.length ? ` ${r.failed.length} didn't go through:` : ""}</div>
+      {r.failed.length > 0 && (
+        <>
+          <ul className="email-list">
+            {r.failed.map(f => <li key={f.code}>{state.guestList[f.code]?.householdName || f.code}{f.reason === "no email" ? " — no email on file" : f.reason === "already replied" ? " — replied in the meantime, so skipped" : ""}</li>)}
+          </ul>
+          {r.failed.some(f => f.status === "failed") && retryPayload && (
+            <button className="btn btn-ghost" style={{ marginTop: 8 }} disabled={state.emailSending}
+              onClick={() => actions.sendGuestEmails(r.failed.filter(f => f.status === "failed").map(f => f.code), retryPayload)}>Retry the ones that failed</button>
+          )}
+        </>
       )}
     </div>
+  );
+}
+
+function EmailGuestsPanel({ state, actions }) {
+  const reminder = state.emailKind === "reminder";
+  return (
+    <div className="row-card email-panel">
+      <h3>Email guests</h3>
+      <div className="segmented" role="tablist" aria-label="Email type">
+        <button role="tab" aria-selected={!reminder} className={!reminder ? "on" : ""} disabled={state.emailSending}
+          onClick={() => actions.patch({ emailKind: "update", emailResult: null })}>Update</button>
+        <button role="tab" aria-selected={reminder} className={reminder ? "on" : ""} disabled={state.emailSending}
+          onClick={() => actions.patch({ emailKind: "reminder", emailResult: null })}>RSVP reminder</button>
+      </div>
+      {reminder ? <ReminderEmailForm state={state} actions={actions} /> : <UpdateEmailForm state={state} actions={actions} />}
+    </div>
+  );
+}
+
+function AudienceSummary({ withEmail, noEmail, skippedLabel = "no email" }) {
+  return (
+    <>
+      <div className="email-summary">
+        <strong>{withEmail.length}</strong> household{withEmail.length === 1 ? "" : "s"} will receive this
+        {noEmail.length > 0 && <> · {noEmail.length} {noEmail.length === 1 ? "has" : "have"} {skippedLabel} and will be skipped</>}
+      </div>
+      {noEmail.length > 0 && (
+        <details className="email-skipped">
+          <summary>Show who'll be skipped</summary>
+          <ul className="email-list">{noEmail.map(([code, r]) => <li key={code}>{r.householdName}</li>)}</ul>
+        </details>
+      )}
+      {withEmail.length > GMAIL_DAILY_LIMIT && (
+        <div className="settings-warn">Gmail only sends to about {GMAIL_DAILY_LIMIT} people a day — some of these may fail. Use "Retry" tomorrow for any that do.</div>
+      )}
+    </>
+  );
+}
+
+function ReminderEmailForm({ state, actions }) {
+  const audiences = reminderAudiences();
+  const aud = audiences.find(a => a.id === state.reminderAudience) || audiences[0];
+  const matched = Object.entries(state.guestList).filter(([, r]) => aud.match(r));
+  const withEmail = matched.filter(([, r]) => recipientEmail(r));
+  const noEmail = matched.filter(([, r]) => !recipientEmail(r));
+  const payload = { kind: "reminder", subject: state.reminderSubject.trim(), message: state.reminderNote.trim() };
+  const deadlines = state.siteSettings.deadlines || {};
+  return (
+    <>
+      <p className="settings-help">
+        A personal nudge to households that haven't replied. Each one gets its own event list with the reply-by dates from
+        Settings{Object.keys(deadlines).length === 0 ? " (none set yet)" : ""}, and an "Open your invitation" button that
+        goes straight to their RSVP. Anyone who replies before you send is skipped automatically.
+      </p>
+      <div className="field">
+        <label htmlFor="reminder-audience">Send to</label>
+        <select id="reminder-audience" className="settings-input" value={aud.id} disabled={state.emailSending}
+          onChange={e => actions.patch({ reminderAudience: e.target.value, emailResult: null })}>
+          {audiences.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
+        </select>
+        <AudienceSummary withEmail={withEmail} noEmail={noEmail} />
+      </div>
+      <div className="field">
+        <label htmlFor="reminder-subject">Subject</label>
+        <input id="reminder-subject" className="settings-input" type="text" maxLength={200} value={state.reminderSubject}
+          onChange={e => actions.patch({ reminderSubject: e.target.value })} />
+      </div>
+      <div className="field">
+        <label htmlFor="reminder-note">Personal note (optional)</label>
+        <textarea id="reminder-note" className="settings-input" maxLength={2000} value={state.reminderNote} placeholder="e.g. We're finalising numbers with the venue soon!"
+          onChange={e => actions.patch({ reminderNote: e.target.value })} />
+      </div>
+      <button className="btn btn-primary email-send" disabled={state.emailSending || withEmail.length === 0 || !payload.subject}
+        onClick={() => actions.sendGuestEmails(withEmail.map(([code]) => code), payload)}>
+        {state.emailSending ? <><span className="spinner" />Sending…</> : `Send reminder to ${withEmail.length} household${withEmail.length === 1 ? "" : "s"}`}
+      </button>
+      <EmailSendStatus state={state} actions={actions} retryPayload={payload} />
+    </>
+  );
+}
+
+function UpdateEmailForm({ state, actions }) {
+  const audiences = emailAudiences();
+  const aud = audiences.find(a => a.id === state.emailAudience) || audiences[0];
+  const matched = Object.entries(state.guestList).filter(([, r]) => aud.match(r));
+  const withEmail = matched.filter(([, r]) => recipientEmail(r));
+  const noEmail = matched.filter(([, r]) => !recipientEmail(r));
+  const payload = { kind: "update", subject: state.emailSubject.trim(), message: state.emailMessage.trim() };
+  return (
+    <>
+      <p className="settings-help">
+        Send an update to a group of households. Households that have replied get it at their RSVP email; the rest at the
+        contact email you entered for them on the Guest List.
+      </p>
+      <div className="field">
+        <label htmlFor="email-audience">Send to</label>
+        <select id="email-audience" className="settings-input" value={aud.id} disabled={state.emailSending}
+          onChange={e => actions.patch({ emailAudience: e.target.value, emailResult: null })}>
+          {audiences.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
+        </select>
+        <AudienceSummary withEmail={withEmail} noEmail={noEmail} />
+      </div>
+      <div className="field">
+        <label htmlFor="email-subject">Subject</label>
+        <input id="email-subject" className="settings-input" type="text" maxLength={200} value={state.emailSubject} placeholder="An update from us"
+          onChange={e => actions.patch({ emailSubject: e.target.value })} />
+      </div>
+      <div className="field">
+        <label htmlFor="email-message">Message</label>
+        <textarea id="email-message" className="settings-input" maxLength={5000} value={state.emailMessage} placeholder="Write your update here…" style={{ minHeight: 130 }}
+          onChange={e => actions.patch({ emailMessage: e.target.value })} />
+      </div>
+      <button className="btn btn-primary email-send" disabled={state.emailSending || withEmail.length === 0 || !payload.subject || !payload.message}
+        onClick={() => actions.sendGuestEmails(withEmail.map(([code]) => code), payload)}>
+        {state.emailSending ? <><span className="spinner" />Sending…</> : `Send to ${withEmail.length} household${withEmail.length === 1 ? "" : "s"}`}
+      </button>
+      <EmailSendStatus state={state} actions={actions} retryPayload={payload} />
+    </>
   );
 }
 
@@ -1007,7 +1333,7 @@ function AdminResponses({ state, actions }) {
         ))}
       </div>
       <div className="summary" style={{ marginBottom: 22 }}><strong style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: ".08em", color: "var(--ink-soft)" }}>Dietary summary&nbsp; </strong>{dietSummary}</div>
-      <BroadcastPanel state={state} actions={actions} respondedCount={responded} />
+      <EmailGuestsPanel state={state} actions={actions} />
       <div className="admin-controls">
         <input type="text" placeholder="Search by name…" value={state.adminSearch} onChange={e => actions.patch({ adminSearch: e.target.value })} />
         <button className="btn btn-ghost" style={{ flex: "none" }} onClick={actions.exportCSV}>Export CSV</button>
@@ -1580,7 +1906,7 @@ function AdminSeating({ state, actions }) {
     return <div className="empty-state"><div className="em-ic">✦</div>Loading seating chart…</div>;
   }
 
-  const households = Object.entries(state.guestList).map(([code, rec]) => ({
+  const households = Object.entries(state.guestList).filter(([, rec]) => invitedToSeatedEvent(rec)).map(([code, rec]) => ({
     code, name: rec.householdName,
     unseated: rec.members.filter(m => !state.seatingAssignments[m.id])
   })).filter(h => h.unseated.length > 0);
@@ -2250,6 +2576,176 @@ function VenueDisplay({ state, actions }) {
   );
 }
 
+/* =========================================================
+   ADMIN SETTINGS
+   Per-event RSVP deadlines and headcount vs capacity. Capacity is
+   informational only — RSVPs are never blocked when it's reached.
+   The seated event's capacity is the seating tables' total, so it
+   follows the floor plan instead of being typed in. See design.md §11.
+   ========================================================= */
+function eventHeadcount(guestList, eventId) {
+  let invited = 0, attending = 0, households = 0, replied = 0;
+  Object.values(guestList).forEach(rec => {
+    if (!rec.invitedEvents.includes(eventId)) return;
+    households++;
+    invited += rec.members.length;
+    if (rec.response) {
+      replied++;
+      // response.members includes any extra guests (plus-ones) the household added.
+      attending += rec.response.members.filter(m => m.attending?.[eventId]).length;
+    }
+  });
+  return { invited, attending, households, replied };
+}
+
+function savedCapacityStr(site, id) { return site.capacities?.[id] != null ? String(site.capacities[id]) : ""; }
+
+function AdminSettings({ state, actions }) {
+  const { deadlines, capacities, announcement } = state.siteSettings;
+  // Each section keeps its own unsaved draft; keying on just its saved values
+  // resets a section after it's saved without discarding edits in the other.
+  return (
+    <>
+      <DeadlineSettings key={JSON.stringify([deadlines, capacities])} state={state} actions={actions} />
+      <AnnouncementSettings key={JSON.stringify(announcement)} state={state} actions={actions} />
+    </>
+  );
+}
+
+function AnnouncementSettings({ state, actions }) {
+  const saved = state.siteSettings.announcement || { message: "", until: "" };
+  const [message, setMessage] = useState(saved.message);
+  const [until, setUntil] = useState(saved.until);
+  const dirty = message.trim() !== saved.message || (message.trim() ? until : "") !== saved.until;
+  const live = activeAnnouncement(state.siteSettings);
+  return (
+    <div className="settings-section">
+      <h3>Announcement for guests</h3>
+      <p className="settings-help">
+        A short note shown at the top of every guest's page when they open their invite — no email needed, so it reaches
+        everyone, including people who haven't replied yet. Leave it blank to show nothing.
+      </p>
+      <div className="settings-card">
+        <div className="field">
+          <label htmlFor="announcement-message">Message</label>
+          <textarea id="announcement-message" className="settings-input" maxLength={2000} value={message}
+            placeholder="e.g. Parking at the vineyard is limited — we recommend carpooling!"
+            onChange={e => setMessage(e.target.value)} />
+          <div className="helptext">{message.length}/2000</div>
+        </div>
+        <div className="field">
+          <label htmlFor="announcement-until">Show until (optional)</label>
+          <div className="settings-input-row">
+            <input id="announcement-until" className="settings-input" type="date" value={until} onChange={e => setUntil(e.target.value)} />
+            {until && <button type="button" className="settings-clear" onClick={() => setUntil("")}>Clear</button>}
+          </div>
+          <div className="helptext">{until ? `Hidden from guests after ${formatYmd(until)}.` : "Shown until you remove it."}</div>
+        </div>
+        <div className="helptext" style={{ marginTop: 0 }}>
+          Status: {live ? "showing to guests now." : saved.message ? "saved, but the end date has passed — not showing." : "nothing is showing."}
+        </div>
+        {message.trim() && (
+          <div style={{ marginTop: 14 }}>
+            <div className="helptext" style={{ marginBottom: 6 }}>Preview</div>
+            <div className="announcement" style={{ marginBottom: 0 }}>
+              <div className="announcement-eyebrow">A note from {CONFIG.coupleNames}</div>
+              <div className="announcement-body">{message.trim()}</div>
+            </div>
+          </div>
+        )}
+      </div>
+      <div className={`settings-actions ${dirty ? "dirty" : ""}`}>
+        <button className="btn btn-primary" disabled={state.loading || !dirty}
+          onClick={() => actions.saveSettings({ announcement: { message: message.trim(), until } })}>
+          {state.loading ? <><span className="spinner" />Saving…</> : dirty ? (message.trim() ? "Save announcement" : "Remove announcement") : "Announcement saved"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DeadlineSettings({ state, actions }) {
+  const hasSeated = CONFIG.events.some(e => e.seated);
+  useEffect(() => { if (hasSeated && !state.seatingLoaded && !state.seatingLoading) actions.loadSeating(); }, [state.seatingLoaded, state.seatingLoading]);
+
+  const saved = state.siteSettings;
+  const [deadlines, setDeadlines] = useState(() => Object.fromEntries(CONFIG.events.map(e => [e.id, saved.deadlines?.[e.id] || ""])));
+  const [capacities, setCapacities] = useState(() => Object.fromEntries(CONFIG.events.filter(e => !e.seated).map(e => [e.id, savedCapacityStr(saved, e.id)])));
+  const dirty = CONFIG.events.some(e => deadlines[e.id] !== (saved.deadlines?.[e.id] || ""))
+    || Object.entries(capacities).some(([id, v]) => v.trim() !== savedCapacityStr(saved, id));
+  const seatCapacity = state.seatingTables.reduce((n, t) => n + (Number(t.capacity) || 0), 0);
+
+  return (
+    <div className="settings-section">
+      <h3>RSVP deadlines &amp; numbers</h3>
+      <p className="settings-help">
+        Each event has its own reply-by date, shown to guests on their Details page and RSVP form (only for the events
+        they're invited to). Guests can still reply after it passes. Capacity is for your reference only — nothing is
+        blocked when it's reached.
+      </p>
+      {CONFIG.events.map(ev => {
+        const hc = eventHeadcount(state.guestList, ev.id);
+        const capStr = capacities[ev.id] ?? "";
+        const cap = ev.seated ? (state.seatingLoaded ? seatCapacity : null) : (capStr.trim() === "" ? null : Number(capStr));
+        const dl = deadlines[ev.id];
+        const evDate = eventYmd(ev);
+        const tooLate = dl && evDate && dl >= evDate;
+        const over = cap != null && hc.attending > cap;
+        return (
+          <div className="settings-card" key={ev.id}>
+            <div className="settings-card-head">
+              <div className="settings-ev-name">{ev.name}</div>
+              <div className="settings-ev-meta">{ev.date} · {ev.time} · {ev.venue}</div>
+            </div>
+            <div className="settings-grid">
+              <div className="field">
+                <label htmlFor={`deadline-${ev.id}`}>Reply by</label>
+                <div className="settings-input-row">
+                  <input id={`deadline-${ev.id}`} className="settings-input" type="date" value={dl} max={evDate || undefined}
+                    onChange={e => setDeadlines({ ...deadlines, [ev.id]: e.target.value })} />
+                  {dl && <button type="button" className="settings-clear" onClick={() => setDeadlines({ ...deadlines, [ev.id]: "" })}>Clear</button>}
+                </div>
+                <div className="helptext">{dl ? `Guests see: "RSVP by ${formatYmd(dl)}"` : "Not set — guests won't see a reply-by date for this event."}</div>
+                {tooLate && <div className="settings-warn">This is on or after the event itself ({formatYmd(evDate)}).</div>}
+              </div>
+              <div className="field">
+                <label htmlFor={`capacity-${ev.id}`}>Capacity</label>
+                {ev.seated ? (
+                  <div className="settings-derived" id={`capacity-${ev.id}`}>
+                    {state.seatingLoaded ? seatCapacity : "…"}
+                    <span>from {state.seatingTables.length} seating table{state.seatingTables.length === 1 ? "" : "s"} — updates as you add tables</span>
+                  </div>
+                ) : (
+                  <input id={`capacity-${ev.id}`} className="settings-input" type="number" inputMode="numeric" min="0" step="1" placeholder="e.g. 80"
+                    value={capStr} onChange={e => setCapacities({ ...capacities, [ev.id]: e.target.value })} />
+                )}
+              </div>
+            </div>
+            <div className="headcount">
+              <div className="headcount-row">
+                <span><strong>{hc.attending}</strong> attending{cap != null ? ` of ${cap}` : ""}</span>
+                <span className="sub">{hc.replied} of {hc.households} household{hc.households === 1 ? "" : "s"} replied · {hc.invited} guest{hc.invited === 1 ? "" : "s"} invited</span>
+              </div>
+              {cap > 0 && (
+                <div className="headcount-bar" role="img" aria-label={`${hc.attending} attending of ${cap}`}>
+                  <div className={over ? "over" : ""} style={{ width: `${Math.min(100, Math.round((hc.attending / cap) * 100))}%` }} />
+                </div>
+              )}
+              {over && <div className="settings-warn">{hc.attending - cap} over capacity.</div>}
+            </div>
+          </div>
+        );
+      })}
+      <div className={`settings-actions ${dirty ? "dirty" : ""}`}>
+        <button className="btn btn-primary" disabled={state.loading || !dirty}
+          onClick={() => actions.saveSettings({ deadlines, capacities: Object.fromEntries(Object.entries(capacities).map(([id, v]) => [id, v.trim()])) })}>
+          {state.loading ? <><span className="spinner" />Saving…</> : dirty ? "Save changes" : "All changes saved"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Admin({ state, actions }) {
   return (
     <div className="admin-shell">
@@ -2266,10 +2762,12 @@ function Admin({ state, actions }) {
           <button className={`tab-btn ${state.adminTab === "guestlist" ? "active" : ""}`} onClick={() => actions.patch({ adminTab: "guestlist" })}>Guest List</button>
           <button className={`tab-btn ${state.adminTab === "responses" ? "active" : ""}`} onClick={() => actions.patch({ adminTab: "responses" })}>Responses &amp; Stats</button>
           <button className={`tab-btn ${state.adminTab === "seating" ? "active" : ""}`} onClick={() => actions.patch({ adminTab: "seating" })}>Seating</button>
+          <button className={`tab-btn ${state.adminTab === "settings" ? "active" : ""}`} onClick={() => actions.patch({ adminTab: "settings" })}>Settings</button>
         </div>
         {state.adminTab === "guestlist" && <AdminGuestList state={state} actions={actions} />}
         {state.adminTab === "responses" && <AdminResponses state={state} actions={actions} />}
         {state.adminTab === "seating" && <AdminSeating state={state} actions={actions} />}
+        {state.adminTab === "settings" && <AdminSettings state={state} actions={actions} />}
       </div>
     </div>
   );
@@ -2291,22 +2789,31 @@ export default function App() {
     loading: false,
     toast: null,
     guestList: {},
+    // Admin-set site settings (per-event RSVP deadlines; capacities are admin-only).
+    // Guests get theirs from /api/invite, the admin from "get-settings".
+    siteSettings: { deadlines: {}, capacities: {}, announcement: { message: "", until: "" } },
     // admin
     adminInput: "",
     adminPassword: "",
     adminError: "",
     adminAuthed: false,
-    adminTab: "guestlist", // guestlist | responses
+    adminTab: "guestlist", // guestlist | responses | seating | settings
     adminSearch: "",
     openRows: {},
     qrModalCode: null,
     householdDraft: null,
     editingCode: null,
-    // admin: broadcast
-    broadcastSubject: "",
-    broadcastMessage: "",
-    broadcastSending: false,
-    broadcastResult: null,
+    // admin: email guests (see EmailGuestsPanel)
+    emailKind: "update", // update | reminder
+    emailAudience: "all",
+    reminderAudience: "not-replied",
+    reminderSubject: "A friendly reminder to RSVP",
+    reminderNote: "",
+    emailSubject: "",
+    emailMessage: "",
+    emailSending: false,
+    emailProgress: null, // { done, total } while a send is running
+    emailResult: null,   // { sent, failed: [{ code, status, reason }] } after it finishes
     // admin: seating
     seatingTables: [],
     seatingAssignments: {},
@@ -2356,9 +2863,10 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const invite = params.get("invite");
     if (!invite) { patch({ ready: true, view: "no-invite" }); return; }
-    const rec = await apiGetInvite(invite);
-    if (rec) {
-      patch({ ready: true, view: "guest-landing", inviteCode: invite, currentRecord: rec });
+    const data = await apiGetInvite(invite);
+    if (data) {
+      const { site, ...rec } = data;
+      patch({ ready: true, view: "guest-landing", inviteCode: invite, currentRecord: rec, siteSettings: { deadlines: {}, capacities: {}, announcement: { message: "", until: "" }, ...site } });
     } else {
       patch({ ready: true, view: "invalid-invite" });
     }
@@ -2380,8 +2888,8 @@ export default function App() {
       step: 1,
       draft: {
         members,
-        contactEmail: rec.response ? rec.response.contactEmail : "",
-        contactPhone: rec.response ? rec.response.contactPhone : "",
+        contactEmail: rec.response ? rec.response.contactEmail : (rec.contactEmail || ""),
+        contactPhone: rec.response ? rec.response.contactPhone : (rec.contactPhone || ""),
         notes: rec.response ? rec.response.notes : ""
       },
       errors: {}
@@ -2447,8 +2955,8 @@ export default function App() {
   async function submitAdminLogin() {
     patch({ loading: true, adminError: "" });
     try {
-      const all = await apiAdmin(state.adminInput, "list");
-      patch({ loading: false, adminAuthed: true, adminPassword: state.adminInput, view: "admin", guestList: all, adminTab: "guestlist" });
+      const [all, settings] = await Promise.all([apiAdmin(state.adminInput, "list"), apiAdmin(state.adminInput, "get-settings")]);
+      patch({ loading: false, adminAuthed: true, adminPassword: state.adminInput, view: "admin", guestList: all, siteSettings: settings, adminTab: "guestlist" });
     } catch (e) {
       // 403 = signing in from a *.pages.dev address, which functions/api/admin.js refuses (see ADMIN_HOSTS)
       patch({ loading: false, adminError: e.status === 403 ? `Admin sign-in only works at ${CONFIG.siteBaseUrl.replace(/^https?:\/\//, "")}.` : "Incorrect password." });
@@ -2457,8 +2965,8 @@ export default function App() {
   async function refreshAdmin() {
     patch({ loading: true });
     try {
-      const all = await apiAdmin(state.adminPassword, "list");
-      patch({ loading: false, guestList: all });
+      const [all, settings] = await Promise.all([apiAdmin(state.adminPassword, "list"), apiAdmin(state.adminPassword, "get-settings")]);
+      patch({ loading: false, guestList: all, siteSettings: settings });
     } catch (e) {
       patch({ loading: false });
       showToast("Couldn't refresh — please sign in again.");
@@ -2470,7 +2978,7 @@ export default function App() {
 
   /* ---------- admin: guest list management ---------- */
   function newHouseholdDraft() {
-    return { householdName: "", members: [{ id: genId(), name: "" }], invitedEvents: CONFIG.events.map(e => e.id), allowPlusOne: false, personalNote: "" };
+    return { householdName: "", members: [{ id: genId(), name: "" }], invitedEvents: CONFIG.events.map(e => e.id), allowPlusOne: false, personalNote: "", contactEmail: "", contactPhone: "" };
   }
   function startAddHousehold() { patch({ householdDraft: newHouseholdDraft(), editingCode: null }); }
   function startEditHousehold(code) {
@@ -2481,7 +2989,9 @@ export default function App() {
         members: rec.members.map(m => ({ ...m })),
         invitedEvents: [...rec.invitedEvents],
         allowPlusOne: rec.allowPlusOne,
-        personalNote: rec.personalNote || ""
+        personalNote: rec.personalNote || "",
+        contactEmail: rec.contactEmail || "",
+        contactPhone: rec.contactPhone || ""
       },
       editingCode: code
     });
@@ -2511,6 +3021,7 @@ export default function App() {
     const d = state.householdDraft;
     if (d.members.some(m => !m.name.trim())) { showToast("Every guest needs a name."); return; }
     if (d.invitedEvents.length === 0) { showToast("Select at least one event this household is invited to."); return; }
+    if (d.contactEmail.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(d.contactEmail.trim())) { showToast("That contact email doesn't look right."); return; }
     patch({ loading: true });
     try {
       const all = await apiAdmin(state.adminPassword, "save-household", {
@@ -2519,7 +3030,9 @@ export default function App() {
         members: d.members.map(m => ({ id: m.id, name: m.name.trim() })),
         invitedEvents: d.invitedEvents,
         allowPlusOne: d.allowPlusOne,
-        personalNote: d.personalNote
+        personalNote: d.personalNote,
+        contactEmail: d.contactEmail.trim(),
+        contactPhone: d.contactPhone.trim()
       });
       patch({ loading: false, guestList: all, householdDraft: null, editingCode: null });
       showToast(state.editingCode ? "Household updated." : "Household added — QR code ready to share.");
@@ -2694,24 +3207,45 @@ export default function App() {
     }
   }
 
-  /* ---------- admin: broadcast update to guests who've responded ---------- */
-  async function sendBroadcast() {
-    if (!state.broadcastSubject.trim() || !state.broadcastMessage.trim()) {
-      showToast("Add a subject and message first.");
-      return;
-    }
-    patch({ broadcastSending: true, broadcastResult: null });
+  /* ---------- admin: site settings ---------- */
+  async function saveSettings(payload) {
+    patch({ loading: true });
     try {
-      const result = await apiAdmin(state.adminPassword, "broadcast", {
-        subject: state.broadcastSubject.trim(),
-        message: state.broadcastMessage.trim()
-      });
-      patch({ broadcastSending: false, broadcastResult: result, broadcastSubject: "", broadcastMessage: "" });
-      showToast(`Sent to ${result.sent} guest${result.sent === 1 ? "" : "s"}${result.failed ? `, ${result.failed} failed` : ""}.`);
+      const settings = await apiAdmin(state.adminPassword, "save-settings", payload);
+      patch({ loading: false, siteSettings: settings });
+      showToast("Settings saved.");
+      return true;
     } catch (e) {
-      patch({ broadcastSending: false });
-      showToast("Broadcast failed to send — please try again.");
+      patch({ loading: false });
+      showToast("Couldn't save settings — please check the values and try again.");
+      return false;
     }
+  }
+
+  /* ---------- admin: email guests ---------- */
+  // Sends in batches of EMAIL_BATCH_SIZE households per request (the server
+  // caps it), updating a progress bar between batches. A failed batch marks
+  // just its own households as failed, so the rest still go out.
+  async function sendGuestEmails(codes, payload) {
+    if (codes.length === 0) return;
+    if (!window.confirm(`Send "${payload.subject}" to ${codes.length} household${codes.length === 1 ? "" : "s"}?`)) return;
+    patch({ emailSending: true, emailProgress: { done: 0, total: codes.length }, emailResult: null });
+    const action = payload.kind === "reminder" ? "send-reminders" : "send-emails";
+    const results = [];
+    for (let i = 0; i < codes.length; i += EMAIL_BATCH_SIZE) {
+      const batch = codes.slice(i, i + EMAIL_BATCH_SIZE);
+      try {
+        const r = await apiAdmin(state.adminPassword, action, { codes: batch, subject: payload.subject, message: payload.message });
+        results.push(...r.results);
+      } catch (e) {
+        results.push(...batch.map(code => ({ code, status: "failed", reason: "request failed" })));
+      }
+      patch({ emailProgress: { done: Math.min(i + batch.length, codes.length), total: codes.length } });
+    }
+    const sent = results.filter(r => r.status === "sent").length;
+    const failed = results.filter(r => r.status !== "sent");
+    patch({ emailSending: false, emailProgress: null, emailResult: { sent, failed }, ...(failed.length === 0 && payload.kind === "update" ? { emailSubject: "", emailMessage: "" } : {}) });
+    showToast(`Sent to ${sent} household${sent === 1 ? "" : "s"}${failed.length ? `, ${failed.length} didn't go through` : ""}.`);
   }
 
   function previewInvite(code) {
@@ -2739,8 +3273,8 @@ export default function App() {
           ...CONFIG.events.map(ev => (rec.invitedEvents.includes(ev.id) ? (rec.response ? (m.attending[ev.id] ? "Yes" : "No") : "Awaiting reply") : "Not invited")),
           (m.dietaryTags || []).join("; "),
           m.dietaryNote || "",
-          rec.response ? rec.response.contactEmail : "",
-          rec.response ? rec.response.contactPhone : "",
+          rec.response?.contactEmail || rec.contactEmail || "",
+          rec.response?.contactPhone || rec.contactPhone || "",
           rec.response ? rec.response.notes : "",
           rec.response ? rec.response.submittedAt : ""
         ]);
@@ -2762,15 +3296,16 @@ export default function App() {
     startGuestForm, updateDraft, updateMember, toggleAttend, toggleDiet, addExtraGuest, removeExtraGuest, validateGuestStep1, submitGuestRSVP,
     submitAdminLogin, refreshAdmin, exitToPublic,
     startAddHousehold, startEditHousehold, cancelHouseholdDraft, updateHouseholdField, updateHMemberName, addHMember, removeHMember, toggleHEvent, saveHousehold, deleteHousehold,
-    sendBroadcast,
+    sendGuestEmails,
     previewInvite, exitPreview, toggleRow, copyLink, exportCSV,
     loadSeating, selectTable, deselectTable, updateTableDraftField, addTable, saveTableDraft, deleteTable, moveTable, armGuest, assignSeat,
     selectObject, deselectObject, updateObjectDraftField, addObject, saveObjectDraft, deleteObject, moveObject,
-    setTableShape, downloadFloorPlan, saveSeatingReveal
+    setTableShape, downloadFloorPlan, saveSeatingReveal,
+    saveSettings
   };
 
   /* ========================= MASTER RENDER ========================= */
-  if (!state.ready) return <div className="rsvp-root" style={{ minHeight: "100vh" }} />;
+  if (!state.ready) return <div className="rsvp-root" />;
 
   let body;
   switch (state.view) {

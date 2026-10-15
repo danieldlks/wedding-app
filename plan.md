@@ -160,3 +160,41 @@ transactional email provider (e.g. Resend) once a custom domain is available to
 verify — a straightforward swap of `functions/_lib/email.js` without touching
 the rest of the backend. See `design.md` §9 for the full architecture and
 `README.md` for setup/deploy steps.
+
+---
+
+## 10. Version 5 — Per-Event Deadlines, Settings & Guest Communications (Requested Follow-up)
+
+*(§8–9 are the Highway Dash game, on the `feature/highway-dash` branch.)*
+
+**Request:** RSVP deadlines differ between the engagement party and the wedding,
+so each event should have its own date. The admin should be able to set them,
+and they should show on the guest Details page.
+
+**Decisions made with the couple (2026-10-16):**
+
+| Question | Decision |
+|---|---|
+| After a deadline passes? | **No lock.** Keep accepting RSVPs; the couple manage numbers themselves. |
+| Capacity? | **Shown, never enforced.** Wedding = total seating table capacity (follows the floor plan); engagement = typed in. Count = guests marked attending, incl. plus-ones. |
+| Where does the admin set it? | A new **Settings** tab, built to work on iPhone and Android. |
+| Reminders? | **Yes:** an on-site "N days left" banner. |
+| Communications? | **A** on-site announcement, **B** household contact email/phone, **C** email by audience, **D** personalised reminder emails, **E** batched sending. **F** (fully automatic scheduled emails) was **not** chosen: it needs a separate Worker with a cron trigger, and D does the same with one click while keeping the couple in control. |
+| Find My Seat for engagement-only households? | **Hide it.** Done last. |
+
+**Built in this order:** (1) per-event deadlines + Settings tab, (2) capacity
+numbers, (3) on-site reminders, (4) communications A → B → C+E → D, (5) Find My
+Seat fix. See `design.md` §11 for the design and deploy steps (two `ALTER TABLE`
+statements must run before deploying).
+
+**Testing:** each step was tested before committing, against an isolated copy of
+the app with its own database, test secrets and a fake email relay, so no real
+emails were sent. Tests covered the API (validation, partial saves, auth) and the
+real UI in headless Chromium at iPhone (390px), Android (412px) and desktop
+widths, including no sideways page scrolling, 16px inputs and screenshots that
+were reviewed.
+
+**Known limits:** Gmail's ~100 recipients/day still applies (the UI warns and
+offers retry). Reminder emails need either a reply or an admin-entered email on
+file. Households with neither can only be reached through the on-site
+announcement or the reminder banner.

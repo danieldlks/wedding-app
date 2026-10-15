@@ -3,6 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Colours the phone's status/address bar to match the site's dark header band. -->
+    <meta name="theme-color" content="#202B22" />
+    <!-- Page-level reset, inline so it applies before the app's JS loads: removes the
+         browser's default 8px body margin (the white frame around every page) and
+         paints the area behind the app, including iOS/Android overscroll, in the site's
+         paper colour instead of white. text-size-adjust stops iOS enlarging text in landscape. -->
+    <style>
+      html, body { margin: 0; padding: 0; background: #FBF7EF; }
+      html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+    </style>
     <title>RSVP</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
