@@ -393,3 +393,116 @@ still saves — a guest's submission is never blocked on email delivery succeedi
   `CONFIG.siteBaseUrl`, QR codes, and invite links.
 - See `README.md` for one-time setup (Cloudflare account, D1 database, Apps
   Script deployment, secrets) and deploy commands (`npm run pages:deploy`).
+
+---
+
+## 11. Version 5 — Per-Event Deadlines, Settings & Guest Communications
+
+*(§10 is the Highway Dash wedding-day game, on the `feature/highway-dash`
+branch. This section is numbered to leave room for it.)*
+
+### 11.1 What's New
+
+- **Per-event RSVP deadlines.** The single `CONFIG.rsvpDeadline` string is gone.
+  Each event now has its own reply-by date, set by the admin in a new **Settings**
+  tab, with no code change or redeploy. Guests see a chip per invited event on the
+  Details page ("RSVP by Thursday 15 April 2027") and a matching sentence on the
+  RSVP form. Only the events a household is invited to are mentioned.
+- **No lock after a deadline.** A passed date softens the wording ("…has passed,
+  but late replies are welcome") and the form stays open. The couple manage
+  numbers themselves.
+- **Headcount vs capacity (informational only).** Per event: guests attending
+  (including plus-ones), households replied, guests invited. Capacity for the
+  engagement is typed in. For the seated event (the wedding,
+  `CONFIG.events[].seated: true`) it's the total of the seating tables'
+  capacities, so it follows the floor plan.
+- **Guest reminders on the site.** A household that hasn't replied sees "N days
+  left to RSVP for …" at the top of its menu page once a deadline is ≤ 7 days away
+  (`REMINDER_WINDOW_DAYS`), with an "RSVP now" button.
+- **Announcement (option A).** A note from the couple, set in Settings with an
+  optional end date, shown on every guest's menu page. It needs no email, so it
+  reaches everyone.
+- **Household contact details (option B).** Optional email/phone entered by the
+  admin when creating a household, so households can be emailed before they reply.
+  The RSVP form pre-fills from it.
+- **Email guests by audience (option C).** Everyone, haven't replied, have
+  replied, invited to / attending an event. Shows how many receive it and lists
+  who'll be skipped for having no email.
+- **Personalised RSVP reminder emails (option D).** Each non-responding household
+  gets its own events, reply-by dates and an "Open your invitation" button to its
+  own invite link, plus an optional note. Households that reply in the meantime
+  are skipped server-side.
+- **Batched sending (option E).** Emails go out 10 households per request, with a
+  progress bar, per-household results and "Retry the ones that failed".
+- **Find My Seat** is only shown to households invited to the seated event. The
+  admin seating chart's "Unseated guests" list is filtered the same way.
+
+### 11.2 Data Model
+
+No new tables. Settings are rows in the existing `app_settings` key/value table
+(already used by the seating-reveal gate):
+
+| Key | Value | Visible to guests |
+|---|---|---|
+| `rsvp_deadline_<eventId>` | `YYYY-MM-DD` | yes |
+| `event_capacity_<eventId>` | integer | no (admin only) |
+| `announcement_message` | text, ≤ 2000 chars | yes |
+| `announcement_until` | `YYYY-MM-DD` or absent | yes |
+
+Dates are plain calendar dates with no time or zone. The weekday is always
+derived from the date, never typed, so "Thursday 15 April" can't drift out of
+sync. An absent row means "not set".
+
+`households` gains two nullable columns, `contact_email` and `contact_phone`
+(see the deploy note in §11.5).
+
+### 11.3 API
+
+- `GET /api/invite?code=` returns the household record plus
+  `site: { deadlines, announcement }`. Capacities are never sent to guests.
+- `POST /api/admin`:
+  - `get-settings` returns `{ deadlines, capacities, announcement }`.
+  - `save-settings { deadlines?, capacities?, announcement? }` does a partial
+    update. Only known event ids are accepted, and an empty value clears a
+    setting. Every value is validated before anything is written, so a bad value
+    never leaves a half-applied save.
+  - `save-household` also accepts `contactEmail` (validated) and `contactPhone`
+    (≤ 40 chars).
+  - `send-emails { codes[≤10], subject, message }` and
+    `send-reminders { codes[≤10], subject, message? }` return
+    `{ results: [{ code, status: sent|failed|skipped, reason? }] }`.
+    These replace the old single-request `broadcast` action.
+
+### 11.4 Email Sending Design
+
+- **Address:** a household's own RSVP email once it has replied, otherwise the
+  admin-entered contact email (`recipientFor()` in `functions/_lib/templates.js`).
+  Households with neither are skipped and listed in the UI.
+- **Batching:** the admin page splits the recipients into batches of 10
+  (`EMAIL_BATCH_SIZE`, enforced server-side) and calls the API once per batch.
+  A Pages Function on the free plan may only make about 50 outgoing requests per
+  invocation, and each email is 1–2 fetches to the Apps Script relay. The old
+  `broadcast`, which sent everything in one request, would have started failing
+  at around 25–50 households.
+- **Gmail cap:** the relay sends from the couple's personal Gmail, which allows
+  about 100 recipients a day. The panel warns above that, and failed households
+  can be retried on a later day.
+- **Reminder emails** compute "has this date passed?" in `Australia/Adelaide`
+  time (`TIME_ZONE` in `functions/_lib/config.js`) and link to `SITE_BASE_URL`.
+  Keep both in sync with `CONFIG` in `src/App.jsx`.
+
+### 11.5 Deploy Notes
+
+- **Migrate before deploying.** Run these once on the remote D1 database, and on
+  the local one, before deploying this code. Until they run, saving a household
+  fails. Existing data still loads either way.
+  ```sql
+  ALTER TABLE households ADD COLUMN contact_email TEXT;
+  ALTER TABLE households ADD COLUMN contact_phone TEXT;
+  ```
+- **Set the deadlines after deploying.** Nothing carries over from the old
+  `CONFIG.rsvpDeadline` string, so set each event's reply-by date in admin →
+  Settings once this is live.
+- **Mobile.** The Settings tab and Email guests panel use 16px inputs, so iOS
+  Safari doesn't zoom when a field is focused. Buttons are at least 44px tall, and
+  the admin tab bar scrolls sideways on phones.

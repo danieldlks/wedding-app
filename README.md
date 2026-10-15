@@ -23,6 +23,12 @@ architecture rationale.
    npm run db:migrate:remote   # applies schema.sql to the real D1 database
    npm run db:migrate:local    # applies it to the local dev D1 (for `wrangler pages dev`)
    ```
+   Upgrading an existing database? `schema.sql` only creates missing tables, so
+   new columns need a one-off `ALTER TABLE`. Check the `DEPLOY NOTE` comments in
+   `schema.sql`, and run any you haven't applied yet **before** deploying, e.g.:
+   ```
+   npx wrangler d1 execute wedding-rsvp --remote --command "ALTER TABLE households ADD COLUMN contact_email TEXT; ALTER TABLE households ADD COLUMN contact_phone TEXT;"
+   ```
 
 3. **Email relay (Google Apps Script)**
    - Go to [script.google.com](https://script.google.com), create a new project under

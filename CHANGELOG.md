@@ -4,6 +4,40 @@ Notable changes to the RSVP app, newest first. See `plan.md`/`design.md` for the
 broader feature history (v1 → v3); this file tracks discrete fixes and changes
 made along the way.
 
+## 2026-10-16 — Per-event RSVP deadlines, Settings tab, reminders & guest emails
+
+**Feature:** plan.md §10 / design.md §11. Each event now has its own reply-by
+date set by the admin in a new **Settings** tab (stored in `app_settings`),
+shown per event on the guest Details page and RSVP form. RSVPs are never locked.
+Settings also shows attending vs capacity per event: typed in for the
+engagement, and the seating tables' total for the wedding. Also added:
+- An on-site "N days left to RSVP" banner for households that haven't replied.
+- An admin-set announcement on every guest's menu page.
+- Optional contact email/phone per household.
+- "Email guests" by audience, sent in batches of 10 with progress and retry.
+  This replaces the single-request broadcast, which would have broken past
+  roughly 25–50 households.
+- Personalised RSVP reminder emails with each household's own dates and invite
+  link.
+- "Find My Seat" is hidden from households not invited to the reception.
+
+**Removed:** `CONFIG.rsvpDeadline` and the `broadcast` admin action.
+
+**Deploy:** run `ALTER TABLE households ADD COLUMN contact_email TEXT;` and
+`ALTER TABLE households ADD COLUMN contact_phone TEXT;` on the remote D1 database
+**before** deploying (saving a household fails until then). Afterwards, set each
+event's reply-by date in admin → Settings.
+
+**Verified:** `npm run build` passes. 182 automated checks against an isolated
+copy of the app (own D1 state, test secrets, fake email relay, so no real emails
+were sent): API validation and partial-save behaviour, the database upgrade path
+from the old schema, and the real UI in headless Chromium at iPhone, Android and
+desktop widths, with reviewed screenshots. Not yet checked on a physical phone.
+
+**Files:** `src/App.jsx`, `functions/api/admin.js`, `functions/api/invite.js`,
+`functions/_lib/db.js`, `functions/_lib/templates.js`, `functions/_lib/config.js`,
+`schema.sql`, `design.md`, `plan.md`, `README.md`.
+
 ## 2026-09-18 — Remove unused legacy prototype files
 
 **Cleanup:** found while auditing the repo for redundant files. `RsvpApp.jsx`,
