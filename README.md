@@ -27,8 +27,13 @@ architecture rationale.
    new columns need a one-off `ALTER TABLE`. Check the `DEPLOY NOTE` comments in
    `schema.sql`, and run any you haven't applied yet **before** deploying, e.g.:
    ```
-   npx wrangler d1 execute wedding-rsvp --remote --command "ALTER TABLE households ADD COLUMN contact_email TEXT; ALTER TABLE households ADD COLUMN contact_phone TEXT;"
+   npx wrangler d1 execute wedding-rsvp --remote --command "ALTER TABLE households ADD COLUMN contact_email TEXT;"
+   npx wrangler d1 execute wedding-rsvp --remote --command "ALTER TABLE households ADD COLUMN contact_phone TEXT;"
    ```
+   Run each `ALTER TABLE` as its own command: against the remote database, putting
+   several in one `--command` failed with only "A request to the Cloudflare API
+   (…/query) failed." Each one can only run once ("duplicate column name" means
+   it's already applied).
 
 3. **Email relay (Google Apps Script)**
    - Go to [script.google.com](https://script.google.com), create a new project under

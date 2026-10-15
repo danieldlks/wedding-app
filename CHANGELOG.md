@@ -25,7 +25,9 @@ engagement, and the seating tables' total for the wedding. Also added:
 
 **Deploy:** run `ALTER TABLE households ADD COLUMN contact_email TEXT;` and
 `ALTER TABLE households ADD COLUMN contact_phone TEXT;` on the remote D1 database
-**before** deploying (saving a household fails until then). Afterwards, set each
+**before** deploying (saving a household fails until then). Run them as two
+separate commands; combined, the remote database rejected them. Both were applied
+to production on 2026-10-16, ahead of this deploy. Afterwards, set each
 event's reply-by date in admin → Settings.
 
 **Verified:** `npm run build` passes. 182 automated checks against an isolated

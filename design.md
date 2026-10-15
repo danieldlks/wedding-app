@@ -494,7 +494,9 @@ sync. An absent row means "not set".
 ### 11.5 Deploy Notes
 
 - **Migrate before deploying.** Run these once on the remote D1 database, and on
-  the local one, before deploying this code. Until they run, saving a household
+  the local one, before deploying this code. Run them as **two separate**
+  `wrangler d1 execute --command` calls: combined into one, the remote database
+  rejected them with no useful error. Applied to production on 2026-10-16. Until they run, saving a household
   fails. Existing data still loads either way.
   ```sql
   ALTER TABLE households ADD COLUMN contact_email TEXT;
