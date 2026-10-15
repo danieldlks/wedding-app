@@ -198,3 +198,34 @@ were reviewed.
 offers retry). Reminder emails need either a reply or an admin-entered email on
 file. Households with neither can only be reached through the on-site
 announcement or the reminder banner.
+
+---
+
+## 11. Version 6 — Editable Event Details & Settings Accordion (Requested Follow-up)
+
+**Request:** stop needing a code change and redeploy to update event names,
+dates, times and venues. Organise Settings into collapsible sections. The design
+was agreed from a mockup first (accordion over inner tabs).
+
+**Decisions made with the couple (2026-10-16):**
+
+| Question | Decision |
+|---|---|
+| What's editable? | Event name, date, start time, time zone, venue, optional venue address; Details items (dress code, gifts, …). |
+| Dietary options? | **Stay in code, not shown in Settings** (keeps earlier answers consistent). |
+| Time zone? | **Per event**, default Adelaide, any IANA zone. Guests see venue-local time, labelled only when it differs from the site's usual zone. |
+| Settings layout? | **Accordion**, one section open at a time, summaries on closed sections. Inner tabs were rejected: they hide other sections' status and their labels are cramped on phones. |
+| Adding/removing events? | **Stays a code change** (ids are linked to all RSVP data). |
+
+**Testing:** isolated test app (own D1, test secrets, fake email relay):
+- **API:** 25 checks covering validation, all-or-nothing saves, reset to
+  defaults, and emails using the saved names.
+- **Browser:** 37 checks at iPhone, Android and desktop sizes:
+  - countdown accuracy against exact UTC instants for Adelaide daylight time and
+    Perth
+  - a reply-by date that has passed in Pacific/Kiritimati but not in
+    Pacific/Pago_Pago
+  - editing every event field, validation, guest pages and map updating,
+    guest-information add/reorder/remove, and the "Unsaved" flags
+- **Regression:** every earlier suite still passes, and the 11-size layout scan
+  is clean.

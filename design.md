@@ -508,3 +508,83 @@ sync. An absent row means "not set".
 - **Mobile.** The Settings tab and Email guests panel use 16px inputs, so iOS
   Safari doesn't zoom when a field is focused. Buttons are at least 44px tall, and
   the admin tab bar scrolls sideways on phones.
+
+---
+
+## 12. Version 6 — Editable Event Details, Time Zones & Guest Information
+
+### 12.1 What's New
+
+- **Event details are edited in admin, not code.** For each event: name, date,
+  start time, **time zone**, venue name and an optional **venue address**. They
+  show on every guest page and in every email the next time a guest opens their
+  invite. No merge or redeploy is needed.
+- **Guest information** (dress code, gifts, parking, …) can be added, edited,
+  reordered and removed in admin. Up to 20 items.
+- **Settings is an accordion.** Four sections, one open at a time, each with a
+  one-line summary when closed: Event details · RSVP deadlines & numbers ·
+  Announcement · Guest information. Each section keeps its own draft and Save
+  button, and a closed section with unsaved edits shows an "Unsaved" tag. Closing
+  a section never discards its edits; the sections stay mounted, just hidden.
+- **Dietary options stay in code** (`CONFIG.dietaryOptions`) and aren't shown in
+  Settings, so earlier RSVP answers stay consistent.
+
+### 12.2 Time Zones
+
+- Each event stores a local `date` (`YYYY-MM-DD`), `time` (24h `HH:MM`) and an IANA
+  `timeZone` (e.g. `Australia/Adelaide`). The picker lists common zones first,
+  then every zone the browser knows.
+- **Derived, never typed:** the display text ("Saturday 20 February 2027 ·
+  2:30 PM") and the countdown's exact moment are computed from those three fields
+  with the browser's built-in time-zone data (`zonedToUtcMs()` in `src/App.jsx`,
+  no library). Daylight saving is automatic: Adelaide is +10:30 on 20 Feb 2027
+  and +9:30 on 6 Aug 2027. This replaces the old `date`/`time`/`datetime` string
+  triple, which had already drifted out of sync once.
+- **Guests see the venue's local time.** An event whose zone differs from
+  `CONFIG.timeZone` (the site's usual zone, Adelaide) is labelled, e.g.
+  "4:00 PM (Perth time)". Events in the usual zone stay unlabelled.
+- **Reply-by cut-off:** a reply-by date passes at the end of that day in the
+  event's own time zone, wherever the guest is. This applies to the Details chip,
+  the RSVP form wording, the reminder banner and reminder emails, which
+  previously used the guest's own clock (site) or Adelaide (emails).
+- **Maps** search for "venue, address" when an address is set; otherwise the
+  venue name alone.
+
+### 12.3 Data Model
+
+No schema change. Two more `app_settings` keys:
+
+| Key | Value |
+|---|---|
+| `event_details_<eventId>` | JSON `{ name, date, time, timeZone, venue, address }` |
+| `guest_info_items` | JSON `[{ title, body }]` (an empty list = show none) |
+
+An absent key means the code defaults in `CONFIG.events` / `CONFIG.details` apply.
+Event **ids** (`engagement`, `wedding`), `seated`, and adding or removing an event
+stay in code: every invitation, RSVP answer, deadline and seat links to the id.
+Keep `EVENTS` in `functions/_lib/config.js` in step with `CONFIG.events` (ids and
+default names and time zones).
+
+### 12.4 API
+
+- `get-settings` / `/api/invite` `site` gain `events` (overrides only) and
+  `guestInfo` (`null` = defaults).
+- `save-settings` accepts `events: { <id>: {...} }` with validation:
+  - name required, ≤ 100 characters
+  - real calendar date and valid `HH:MM` time
+  - a time zone `Intl` recognises
+  - venue required, ≤ 150 characters; address ≤ 300 characters
+- `save-settings` also accepts `guestInfo: [...]` (≤ 20 items, title required
+  ≤ 80, body ≤ 1000) or `null` to reset to the defaults.
+- Everything is validated before anything is written.
+- **Emails:** RSVP confirmation, admin alert and reminder emails resolve event
+  names (and reminder cut-offs) from the saved settings via `resolveEvents()` in
+  `functions/_lib/db.js`.
+
+### 12.5 Client Note
+
+Components read events through `eventsList()` / `eventById()` and items through
+`guestInfoList()`, never `CONFIG.events` / `CONFIG.details` directly. `App()`
+calls `applySiteSettings(state.siteSettings)` at the top of each render, so those
+always reflect the latest saved settings, for guests (from `/api/invite`) and
+the admin (from `get-settings`).
