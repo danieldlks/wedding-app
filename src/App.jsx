@@ -415,6 +415,11 @@ const CSS = `
 /* Guest: per-event RSVP deadline chip (Details page) */
 .deadline-chip{display:inline-block;margin-top:7px;font-size:12px;font-weight:600;color:var(--gold);background:#F6EEDC;border:1px solid var(--gold-soft);border-radius:12px;padding:3px 10px;}
 .deadline-chip.passed{color:var(--ink-soft);background:var(--paper-2);}
+/* Guest: "N days left to RSVP" nudge on the menu page */
+.reminder-banner{display:flex;flex-wrap:wrap;align-items:center;gap:12px;background:#FBF1DE;border:1px solid var(--gold-soft);border-left:3px solid var(--gold);padding:14px 16px;margin-bottom:20px;font-size:14px;line-height:1.5;}
+.reminder-lines{flex:1 1 220px;}
+.reminder-lines > div + div{margin-top:4px;}
+.reminder-cta{flex:none;min-height:44px;padding:0 18px;border:none;border-radius:22px;background:var(--ink);color:#fff;font-size:14px;font-weight:600;}
 /* Admin tabs scroll sideways on a phone rather than wrapping/overflowing */
 .tabs{overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none;-webkit-overflow-scrolling:touch;}
 .tabs::-webkit-scrollbar{display:none;}
@@ -535,6 +540,7 @@ function GuestMenu({ state, actions }) {
   return (
     <div className="stage"><div className="card"><div className="card-inner">
       <div className="card-eyebrow eyebrow" style={{ textAlign: "center" }}>{rec.householdName}</div>
+      <RsvpReminderBanner state={state} actions={actions} />
       <CountdownWidget eventIds={rec.invitedEvents} />
       <h2>Welcome</h2>
       <p className="lede">We can't wait to celebrate with you. What would you like to do?</p>
@@ -591,6 +597,39 @@ function GuestLocation({ state, actions }) {
         <button className="btn-link" onClick={() => actions.patch({ view: "guest-menu" })}>&larr; Back</button>
       </div>
     </div></div></div>
+  );
+}
+
+// Guests who haven't replied see a nudge on their menu page once a deadline
+// is this many days away or closer (and only until it passes).
+const REMINDER_WINDOW_DAYS = 7;
+
+function rsvpReminders(rec, site) {
+  if (rec.response) return [];
+  return rec.invitedEvents
+    .map(id => ({ ev: eventById(id), ymd: deadlineFor(site, id) }))
+    .filter(x => x.ev && x.ymd)
+    .map(x => ({ ...x, days: daysUntilYmd(x.ymd) }))
+    .filter(x => x.days >= 0 && x.days <= REMINDER_WINDOW_DAYS)
+    .sort((a, b) => a.days - b.days);
+}
+
+function RsvpReminderBanner({ state, actions }) {
+  const items = rsvpReminders(state.currentRecord, state.siteSettings);
+  if (items.length === 0) return null;
+  return (
+    <div className="reminder-banner" role="status">
+      <div className="reminder-lines">
+        {items.map(x => (
+          <div key={x.ev.id}>
+            {x.days === 0
+              ? <>Today is the last day to RSVP for the <strong>{x.ev.name}</strong>.</>
+              : <><strong>{x.days} day{x.days === 1 ? "" : "s"} left</strong> to RSVP for the {x.ev.name} (by {formatYmd(x.ymd)}).</>}
+          </div>
+        ))}
+      </div>
+      <button className="reminder-cta" onClick={actions.startGuestForm}>RSVP now</button>
+    </div>
   );
 }
 
