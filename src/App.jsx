@@ -12,9 +12,11 @@ const CONFIG = {
     // "datetime" is a real ISO timestamp (used by the countdown widget); "date"/"time" above stay as the
     // human-readable strings shown elsewhere. Keep both in sync if you change the schedule.
     { id: "engagement", name: "Engagement Party", date: "Saturday 20 February 2027", time: "2:30 PM", datetime: "2027-02-20T14:30:00+10:30", venue: "SUNDAY" },
-    { id: "wedding", name: "Wedding Ceremony & Reception", date: "Friday 06 August 2027", time: "3:30 PM", datetime: "2027-08-06T15:30:00+09:30", venue: "Longview Vineyard" }
+    // seated: true = this event has the reception seating plan (Find My Seat, and its
+    // capacity in admin Settings is the total of the seating tables' capacities).
+    { id: "wedding", seated: true, name: "Wedding Ceremony & Reception", date: "Friday 06 August 2027", time: "3:30 PM", datetime: "2027-08-06T15:30:00+09:30", venue: "Longview Vineyard" }
   ],
-  rsvpDeadline: "Thursday 15 April 2027",
+  // RSVP deadlines are set per event by the admin (Settings tab), not here — see design.md §11.
   dietaryOptions: ["Vegetarian", "Vegan", "Gluten-free", "Dairy-free", "Nut allergy", "Other"],
   // Admin password now lives server-side only (a Cloudflare Pages secret) — see functions/api/admin.js.
   // Where this app will live once hosted (used to build QR codes / invite links).
@@ -37,6 +39,40 @@ function defaultAttending(invitedEvents) {
   return o;
 }
 function eventById(id) { return CONFIG.events.find(e => e.id === id); }
+
+// Dates for RSVP deadlines are plain 'YYYY-MM-DD' strings (no time or zone),
+// compared against the viewer's own calendar date. The weekday is derived,
+// never typed, so it can't drift out of sync with the date.
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+function parseYmd(ymd) { const [y, m, d] = ymd.split("-").map(Number); return { y, m, d }; }
+function formatYmd(ymd) {
+  const { y, m, d } = parseYmd(ymd);
+  return `${WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]} ${d} ${MONTHS[m - 1]} ${y}`;
+}
+function daysUntilYmd(ymd, now = new Date()) {
+  const { y, m, d } = parseYmd(ymd);
+  return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
+}
+// The event's own local calendar date, from its ISO datetime (e.g. "2027-08-06T15:30:00+09:30" -> "2027-08-06").
+function eventYmd(ev) { return ev.datetime ? ev.datetime.slice(0, 10) : null; }
+function deadlineFor(site, eventId) { return site?.deadlines?.[eventId] || null; }
+
+// The "Kindly reply by…" sentence for a household, covering only the events
+// they're invited to. Late replies are always accepted (nothing is locked),
+// so a passed deadline softens the wording rather than closing anything.
+function rsvpDeadlineSentence(eventIds, site) {
+  const items = eventIds.map(id => ({ ev: eventById(id), ymd: deadlineFor(site, id) })).filter(x => x.ev && x.ymd);
+  if (items.length === 0) return null;
+  const upcoming = items.filter(x => daysUntilYmd(x.ymd) >= 0);
+  const passed = items.filter(x => daysUntilYmd(x.ymd) < 0);
+  if (upcoming.length === 0) return "The reply date has passed, but we'd still love to hear from you.";
+  let out = new Set(upcoming.map(x => x.ymd)).size === 1 && passed.length === 0
+    ? `Kindly reply by ${formatYmd(upcoming[0].ymd)}.`
+    : `Kindly reply by ${upcoming.map(x => `${formatYmd(x.ymd)} for the ${x.ev.name}`).join(" and ")}.`;
+  if (passed.length) out += ` The reply date for the ${passed.map(x => x.ev.name).join(" and ")} has passed, but late replies are welcome.`;
+  return out;
+}
 function inviteUrl(code) {
   const base = CONFIG.siteBaseUrl || (window.location.origin + window.location.pathname);
   return `${base}?invite=${code}`;
@@ -376,6 +412,45 @@ const CSS = `
   .venue-exit{position:static;display:block;margin:0 auto 18px;width:max-content;}
   .seating-canvas-wrap .zoom-controls{position:static;flex-direction:row;justify-content:center;margin-top:10px;}
 }
+/* Guest: per-event RSVP deadline chip (Details page) */
+.deadline-chip{display:inline-block;margin-top:7px;font-size:12px;font-weight:600;color:var(--gold);background:#F6EEDC;border:1px solid var(--gold-soft);border-radius:12px;padding:3px 10px;}
+.deadline-chip.passed{color:var(--ink-soft);background:var(--paper-2);}
+/* Admin tabs scroll sideways on a phone rather than wrapping/overflowing */
+.tabs{overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none;-webkit-overflow-scrolling:touch;}
+.tabs::-webkit-scrollbar{display:none;}
+.tab-btn{flex:none;white-space:nowrap;}
+/* Admin: Settings tab. Inputs are 16px so iOS Safari doesn't zoom the page on focus. */
+.settings-section{margin-bottom:30px;}
+.settings-section > h3{font-family:var(--display);font-size:24px;font-weight:600;margin:0 0 6px;}
+.settings-help{font-size:13.5px;color:var(--ink-soft);line-height:1.55;margin:0 0 16px;}
+.settings-card{background:#fff;border:1px solid var(--gold-soft);border-radius:12px;padding:16px;margin-bottom:14px;}
+.settings-card-head{margin-bottom:12px;}
+.settings-ev-name{font-weight:600;font-size:16px;}
+.settings-ev-meta{font-size:12.5px;color:var(--ink-soft);margin-top:2px;}
+.settings-grid{display:grid;grid-template-columns:1fr;gap:0 14px;}
+@media(min-width:600px){.settings-grid{grid-template-columns:1fr 1fr;}}
+.settings-card .field{margin-bottom:14px;}
+.settings-input{display:block;width:100%;min-height:46px;padding:10px 12px;border:1px solid var(--gold-soft);border-radius:10px;background:#fff;font-size:16px;color:var(--ink);-webkit-appearance:none;appearance:none;}
+.settings-input:focus{outline:none;border-color:var(--sage);box-shadow:0 0 0 3px rgba(110,127,99,.15);}
+.settings-input::-webkit-date-and-time-value{text-align:left;}
+textarea.settings-input{min-height:96px;resize:vertical;line-height:1.5;}
+.settings-input-row{display:flex;gap:8px;align-items:center;}
+.settings-input-row .settings-input{flex:1;min-width:0;}
+.settings-clear{flex:none;min-height:46px;padding:0 12px;border:1px solid var(--gold-soft);border-radius:10px;background:var(--paper-2);color:var(--ink-soft);font-size:13px;font-weight:600;}
+.settings-derived{min-height:46px;display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 8px;padding:12px;background:var(--paper-2);border-radius:10px;font-weight:600;font-size:16px;}
+.settings-derived span{font-weight:400;font-size:13px;color:var(--ink-soft);}
+.settings-warn{color:var(--error);font-size:12.5px;margin-top:6px;}
+.headcount{border-top:1px dashed var(--gold-soft);padding-top:12px;}
+.headcount-row{display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px 12px;font-size:14px;}
+.headcount-row .sub{color:var(--ink-soft);font-size:12.5px;}
+.headcount-bar{height:8px;background:var(--paper-2);border-radius:4px;overflow:hidden;margin-top:9px;}
+.headcount-bar > div{height:100%;background:var(--sage);border-radius:4px;}
+.headcount-bar > div.over{background:var(--error);}
+.settings-actions{padding:12px 0 4px;}
+/* Only pinned to the bottom of the screen while there are unsaved changes, so it never covers content otherwise. */
+.settings-actions.dirty{position:sticky;bottom:0;background:linear-gradient(rgba(243,237,223,0),var(--paper-2) 35%);z-index:2;}
+.settings-actions .btn{width:100%;min-height:48px;border-radius:12px;}
+@media(min-width:600px){.settings-actions .btn{width:auto;min-width:220px;}}
 `;
 
 /* =========================================================
@@ -519,6 +594,16 @@ function GuestLocation({ state, actions }) {
   );
 }
 
+function DeadlineChip({ ymd }) {
+  if (!ymd) return null;
+  const passed = daysUntilYmd(ymd) < 0;
+  return (
+    <div className={`deadline-chip ${passed ? "passed" : ""}`}>
+      {passed ? `RSVP date passed (${formatYmd(ymd)}) — late replies welcome` : `RSVP by ${formatYmd(ymd)}`}
+    </div>
+  );
+}
+
 function GuestDetails({ state, actions }) {
   const rec = state.currentRecord;
   return (
@@ -533,6 +618,7 @@ function GuestDetails({ state, actions }) {
               <div style={{ fontWeight: 600 }}>{ev.name}</div>
               <div className="slabel" style={{ fontSize: 12.5 }}>{ev.date} · {ev.time}</div>
               <div className="slabel" style={{ fontSize: 12.5 }}>{ev.venue}</div>
+              <DeadlineChip ymd={deadlineFor(state.siteSettings, id)} />
             </div>
           );
         })}
@@ -548,7 +634,6 @@ function GuestDetails({ state, actions }) {
         </div>
       )}
       {rec.personalNote && <p className="note-quote" style={{ color: "var(--ink)", margin: "0 0 20px" }}>&ldquo;{rec.personalNote}&rdquo;</p>}
-      <p className="lede">Kindly reply by {CONFIG.rsvpDeadline}.</p>
       <div style={{ textAlign: "center", marginTop: 6 }}>
         <button className="btn-link" onClick={() => actions.patch({ view: "guest-menu" })}>&larr; Back</button>
       </div>
@@ -647,7 +732,7 @@ function GuestFormStep1({ state, actions }) {
     <div className="stage"><div className="card"><div className="card-inner">
       <div className="card-eyebrow eyebrow" style={{ textAlign: "center" }}>{rec.householdName}</div>
       <h2>Confirm your details</h2>
-      <p className="lede">Kindly reply by {CONFIG.rsvpDeadline}.</p>
+      <p className="lede">{rsvpDeadlineSentence(rec.invitedEvents, state.siteSettings) || "Let us know who's coming."}</p>
       <StepDots current={1} />
       {d.members.map((m, i) => (
         <div className="field" key={m.id} style={i === 0 ? {} : { marginBottom: 10 }}>
@@ -2250,6 +2335,112 @@ function VenueDisplay({ state, actions }) {
   );
 }
 
+/* =========================================================
+   ADMIN SETTINGS
+   Per-event RSVP deadlines and headcount vs capacity. Capacity is
+   informational only — RSVPs are never blocked when it's reached.
+   The seated event's capacity is the seating tables' total, so it
+   follows the floor plan instead of being typed in. See design.md §11.
+   ========================================================= */
+function eventHeadcount(guestList, eventId) {
+  let invited = 0, attending = 0, households = 0, replied = 0;
+  Object.values(guestList).forEach(rec => {
+    if (!rec.invitedEvents.includes(eventId)) return;
+    households++;
+    invited += rec.members.length;
+    if (rec.response) {
+      replied++;
+      // response.members includes any extra guests (plus-ones) the household added.
+      attending += rec.response.members.filter(m => m.attending?.[eventId]).length;
+    }
+  });
+  return { invited, attending, households, replied };
+}
+
+function savedCapacityStr(site, id) { return site.capacities?.[id] != null ? String(site.capacities[id]) : ""; }
+
+function AdminSettings({ state, actions }) {
+  const hasSeated = CONFIG.events.some(e => e.seated);
+  useEffect(() => { if (hasSeated && !state.seatingLoaded && !state.seatingLoading) actions.loadSeating(); }, [state.seatingLoaded, state.seatingLoading]);
+
+  const saved = state.siteSettings;
+  const [deadlines, setDeadlines] = useState(() => Object.fromEntries(CONFIG.events.map(e => [e.id, saved.deadlines?.[e.id] || ""])));
+  const [capacities, setCapacities] = useState(() => Object.fromEntries(CONFIG.events.filter(e => !e.seated).map(e => [e.id, savedCapacityStr(saved, e.id)])));
+  const dirty = CONFIG.events.some(e => deadlines[e.id] !== (saved.deadlines?.[e.id] || ""))
+    || Object.entries(capacities).some(([id, v]) => v.trim() !== savedCapacityStr(saved, id));
+  const seatCapacity = state.seatingTables.reduce((n, t) => n + (Number(t.capacity) || 0), 0);
+
+  return (
+    <div className="settings-section">
+      <h3>RSVP deadlines &amp; numbers</h3>
+      <p className="settings-help">
+        Each event has its own reply-by date, shown to guests on their Details page and RSVP form (only for the events
+        they're invited to). Guests can still reply after it passes. Capacity is for your reference only — nothing is
+        blocked when it's reached.
+      </p>
+      {CONFIG.events.map(ev => {
+        const hc = eventHeadcount(state.guestList, ev.id);
+        const capStr = capacities[ev.id] ?? "";
+        const cap = ev.seated ? (state.seatingLoaded ? seatCapacity : null) : (capStr.trim() === "" ? null : Number(capStr));
+        const dl = deadlines[ev.id];
+        const evDate = eventYmd(ev);
+        const tooLate = dl && evDate && dl >= evDate;
+        const over = cap != null && hc.attending > cap;
+        return (
+          <div className="settings-card" key={ev.id}>
+            <div className="settings-card-head">
+              <div className="settings-ev-name">{ev.name}</div>
+              <div className="settings-ev-meta">{ev.date} · {ev.time} · {ev.venue}</div>
+            </div>
+            <div className="settings-grid">
+              <div className="field">
+                <label htmlFor={`deadline-${ev.id}`}>Reply by</label>
+                <div className="settings-input-row">
+                  <input id={`deadline-${ev.id}`} className="settings-input" type="date" value={dl} max={evDate || undefined}
+                    onChange={e => setDeadlines({ ...deadlines, [ev.id]: e.target.value })} />
+                  {dl && <button type="button" className="settings-clear" onClick={() => setDeadlines({ ...deadlines, [ev.id]: "" })}>Clear</button>}
+                </div>
+                <div className="helptext">{dl ? `Guests see: "RSVP by ${formatYmd(dl)}"` : "Not set — guests won't see a reply-by date for this event."}</div>
+                {tooLate && <div className="settings-warn">This is on or after the event itself ({formatYmd(evDate)}).</div>}
+              </div>
+              <div className="field">
+                <label htmlFor={`capacity-${ev.id}`}>Capacity</label>
+                {ev.seated ? (
+                  <div className="settings-derived" id={`capacity-${ev.id}`}>
+                    {state.seatingLoaded ? seatCapacity : "…"}
+                    <span>from {state.seatingTables.length} seating table{state.seatingTables.length === 1 ? "" : "s"} — updates as you add tables</span>
+                  </div>
+                ) : (
+                  <input id={`capacity-${ev.id}`} className="settings-input" type="number" inputMode="numeric" min="0" step="1" placeholder="e.g. 80"
+                    value={capStr} onChange={e => setCapacities({ ...capacities, [ev.id]: e.target.value })} />
+                )}
+              </div>
+            </div>
+            <div className="headcount">
+              <div className="headcount-row">
+                <span><strong>{hc.attending}</strong> attending{cap != null ? ` of ${cap}` : ""}</span>
+                <span className="sub">{hc.replied} of {hc.households} household{hc.households === 1 ? "" : "s"} replied · {hc.invited} guest{hc.invited === 1 ? "" : "s"} invited</span>
+              </div>
+              {cap > 0 && (
+                <div className="headcount-bar" role="img" aria-label={`${hc.attending} attending of ${cap}`}>
+                  <div className={over ? "over" : ""} style={{ width: `${Math.min(100, Math.round((hc.attending / cap) * 100))}%` }} />
+                </div>
+              )}
+              {over && <div className="settings-warn">{hc.attending - cap} over capacity.</div>}
+            </div>
+          </div>
+        );
+      })}
+      <div className={`settings-actions ${dirty ? "dirty" : ""}`}>
+        <button className="btn btn-primary" disabled={state.loading || !dirty}
+          onClick={() => actions.saveSettings({ deadlines, capacities: Object.fromEntries(Object.entries(capacities).map(([id, v]) => [id, v.trim()])) })}>
+          {state.loading ? <><span className="spinner" />Saving…</> : dirty ? "Save changes" : "All changes saved"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Admin({ state, actions }) {
   return (
     <div className="admin-shell">
@@ -2266,10 +2457,12 @@ function Admin({ state, actions }) {
           <button className={`tab-btn ${state.adminTab === "guestlist" ? "active" : ""}`} onClick={() => actions.patch({ adminTab: "guestlist" })}>Guest List</button>
           <button className={`tab-btn ${state.adminTab === "responses" ? "active" : ""}`} onClick={() => actions.patch({ adminTab: "responses" })}>Responses &amp; Stats</button>
           <button className={`tab-btn ${state.adminTab === "seating" ? "active" : ""}`} onClick={() => actions.patch({ adminTab: "seating" })}>Seating</button>
+          <button className={`tab-btn ${state.adminTab === "settings" ? "active" : ""}`} onClick={() => actions.patch({ adminTab: "settings" })}>Settings</button>
         </div>
         {state.adminTab === "guestlist" && <AdminGuestList state={state} actions={actions} />}
         {state.adminTab === "responses" && <AdminResponses state={state} actions={actions} />}
         {state.adminTab === "seating" && <AdminSeating state={state} actions={actions} />}
+        {state.adminTab === "settings" && <AdminSettings key={JSON.stringify(state.siteSettings)} state={state} actions={actions} />}
       </div>
     </div>
   );
@@ -2291,12 +2484,15 @@ export default function App() {
     loading: false,
     toast: null,
     guestList: {},
+    // Admin-set site settings (per-event RSVP deadlines; capacities are admin-only).
+    // Guests get theirs from /api/invite, the admin from "get-settings".
+    siteSettings: { deadlines: {}, capacities: {} },
     // admin
     adminInput: "",
     adminPassword: "",
     adminError: "",
     adminAuthed: false,
-    adminTab: "guestlist", // guestlist | responses
+    adminTab: "guestlist", // guestlist | responses | seating | settings
     adminSearch: "",
     openRows: {},
     qrModalCode: null,
@@ -2356,9 +2552,10 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const invite = params.get("invite");
     if (!invite) { patch({ ready: true, view: "no-invite" }); return; }
-    const rec = await apiGetInvite(invite);
-    if (rec) {
-      patch({ ready: true, view: "guest-landing", inviteCode: invite, currentRecord: rec });
+    const data = await apiGetInvite(invite);
+    if (data) {
+      const { site, ...rec } = data;
+      patch({ ready: true, view: "guest-landing", inviteCode: invite, currentRecord: rec, siteSettings: { deadlines: {}, capacities: {}, ...site } });
     } else {
       patch({ ready: true, view: "invalid-invite" });
     }
@@ -2447,8 +2644,8 @@ export default function App() {
   async function submitAdminLogin() {
     patch({ loading: true, adminError: "" });
     try {
-      const all = await apiAdmin(state.adminInput, "list");
-      patch({ loading: false, adminAuthed: true, adminPassword: state.adminInput, view: "admin", guestList: all, adminTab: "guestlist" });
+      const [all, settings] = await Promise.all([apiAdmin(state.adminInput, "list"), apiAdmin(state.adminInput, "get-settings")]);
+      patch({ loading: false, adminAuthed: true, adminPassword: state.adminInput, view: "admin", guestList: all, siteSettings: settings, adminTab: "guestlist" });
     } catch (e) {
       // 403 = signing in from a *.pages.dev address, which functions/api/admin.js refuses (see ADMIN_HOSTS)
       patch({ loading: false, adminError: e.status === 403 ? `Admin sign-in only works at ${CONFIG.siteBaseUrl.replace(/^https?:\/\//, "")}.` : "Incorrect password." });
@@ -2457,8 +2654,8 @@ export default function App() {
   async function refreshAdmin() {
     patch({ loading: true });
     try {
-      const all = await apiAdmin(state.adminPassword, "list");
-      patch({ loading: false, guestList: all });
+      const [all, settings] = await Promise.all([apiAdmin(state.adminPassword, "list"), apiAdmin(state.adminPassword, "get-settings")]);
+      patch({ loading: false, guestList: all, siteSettings: settings });
     } catch (e) {
       patch({ loading: false });
       showToast("Couldn't refresh — please sign in again.");
@@ -2694,6 +2891,21 @@ export default function App() {
     }
   }
 
+  /* ---------- admin: site settings ---------- */
+  async function saveSettings(payload) {
+    patch({ loading: true });
+    try {
+      const settings = await apiAdmin(state.adminPassword, "save-settings", payload);
+      patch({ loading: false, siteSettings: settings });
+      showToast("Settings saved.");
+      return true;
+    } catch (e) {
+      patch({ loading: false });
+      showToast("Couldn't save settings — please check the values and try again.");
+      return false;
+    }
+  }
+
   /* ---------- admin: broadcast update to guests who've responded ---------- */
   async function sendBroadcast() {
     if (!state.broadcastSubject.trim() || !state.broadcastMessage.trim()) {
@@ -2766,7 +2978,8 @@ export default function App() {
     previewInvite, exitPreview, toggleRow, copyLink, exportCSV,
     loadSeating, selectTable, deselectTable, updateTableDraftField, addTable, saveTableDraft, deleteTable, moveTable, armGuest, assignSeat,
     selectObject, deselectObject, updateObjectDraftField, addObject, saveObjectDraft, deleteObject, moveObject,
-    setTableShape, downloadFloorPlan, saveSeatingReveal
+    setTableShape, downloadFloorPlan, saveSeatingReveal,
+    saveSettings
   };
 
   /* ========================= MASTER RENDER ========================= */

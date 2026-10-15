@@ -1,7 +1,7 @@
-import { rowToRecord, genId, genInviteCode, listAllRecords, listSeating } from "../_lib/db.js";
+import { rowToRecord, genId, genInviteCode, listAllRecords, listSeating, getSiteSettings, putSetting, isValidDate } from "../_lib/db.js";
 import { sendEmail } from "../_lib/email.js";
 import { renderBroadcastEmail } from "../_lib/templates.js";
-import { ADMIN_HOSTS } from "../_lib/config.js";
+import { ADMIN_HOSTS, EVENTS } from "../_lib/config.js";
 
 export async function onRequestPost({ request, env }) {
   // Checked before the password so guesses sent via a *.pages.dev address
@@ -52,6 +52,33 @@ export async function onRequestPost({ request, env }) {
         ON CONFLICT(key) DO UPDATE SET value = excluded.value
       `).bind(revealAt).run();
       return Response.json(await listSeating(env.DB));
+    }
+
+    case "get-settings":
+      return Response.json(await getSiteSettings(env.DB));
+
+    case "save-settings": {
+      // Only known event ids are accepted, so arbitrary keys can't be written.
+      // An empty value clears that setting. Everything is validated before
+      // anything is written, so a bad value never leaves a half-applied save.
+      const deadlines = payload?.deadlines || {};
+      const capacities = payload?.capacities || {};
+      const writes = [];
+      for (const ev of EVENTS) {
+        if (ev.id in deadlines) {
+          const v = String(deadlines[ev.id] || "").trim();
+          if (v && !isValidDate(v)) return new Response(`Invalid deadline for ${ev.id}`, { status: 400 });
+          writes.push([`rsvp_deadline_${ev.id}`, v]);
+        }
+        if (ev.id in capacities) {
+          const raw = capacities[ev.id];
+          const n = raw === "" || raw == null ? "" : Number(raw);
+          if (n !== "" && !(Number.isInteger(n) && n >= 0 && n <= 100000)) return new Response(`Invalid capacity for ${ev.id}`, { status: 400 });
+          writes.push([`event_capacity_${ev.id}`, n]);
+        }
+      }
+      for (const [key, value] of writes) await putSetting(env.DB, key, value);
+      return Response.json(await getSiteSettings(env.DB));
     }
 
     case "save-table":
