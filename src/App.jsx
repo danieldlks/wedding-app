@@ -424,6 +424,18 @@ const CSS = `
 .reminder-lines{flex:1 1 220px;}
 .reminder-lines > div + div{margin-top:4px;}
 .reminder-cta{flex:none;min-height:44px;padding:0 18px;border:none;border-radius:22px;background:var(--ink);color:#fff;font-size:14px;font-weight:600;}
+/* Admin: Email guests panel */
+.email-panel{padding:18px;margin-bottom:22px;border-radius:12px;}
+.email-panel h3{font-family:var(--display);font-size:22px;font-weight:600;margin:0 0 6px;}
+select.settings-input{-webkit-appearance:auto;appearance:auto;}
+.email-summary{font-size:13.5px;margin-top:8px;color:var(--ink-soft);}
+.email-summary strong{color:var(--ink);}
+.email-skipped{font-size:13px;margin-top:6px;color:var(--ink-soft);}
+.email-skipped summary{cursor:pointer;color:var(--sage-dark);text-decoration:underline;min-height:32px;display:flex;align-items:center;}
+.email-list{margin:6px 0 0;padding-left:20px;font-size:13px;line-height:1.6;}
+.email-send{width:100%;min-height:48px;border-radius:12px;}
+@media(min-width:600px){.email-send{width:auto;min-width:240px;}}
+.email-status{margin-top:14px;padding:12px 14px;background:var(--paper-2);border-radius:10px;font-size:14px;}
 /* Admin tabs scroll sideways on a phone rather than wrapping/overflowing */
 .tabs{overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none;-webkit-overflow-scrolling:touch;}
 .tabs::-webkit-scrollbar{display:none;}
@@ -1102,34 +1114,106 @@ function AdminGuestList({ state, actions }) {
   );
 }
 
-function BroadcastPanel({ state, actions, respondedCount }) {
+// Admin "Email guests": who an email goes to. A household's address is its
+// own RSVP email once it has replied, otherwise the contact email the admin
+// entered for it (households with neither are skipped and listed).
+function recipientEmail(rec) { return rec.response?.contactEmail || rec.contactEmail || ""; }
+function emailAudiences() {
+  return [
+    { id: "all", label: "Everyone", match: () => true },
+    { id: "not-replied", label: "Haven't replied yet", match: r => !r.response },
+    { id: "replied", label: "Have replied", match: r => !!r.response },
+    ...CONFIG.events.flatMap(ev => [
+      { id: `invited:${ev.id}`, label: `Invited to the ${ev.name}`, match: r => r.invitedEvents.includes(ev.id) },
+      { id: `attending:${ev.id}`, label: `Attending the ${ev.name}`, match: r => !!r.response && r.invitedEvents.includes(ev.id) && r.response.members.some(m => m.attending?.[ev.id]) },
+    ]),
+  ];
+}
+// Must match EMAIL_BATCH_SIZE in functions/api/admin.js (the server rejects larger batches).
+const EMAIL_BATCH_SIZE = 10;
+// Gmail (via the Apps Script relay) allows roughly 100 recipients a day on a personal account.
+const GMAIL_DAILY_LIMIT = 100;
+
+function EmailSendStatus({ state, actions, retryPayload }) {
+  if (state.emailProgress) {
+    const { done, total } = state.emailProgress;
+    return (
+      <div className="email-status" role="status">
+        <div>Sending… {done} of {total}</div>
+        <div className="headcount-bar"><div style={{ width: `${Math.round((done / total) * 100)}%` }} /></div>
+        <div className="helptext">Keep this page open until it finishes.</div>
+      </div>
+    );
+  }
+  const r = state.emailResult;
+  if (!r) return null;
   return (
-    <div className="row-card" style={{ padding: 18, marginBottom: 22 }}>
-      <h3 style={{ fontFamily: "var(--display)", fontSize: 20, marginTop: 0 }}>Send an update</h3>
-      <p className="lede" style={{ margin: "0 0 16px", textAlign: "left" }}>
-        Email everyone who's RSVP'd so far ({respondedCount}) about a change — venue update, reminder, anything else.
-        (Guests who haven't replied yet don't have an email on file until they do.)
+    <div className="email-status" role="status">
+      <div><strong>Sent to {r.sent} household{r.sent === 1 ? "" : "s"}.</strong>{r.failed.length ? ` ${r.failed.length} didn't go through:` : ""}</div>
+      {r.failed.length > 0 && (
+        <>
+          <ul className="email-list">
+            {r.failed.map(f => <li key={f.code}>{state.guestList[f.code]?.householdName || f.code}{f.reason === "no email" ? " — no email on file" : ""}</li>)}
+          </ul>
+          {r.failed.some(f => f.reason !== "no email") && retryPayload && (
+            <button className="btn btn-ghost" style={{ marginTop: 8 }} disabled={state.emailSending}
+              onClick={() => actions.sendGuestEmails(r.failed.filter(f => f.reason !== "no email").map(f => f.code), retryPayload)}>Retry the ones that failed</button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function EmailGuestsPanel({ state, actions }) {
+  const audiences = emailAudiences();
+  const aud = audiences.find(a => a.id === state.emailAudience) || audiences[0];
+  const matched = Object.entries(state.guestList).filter(([, r]) => aud.match(r));
+  const withEmail = matched.filter(([, r]) => recipientEmail(r));
+  const noEmail = matched.filter(([, r]) => !recipientEmail(r));
+  const payload = { kind: "update", subject: state.emailSubject.trim(), message: state.emailMessage.trim() };
+  return (
+    <div className="row-card email-panel">
+      <h3>Email guests</h3>
+      <p className="settings-help">
+        Send an update to a group of households. Households that have replied get it at their RSVP email; the rest at the
+        contact email you entered for them on the Guest List.
       </p>
       <div className="field">
-        <label>Subject</label>
-        <input type="text" value={state.broadcastSubject} placeholder="An update from us"
-          onChange={e => actions.patch({ broadcastSubject: e.target.value })} />
+        <label htmlFor="email-audience">Send to</label>
+        <select id="email-audience" className="settings-input" value={aud.id} disabled={state.emailSending}
+          onChange={e => actions.patch({ emailAudience: e.target.value, emailResult: null })}>
+          {audiences.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
+        </select>
+        <div className="email-summary">
+          <strong>{withEmail.length}</strong> household{withEmail.length === 1 ? "" : "s"} will receive this
+          {noEmail.length > 0 && <> · {noEmail.length} {noEmail.length === 1 ? "has" : "have"} no email and will be skipped</>}
+        </div>
+        {noEmail.length > 0 && (
+          <details className="email-skipped">
+            <summary>Show who'll be skipped</summary>
+            <ul className="email-list">{noEmail.map(([code, r]) => <li key={code}>{r.householdName}</li>)}</ul>
+          </details>
+        )}
+        {withEmail.length > GMAIL_DAILY_LIMIT && (
+          <div className="settings-warn">Gmail only sends to about {GMAIL_DAILY_LIMIT} people a day — some of these may fail. Use "Retry" tomorrow for any that do.</div>
+        )}
       </div>
       <div className="field">
-        <label>Message</label>
-        <textarea value={state.broadcastMessage} placeholder="Write your update here…" style={{ minHeight: 110 }}
-          onChange={e => actions.patch({ broadcastMessage: e.target.value })} />
+        <label htmlFor="email-subject">Subject</label>
+        <input id="email-subject" className="settings-input" type="text" maxLength={200} value={state.emailSubject} placeholder="An update from us"
+          onChange={e => actions.patch({ emailSubject: e.target.value })} />
       </div>
-      <div className="btn-row" style={{ marginTop: 4 }}>
-        <button className="btn btn-primary" onClick={actions.sendBroadcast} disabled={state.broadcastSending || respondedCount === 0}>
-          {state.broadcastSending ? <><span className="spinner" />Sending…</> : "Send update"}
-        </button>
+      <div className="field">
+        <label htmlFor="email-message">Message</label>
+        <textarea id="email-message" className="settings-input" maxLength={5000} value={state.emailMessage} placeholder="Write your update here…" style={{ minHeight: 130 }}
+          onChange={e => actions.patch({ emailMessage: e.target.value })} />
       </div>
-      {state.broadcastResult && (
-        <p className="helptext" style={{ marginTop: 10 }}>
-          Last send: {state.broadcastResult.sent} delivered{state.broadcastResult.failed ? `, ${state.broadcastResult.failed} failed` : ""}.
-        </p>
-      )}
+      <button className="btn btn-primary email-send" disabled={state.emailSending || withEmail.length === 0 || !payload.subject || !payload.message}
+        onClick={() => actions.sendGuestEmails(withEmail.map(([code]) => code), payload)}>
+        {state.emailSending ? <><span className="spinner" />Sending…</> : `Send to ${withEmail.length} household${withEmail.length === 1 ? "" : "s"}`}
+      </button>
+      <EmailSendStatus state={state} actions={actions} retryPayload={payload} />
     </div>
   );
 }
@@ -1166,7 +1250,7 @@ function AdminResponses({ state, actions }) {
         ))}
       </div>
       <div className="summary" style={{ marginBottom: 22 }}><strong style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: ".08em", color: "var(--ink-soft)" }}>Dietary summary&nbsp; </strong>{dietSummary}</div>
-      <BroadcastPanel state={state} actions={actions} respondedCount={responded} />
+      <EmailGuestsPanel state={state} actions={actions} />
       <div className="admin-controls">
         <input type="text" placeholder="Search by name…" value={state.adminSearch} onChange={e => actions.patch({ adminSearch: e.target.value })} />
         <button className="btn btn-ghost" style={{ flex: "none" }} onClick={actions.exportCSV}>Export CSV</button>
@@ -2636,11 +2720,13 @@ export default function App() {
     qrModalCode: null,
     householdDraft: null,
     editingCode: null,
-    // admin: broadcast
-    broadcastSubject: "",
-    broadcastMessage: "",
-    broadcastSending: false,
-    broadcastResult: null,
+    // admin: email guests (see EmailGuestsPanel)
+    emailAudience: "all",
+    emailSubject: "",
+    emailMessage: "",
+    emailSending: false,
+    emailProgress: null, // { done, total } while a send is running
+    emailResult: null,   // { sent, failed: [{ code, status, reason }] } after it finishes
     // admin: seating
     seatingTables: [],
     seatingAssignments: {},
@@ -3049,24 +3135,30 @@ export default function App() {
     }
   }
 
-  /* ---------- admin: broadcast update to guests who've responded ---------- */
-  async function sendBroadcast() {
-    if (!state.broadcastSubject.trim() || !state.broadcastMessage.trim()) {
-      showToast("Add a subject and message first.");
-      return;
+  /* ---------- admin: email guests ---------- */
+  // Sends in batches of EMAIL_BATCH_SIZE households per request (the server
+  // caps it), updating a progress bar between batches. A failed batch marks
+  // just its own households as failed, so the rest still go out.
+  async function sendGuestEmails(codes, payload) {
+    if (codes.length === 0) return;
+    if (!window.confirm(`Send "${payload.subject}" to ${codes.length} household${codes.length === 1 ? "" : "s"}?`)) return;
+    patch({ emailSending: true, emailProgress: { done: 0, total: codes.length }, emailResult: null });
+    const action = payload.kind === "reminder" ? "send-reminders" : "send-emails";
+    const results = [];
+    for (let i = 0; i < codes.length; i += EMAIL_BATCH_SIZE) {
+      const batch = codes.slice(i, i + EMAIL_BATCH_SIZE);
+      try {
+        const r = await apiAdmin(state.adminPassword, action, { codes: batch, subject: payload.subject, message: payload.message });
+        results.push(...r.results);
+      } catch (e) {
+        results.push(...batch.map(code => ({ code, status: "failed", reason: "request failed" })));
+      }
+      patch({ emailProgress: { done: Math.min(i + batch.length, codes.length), total: codes.length } });
     }
-    patch({ broadcastSending: true, broadcastResult: null });
-    try {
-      const result = await apiAdmin(state.adminPassword, "broadcast", {
-        subject: state.broadcastSubject.trim(),
-        message: state.broadcastMessage.trim()
-      });
-      patch({ broadcastSending: false, broadcastResult: result, broadcastSubject: "", broadcastMessage: "" });
-      showToast(`Sent to ${result.sent} guest${result.sent === 1 ? "" : "s"}${result.failed ? `, ${result.failed} failed` : ""}.`);
-    } catch (e) {
-      patch({ broadcastSending: false });
-      showToast("Broadcast failed to send — please try again.");
-    }
+    const sent = results.filter(r => r.status === "sent").length;
+    const failed = results.filter(r => r.status !== "sent");
+    patch({ emailSending: false, emailProgress: null, emailResult: { sent, failed }, ...(failed.length === 0 && payload.kind === "update" ? { emailSubject: "", emailMessage: "" } : {}) });
+    showToast(`Sent to ${sent} household${sent === 1 ? "" : "s"}${failed.length ? `, ${failed.length} didn't go through` : ""}.`);
   }
 
   function previewInvite(code) {
@@ -3117,7 +3209,7 @@ export default function App() {
     startGuestForm, updateDraft, updateMember, toggleAttend, toggleDiet, addExtraGuest, removeExtraGuest, validateGuestStep1, submitGuestRSVP,
     submitAdminLogin, refreshAdmin, exitToPublic,
     startAddHousehold, startEditHousehold, cancelHouseholdDraft, updateHouseholdField, updateHMemberName, addHMember, removeHMember, toggleHEvent, saveHousehold, deleteHousehold,
-    sendBroadcast,
+    sendGuestEmails,
     previewInvite, exitPreview, toggleRow, copyLink, exportCSV,
     loadSeating, selectTable, deselectTable, updateTableDraftField, addTable, saveTableDraft, deleteTable, moveTable, armGuest, assignSeat,
     selectObject, deselectObject, updateObjectDraftField, addObject, saveObjectDraft, deleteObject, moveObject,

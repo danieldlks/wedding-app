@@ -1,6 +1,6 @@
 import { rowToRecord, genId, genInviteCode, listAllRecords, listSeating, getSiteSettings, putSetting, isValidDate } from "../_lib/db.js";
 import { sendEmail } from "../_lib/email.js";
-import { renderBroadcastEmail } from "../_lib/templates.js";
+import { renderUpdateEmail, recipientFor } from "../_lib/templates.js";
 import { ADMIN_HOSTS, EVENTS } from "../_lib/config.js";
 
 export async function onRequestPost({ request, env }) {
@@ -140,11 +140,18 @@ export async function onRequestPost({ request, env }) {
       return Response.json(await listSeating(env.DB));
     }
 
-    case "broadcast": {
+    case "send-emails": {
+      // One small batch per request. The admin page splits the recipient list
+      // and calls this repeatedly (showing progress), because a Pages Function
+      // on the free plan may only make ~50 outgoing requests per invocation
+      // and each email is 1-2 fetches to the Apps Script relay.
+      const codes = Array.isArray(payload?.codes) ? payload.codes.map(c => String(c).trim().toUpperCase()).filter(Boolean) : [];
+      if (codes.length === 0 || codes.length > EMAIL_BATCH_SIZE) return new Response(`Send 1-${EMAIL_BATCH_SIZE} households per request`, { status: 400 });
       const subject = String(payload?.subject || "").trim();
       const message = String(payload?.message || "").trim();
-      if (!subject || !message) return new Response("Missing subject/message", { status: 400 });
-      return Response.json(await broadcast(env, subject, message));
+      if (!subject || subject.length > 200) return new Response("Subject is required (max 200 characters)", { status: 400 });
+      if (!message || message.length > 5000) return new Response("Message is required (max 5000 characters)", { status: 400 });
+      return Response.json({ results: await sendEmailBatch(env, codes, record => ({ subject, html: renderUpdateEmail(record, message) })) });
     }
 
     default:
@@ -243,21 +250,30 @@ async function saveFloorObject(db, p) {
   return listSeating(db);
 }
 
-async function broadcast(env, subject, message) {
-  const { results } = await env.DB.prepare("SELECT * FROM households WHERE response IS NOT NULL").all();
-  let sent = 0, failed = 0;
-  for (const row of results) {
-    const record = rowToRecord(row);
-    const to = record.response?.contactEmail;
-    if (!to) { failed++; continue; }
+const EMAIL_BATCH_SIZE = 10;
+
+// Sends one email per household (sequentially, to stay well inside the
+// relay's and Gmail's rate limits) and reports each household's outcome, so
+// the admin page can show exactly who didn't get it.
+async function sendEmailBatch(env, codes, render) {
+  const placeholders = codes.map(() => "?").join(",");
+  const { results: rows } = await env.DB.prepare(`SELECT * FROM households WHERE invite_code IN (${placeholders})`).bind(...codes).all();
+  const byCode = Object.fromEntries(rows.map(r => [r.invite_code, rowToRecord(r)]));
+  const out = [];
+  for (const code of codes) {
+    const record = byCode[code];
+    if (!record) { out.push({ code, status: "skipped", reason: "not found" }); continue; }
+    const to = recipientFor(record);
+    if (!to) { out.push({ code, status: "skipped", reason: "no email" }); continue; }
     try {
-      await sendEmail(env, { to, subject, html: renderBroadcastEmail(record, message) });
-      sent++;
-    } catch {
-      failed++;
+      const { subject, html } = render(record);
+      await sendEmail(env, { to, subject, html });
+      out.push({ code, status: "sent" });
+    } catch (e) {
+      out.push({ code, status: "failed", reason: String(e.message || e).slice(0, 200) });
     }
   }
-  return { sent, failed };
+  return out;
 }
 
 // Constant-time password check. A plain `!==` can return sooner the earlier

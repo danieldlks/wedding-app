@@ -1,4 +1,4 @@
-import { eventName } from "./config.js";
+import { eventName, COUPLE_NAMES } from "./config.js";
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -31,10 +31,18 @@ export function renderAdminNotifyEmail(record) {
   `;
 }
 
-export function renderBroadcastEmail(record, message) {
+// Admin "Email guests" update. Recipients may not have replied yet, so the
+// footer no longer assumes an RSVP.
+export function renderUpdateEmail(record, message) {
   return `
     <p>Hi ${escapeHtml(record.householdName)},</p>
     <div>${escapeHtml(message).replace(/\n/g, "<br>")}</div>
-    <p style="margin-top:24px;font-size:12px;color:#666;">You're receiving this because you RSVP'd to our wedding.</p>
+    <p style="margin-top:24px;font-size:12px;color:#666;">You're receiving this because you're invited to celebrate with ${escapeHtml(COUPLE_NAMES)}.</p>
   `;
+}
+
+// Where an admin email goes: the guest's own RSVP address if they've replied,
+// otherwise the contact email the admin entered for the household.
+export function recipientFor(record) {
+  return record.response?.contactEmail || record.contactEmail || "";
 }
