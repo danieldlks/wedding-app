@@ -39,6 +39,8 @@ function defaultAttending(invitedEvents) {
   return o;
 }
 function eventById(id) { return CONFIG.events.find(e => e.id === id); }
+// Only households invited to the seated event (the reception) have a seat to find or be given.
+function invitedToSeatedEvent(rec) { return rec.invitedEvents.some(id => eventById(id)?.seated); }
 
 // Dates for RSVP deadlines are plain 'YYYY-MM-DD' strings (no time or zone),
 // compared against the viewer's own calendar date. The weekday is derived,
@@ -578,10 +580,12 @@ function GuestMenu({ state, actions }) {
           <div className="ic">✦</div>
           <div><h3>Details</h3><p>Dates, times, dress code and other info.</p></div>
         </button>
-        <button className="choice-card" onClick={() => actions.patch({ view: "guest-seating" })}>
-          <div className="ic">◈</div>
-          <div><h3>Find My Seat</h3><p>See your table for the reception.</p></div>
-        </button>
+        {invitedToSeatedEvent(rec) && (
+          <button className="choice-card" onClick={() => actions.patch({ view: "guest-seating" })}>
+            <div className="ic">◈</div>
+            <div><h3>Find My Seat</h3><p>See your table for the reception.</p></div>
+          </button>
+        )}
       </div>
       {state.previewMode && (
         <div style={{ textAlign: "center", marginTop: 20 }}>
@@ -1899,7 +1903,7 @@ function AdminSeating({ state, actions }) {
     return <div className="empty-state"><div className="em-ic">✦</div>Loading seating chart…</div>;
   }
 
-  const households = Object.entries(state.guestList).map(([code, rec]) => ({
+  const households = Object.entries(state.guestList).filter(([, rec]) => invitedToSeatedEvent(rec)).map(([code, rec]) => ({
     code, name: rec.householdName,
     unseated: rec.members.filter(m => !state.seatingAssignments[m.id])
   })).filter(h => h.unseated.length > 0);
