@@ -77,6 +77,13 @@ export async function onRequestPost({ request, env }) {
           writes.push([`event_capacity_${ev.id}`, n]);
         }
       }
+      if (payload?.announcement) {
+        const message = String(payload.announcement.message || "").trim();
+        const until = String(payload.announcement.until || "").trim();
+        if (message.length > 2000) return new Response("Announcement too long (max 2000 characters)", { status: 400 });
+        if (until && !isValidDate(until)) return new Response("Invalid announcement end date", { status: 400 });
+        writes.push(["announcement_message", message], ["announcement_until", message ? until : ""]);
+      }
       for (const [key, value] of writes) await putSetting(env.DB, key, value);
       return Response.json(await getSiteSettings(env.DB));
     }

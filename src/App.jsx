@@ -415,6 +415,10 @@ const CSS = `
 /* Guest: per-event RSVP deadline chip (Details page) */
 .deadline-chip{display:inline-block;margin-top:7px;font-size:12px;font-weight:600;color:var(--gold);background:#F6EEDC;border:1px solid var(--gold-soft);border-radius:12px;padding:3px 10px;}
 .deadline-chip.passed{color:var(--ink-soft);background:var(--paper-2);}
+/* Guest: admin-set announcement card on the menu page */
+.announcement{background:#fff;border:1px solid var(--gold-soft);border-radius:10px;padding:14px 16px;margin-bottom:18px;text-align:left;}
+.announcement-eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;font-weight:600;color:var(--gold);margin-bottom:6px;}
+.announcement-body{font-size:14.5px;line-height:1.55;white-space:pre-line;overflow-wrap:anywhere;}
 /* Guest: "N days left to RSVP" nudge on the menu page */
 .reminder-banner{display:flex;flex-wrap:wrap;align-items:center;gap:12px;background:#FBF1DE;border:1px solid var(--gold-soft);border-left:3px solid var(--gold);padding:14px 16px;margin-bottom:20px;font-size:14px;line-height:1.5;}
 .reminder-lines{flex:1 1 220px;}
@@ -540,6 +544,7 @@ function GuestMenu({ state, actions }) {
   return (
     <div className="stage"><div className="card"><div className="card-inner">
       <div className="card-eyebrow eyebrow" style={{ textAlign: "center" }}>{rec.householdName}</div>
+      <GuestAnnouncement state={state} />
       <RsvpReminderBanner state={state} actions={actions} />
       <CountdownWidget eventIds={rec.invitedEvents} />
       <h2>Welcome</h2>
@@ -612,6 +617,24 @@ function rsvpReminders(rec, site) {
     .map(x => ({ ...x, days: daysUntilYmd(x.ymd) }))
     .filter(x => x.days >= 0 && x.days <= REMINDER_WINDOW_DAYS)
     .sort((a, b) => a.days - b.days);
+}
+
+function activeAnnouncement(site) {
+  const a = site?.announcement;
+  if (!a?.message) return null;
+  if (a.until && daysUntilYmd(a.until) < 0) return null;
+  return a.message;
+}
+
+function GuestAnnouncement({ state }) {
+  const message = activeAnnouncement(state.siteSettings);
+  if (!message) return null;
+  return (
+    <div className="announcement" role="note">
+      <div className="announcement-eyebrow">A note from {CONFIG.coupleNames}</div>
+      <div className="announcement-body">{message}</div>
+    </div>
+  );
 }
 
 function RsvpReminderBanner({ state, actions }) {
@@ -2399,6 +2422,70 @@ function eventHeadcount(guestList, eventId) {
 function savedCapacityStr(site, id) { return site.capacities?.[id] != null ? String(site.capacities[id]) : ""; }
 
 function AdminSettings({ state, actions }) {
+  const { deadlines, capacities, announcement } = state.siteSettings;
+  // Each section keeps its own unsaved draft; keying on just its saved values
+  // resets a section after it's saved without discarding edits in the other.
+  return (
+    <>
+      <DeadlineSettings key={JSON.stringify([deadlines, capacities])} state={state} actions={actions} />
+      <AnnouncementSettings key={JSON.stringify(announcement)} state={state} actions={actions} />
+    </>
+  );
+}
+
+function AnnouncementSettings({ state, actions }) {
+  const saved = state.siteSettings.announcement || { message: "", until: "" };
+  const [message, setMessage] = useState(saved.message);
+  const [until, setUntil] = useState(saved.until);
+  const dirty = message.trim() !== saved.message || (message.trim() ? until : "") !== saved.until;
+  const live = activeAnnouncement(state.siteSettings);
+  return (
+    <div className="settings-section">
+      <h3>Announcement for guests</h3>
+      <p className="settings-help">
+        A short note shown at the top of every guest's page when they open their invite — no email needed, so it reaches
+        everyone, including people who haven't replied yet. Leave it blank to show nothing.
+      </p>
+      <div className="settings-card">
+        <div className="field">
+          <label htmlFor="announcement-message">Message</label>
+          <textarea id="announcement-message" className="settings-input" maxLength={2000} value={message}
+            placeholder="e.g. Parking at the vineyard is limited — we recommend carpooling!"
+            onChange={e => setMessage(e.target.value)} />
+          <div className="helptext">{message.length}/2000</div>
+        </div>
+        <div className="field">
+          <label htmlFor="announcement-until">Show until (optional)</label>
+          <div className="settings-input-row">
+            <input id="announcement-until" className="settings-input" type="date" value={until} onChange={e => setUntil(e.target.value)} />
+            {until && <button type="button" className="settings-clear" onClick={() => setUntil("")}>Clear</button>}
+          </div>
+          <div className="helptext">{until ? `Hidden from guests after ${formatYmd(until)}.` : "Shown until you remove it."}</div>
+        </div>
+        <div className="helptext" style={{ marginTop: 0 }}>
+          Status: {live ? "showing to guests now." : saved.message ? "saved, but the end date has passed — not showing." : "nothing is showing."}
+        </div>
+        {message.trim() && (
+          <div style={{ marginTop: 14 }}>
+            <div className="helptext" style={{ marginBottom: 6 }}>Preview</div>
+            <div className="announcement" style={{ marginBottom: 0 }}>
+              <div className="announcement-eyebrow">A note from {CONFIG.coupleNames}</div>
+              <div className="announcement-body">{message.trim()}</div>
+            </div>
+          </div>
+        )}
+      </div>
+      <div className={`settings-actions ${dirty ? "dirty" : ""}`}>
+        <button className="btn btn-primary" disabled={state.loading || !dirty}
+          onClick={() => actions.saveSettings({ announcement: { message: message.trim(), until } })}>
+          {state.loading ? <><span className="spinner" />Saving…</> : dirty ? (message.trim() ? "Save announcement" : "Remove announcement") : "Announcement saved"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DeadlineSettings({ state, actions }) {
   const hasSeated = CONFIG.events.some(e => e.seated);
   useEffect(() => { if (hasSeated && !state.seatingLoaded && !state.seatingLoading) actions.loadSeating(); }, [state.seatingLoaded, state.seatingLoading]);
 
@@ -2501,7 +2588,7 @@ function Admin({ state, actions }) {
         {state.adminTab === "guestlist" && <AdminGuestList state={state} actions={actions} />}
         {state.adminTab === "responses" && <AdminResponses state={state} actions={actions} />}
         {state.adminTab === "seating" && <AdminSeating state={state} actions={actions} />}
-        {state.adminTab === "settings" && <AdminSettings key={JSON.stringify(state.siteSettings)} state={state} actions={actions} />}
+        {state.adminTab === "settings" && <AdminSettings state={state} actions={actions} />}
       </div>
     </div>
   );
@@ -2525,7 +2612,7 @@ export default function App() {
     guestList: {},
     // Admin-set site settings (per-event RSVP deadlines; capacities are admin-only).
     // Guests get theirs from /api/invite, the admin from "get-settings".
-    siteSettings: { deadlines: {}, capacities: {} },
+    siteSettings: { deadlines: {}, capacities: {}, announcement: { message: "", until: "" } },
     // admin
     adminInput: "",
     adminPassword: "",
@@ -2594,7 +2681,7 @@ export default function App() {
     const data = await apiGetInvite(invite);
     if (data) {
       const { site, ...rec } = data;
-      patch({ ready: true, view: "guest-landing", inviteCode: invite, currentRecord: rec, siteSettings: { deadlines: {}, capacities: {}, ...site } });
+      patch({ ready: true, view: "guest-landing", inviteCode: invite, currentRecord: rec, siteSettings: { deadlines: {}, capacities: {}, announcement: { message: "", until: "" }, ...site } });
     } else {
       patch({ ready: true, view: "invalid-invite" });
     }

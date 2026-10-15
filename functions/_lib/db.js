@@ -89,25 +89,29 @@ export function isSeatingRevealed(setting) {
 // key/value table (same table as the seating-reveal gate above):
 //   rsvp_deadline_<eventId>  — 'YYYY-MM-DD' (a plain date, no time/zone)
 //   event_capacity_<eventId> — integer headcount, informational only (never enforced)
+//   announcement_message     — free text shown to every guest on their menu page
+//   announcement_until       — optional 'YYYY-MM-DD'; the announcement hides after this date
 // An absent row means "not set". See design.md §11.
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export async function getSiteSettings(db) {
   const { results } = await db.prepare(
-    "SELECT key, value FROM app_settings WHERE key LIKE 'rsvp_deadline_%' OR key LIKE 'event_capacity_%'"
+    "SELECT key, value FROM app_settings WHERE key LIKE 'rsvp_deadline_%' OR key LIKE 'event_capacity_%' OR key LIKE 'announcement_%'"
   ).all();
-  const deadlines = {}, capacities = {};
+  const deadlines = {}, capacities = {}, announcement = { message: "", until: "" };
   for (const { key, value } of results) {
     if (key.startsWith("rsvp_deadline_") && DATE_RE.test(value || "")) deadlines[key.slice("rsvp_deadline_".length)] = value;
     if (key.startsWith("event_capacity_") && value != null && value !== "") capacities[key.slice("event_capacity_".length)] = Number(value);
+    if (key === "announcement_message") announcement.message = value || "";
+    if (key === "announcement_until" && DATE_RE.test(value || "")) announcement.until = value;
   }
-  return { deadlines, capacities };
+  return { deadlines, capacities, announcement };
 }
 
 // The subset guests are allowed to see — capacities stay admin-only.
 export async function getGuestSiteSettings(db) {
-  const { deadlines } = await getSiteSettings(db);
-  return { deadlines };
+  const { deadlines, announcement } = await getSiteSettings(db);
+  return { deadlines, announcement };
 }
 
 export async function putSetting(db, key, value) {
