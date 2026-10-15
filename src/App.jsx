@@ -11,7 +11,7 @@ const CONFIG = {
   events: [
     // "datetime" is a real ISO timestamp (used by the countdown widget); "date"/"time" above stay as the
     // human-readable strings shown elsewhere. Keep both in sync if you change the schedule.
-    { id: "engagement", name: "Engagement Party", date: "Saturday 20 February 2027", time: "2:30 PM", datetime: "2027-02-20T14:30:00+10:30", venue: "Sunday Church" },
+    { id: "engagement", name: "Engagement Party", date: "Saturday 20 February 2027", time: "2:30 PM", datetime: "2027-02-20T14:30:00+10:30", venue: "SUNDAY" },
     { id: "wedding", name: "Wedding Ceremony & Reception", date: "Friday 06 August 2027", time: "3:30 PM", datetime: "2027-08-06T15:30:00+09:30", venue: "Longview Vineyard" }
   ],
   rsvpDeadline: "Thursday 15 April 2027",
@@ -783,7 +783,7 @@ function AdminLogin({ state, actions }) {
         <h2 style={{ textAlign: "center" }}>Admin sign in</h2>
         <div className={`field ${state.adminError ? "has-err" : ""}`} style={{ marginTop: 20 }}>
           <label>Password</label>
-          <input type="text" value={state.adminInput}
+          <input type="password" autoComplete="current-password" value={state.adminInput}
             onChange={e => actions.patch({ adminInput: e.target.value })}
             onKeyDown={e => { if (e.key === "Enter") actions.submitAdminLogin(); }}
             placeholder="Enter admin password" />
