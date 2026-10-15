@@ -1,13 +1,21 @@
-import { rowToRecord, genId, genInviteCode, listAllRecords, listSeating } from "../_lib/db.js";
+import { rowToRecord, genId, genInviteCode, listAllRecords, listSeating, getSiteSettings, putSetting, isValidDate, resolveEvents } from "../_lib/db.js";
+import { isValidTimeZone } from "../_lib/time.js";
 import { sendEmail } from "../_lib/email.js";
-import { renderBroadcastEmail } from "../_lib/templates.js";
+import { renderUpdateEmail, renderReminderEmail, recipientFor } from "../_lib/templates.js";
+import { ADMIN_HOSTS, EVENTS } from "../_lib/config.js";
 
 export async function onRequestPost({ request, env }) {
+  // Checked before the password so guesses sent via a *.pages.dev address
+  // (outside the custom domain's rate-limiting rule) are never evaluated.
+  if (!ADMIN_HOSTS.includes(new URL(request.url).hostname)) {
+    return new Response("Admin access is only available at daniel-and-faith.com", { status: 403 });
+  }
+
   let body;
   try { body = await request.json(); } catch { return new Response("Invalid JSON", { status: 400 }); }
 
   const { password, action, payload } = body;
-  if (!env.ADMIN_PASSWORD || password !== env.ADMIN_PASSWORD) {
+  if (!(await passwordMatches(password, env.ADMIN_PASSWORD))) {
     return new Response("Unauthorized", { status: 401 });
   }
 
@@ -19,6 +27,9 @@ export async function onRequestPost({ request, env }) {
       const p = payload || {};
       if (!Array.isArray(p.members) || p.members.length === 0) return new Response("Missing members", { status: 400 });
       if (!Array.isArray(p.invitedEvents) || p.invitedEvents.length === 0) return new Response("Missing invitedEvents", { status: 400 });
+      const email = String(p.contactEmail || "").trim();
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return new Response("Invalid contact email", { status: 400 });
+      if (String(p.contactPhone || "").trim().length > 40) return new Response("Contact phone too long", { status: 400 });
       return Response.json(await saveHousehold(env.DB, p));
     }
 
@@ -45,6 +56,74 @@ export async function onRequestPost({ request, env }) {
         ON CONFLICT(key) DO UPDATE SET value = excluded.value
       `).bind(revealAt).run();
       return Response.json(await listSeating(env.DB));
+    }
+
+    case "get-settings":
+      return Response.json(await getSiteSettings(env.DB));
+
+    case "save-settings": {
+      // Only known event ids are accepted, so arbitrary keys can't be written.
+      // An empty value clears that setting. Everything is validated before
+      // anything is written, so a bad value never leaves a half-applied save.
+      const deadlines = payload?.deadlines || {};
+      const capacities = payload?.capacities || {};
+      const writes = [];
+      for (const ev of EVENTS) {
+        if (ev.id in deadlines) {
+          const v = String(deadlines[ev.id] || "").trim();
+          if (v && !isValidDate(v)) return new Response(`Invalid deadline for ${ev.id}`, { status: 400 });
+          writes.push([`rsvp_deadline_${ev.id}`, v]);
+        }
+        if (ev.id in capacities) {
+          const raw = capacities[ev.id];
+          const n = raw === "" || raw == null ? "" : Number(raw);
+          if (n !== "" && !(Number.isInteger(n) && n >= 0 && n <= 100000)) return new Response(`Invalid capacity for ${ev.id}`, { status: 400 });
+          writes.push([`event_capacity_${ev.id}`, n]);
+        }
+      }
+      // Event details: only name/date/time/time zone/venue/address are editable;
+      // ids (and so which households are invited) stay fixed in code.
+      const eventEdits = payload?.events || {};
+      for (const ev of EVENTS) {
+        if (!(ev.id in eventEdits)) continue;
+        const e = eventEdits[ev.id] || {};
+        const clean = {
+          name: String(e.name || "").trim(),
+          date: String(e.date || "").trim(),
+          time: String(e.time || "").trim(),
+          timeZone: String(e.timeZone || "").trim(),
+          venue: String(e.venue || "").trim(),
+          address: String(e.address || "").trim(),
+        };
+        if (!clean.name || clean.name.length > 100) return new Response(`Event name for ${ev.id} is required (max 100 characters)`, { status: 400 });
+        if (!isValidDate(clean.date)) return new Response(`Invalid date for ${ev.id}`, { status: 400 });
+        if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(clean.time)) return new Response(`Invalid start time for ${ev.id}`, { status: 400 });
+        if (!isValidTimeZone(clean.timeZone)) return new Response(`Invalid time zone for ${ev.id}`, { status: 400 });
+        if (!clean.venue || clean.venue.length > 150) return new Response(`Venue for ${ev.id} is required (max 150 characters)`, { status: 400 });
+        if (clean.address.length > 300) return new Response(`Address for ${ev.id} is too long (max 300 characters)`, { status: 400 });
+        writes.push([`event_details_${ev.id}`, JSON.stringify(clean)]);
+      }
+      // Guest information (Details page items). An empty list is allowed and
+      // means "show none"; null/"reset" clears the override back to the code defaults.
+      if ("guestInfo" in (payload || {})) {
+        const items = payload.guestInfo;
+        if (items === null) writes.push(["guest_info_items", ""]);
+        else {
+          if (!Array.isArray(items) || items.length > 20) return new Response("Guest information must be a list of at most 20 items", { status: 400 });
+          const clean = items.map(i => ({ title: String(i?.title || "").trim(), body: String(i?.body || "").trim() }));
+          if (clean.some(i => !i.title || i.title.length > 80 || i.body.length > 1000)) return new Response("Each item needs a title (max 80 characters) and text up to 1000 characters", { status: 400 });
+          writes.push(["guest_info_items", JSON.stringify(clean)]);
+        }
+      }
+      if (payload?.announcement) {
+        const message = String(payload.announcement.message || "").trim();
+        const until = String(payload.announcement.until || "").trim();
+        if (message.length > 2000) return new Response("Announcement too long (max 2000 characters)", { status: 400 });
+        if (until && !isValidDate(until)) return new Response("Invalid announcement end date", { status: 400 });
+        writes.push(["announcement_message", message], ["announcement_until", message ? until : ""]);
+      }
+      for (const [key, value] of writes) await putSetting(env.DB, key, value);
+      return Response.json(await getSiteSettings(env.DB));
     }
 
     case "save-table":
@@ -96,11 +175,32 @@ export async function onRequestPost({ request, env }) {
       return Response.json(await listSeating(env.DB));
     }
 
-    case "broadcast": {
+    case "send-emails": {
+      // One small batch per request. The admin page splits the recipient list
+      // and calls this repeatedly (showing progress), because a Pages Function
+      // on the free plan may only make ~50 outgoing requests per invocation
+      // and each email is 1-2 fetches to the Apps Script relay.
+      const codes = Array.isArray(payload?.codes) ? payload.codes.map(c => String(c).trim().toUpperCase()).filter(Boolean) : [];
+      if (codes.length === 0 || codes.length > EMAIL_BATCH_SIZE) return new Response(`Send 1-${EMAIL_BATCH_SIZE} households per request`, { status: 400 });
       const subject = String(payload?.subject || "").trim();
       const message = String(payload?.message || "").trim();
-      if (!subject || !message) return new Response("Missing subject/message", { status: 400 });
-      return Response.json(await broadcast(env, subject, message));
+      if (!subject || subject.length > 200) return new Response("Subject is required (max 200 characters)", { status: 400 });
+      if (!message || message.length > 5000) return new Response("Message is required (max 5000 characters)", { status: 400 });
+      return Response.json({ results: await sendEmailBatch(env, codes, record => ({ subject, html: renderUpdateEmail(record, message) })) });
+    }
+
+    case "send-reminders": {
+      // Same batching as send-emails; the message is an optional personal note.
+      // Households that have replied in the meantime are skipped, never nagged.
+      const codes = Array.isArray(payload?.codes) ? payload.codes.map(c => String(c).trim().toUpperCase()).filter(Boolean) : [];
+      if (codes.length === 0 || codes.length > EMAIL_BATCH_SIZE) return new Response(`Send 1-${EMAIL_BATCH_SIZE} households per request`, { status: 400 });
+      const subject = String(payload?.subject || "").trim();
+      const note = String(payload?.message || "").trim();
+      if (!subject || subject.length > 200) return new Response("Subject is required (max 200 characters)", { status: 400 });
+      if (note.length > 2000) return new Response("Note too long (max 2000 characters)", { status: 400 });
+      const settings = await getSiteSettings(env.DB);
+      const events = resolveEvents(settings);
+      return Response.json({ results: await sendEmailBatch(env, codes, record => ({ subject, html: renderReminderEmail(record, settings.deadlines, note, events) }), { skipReplied: true }) });
     }
 
     default:
@@ -124,14 +224,16 @@ async function saveHousehold(db, p) {
   const householdName = String(p.householdName || "").trim() || members.map(m => m.name).join(" & ");
 
   await db.prepare(`
-    INSERT INTO households (invite_code, household_name, members, invited_events, allow_plus_one, personal_note, created_at, response)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO households (invite_code, household_name, members, invited_events, allow_plus_one, personal_note, contact_email, contact_phone, created_at, response)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(invite_code) DO UPDATE SET
       household_name = excluded.household_name,
       members = excluded.members,
       invited_events = excluded.invited_events,
       allow_plus_one = excluded.allow_plus_one,
-      personal_note = excluded.personal_note
+      personal_note = excluded.personal_note,
+      contact_email = excluded.contact_email,
+      contact_phone = excluded.contact_phone
   `).bind(
     code,
     householdName,
@@ -139,6 +241,8 @@ async function saveHousehold(db, p) {
     JSON.stringify(p.invitedEvents),
     p.allowPlusOne ? 1 : 0,
     p.personalNote || "",
+    String(p.contactEmail || "").trim(),
+    String(p.contactPhone || "").trim(),
     createdAt,
     existingResponse
   ).run();
@@ -195,19 +299,43 @@ async function saveFloorObject(db, p) {
   return listSeating(db);
 }
 
-async function broadcast(env, subject, message) {
-  const { results } = await env.DB.prepare("SELECT * FROM households WHERE response IS NOT NULL").all();
-  let sent = 0, failed = 0;
-  for (const row of results) {
-    const record = rowToRecord(row);
-    const to = record.response?.contactEmail;
-    if (!to) { failed++; continue; }
+const EMAIL_BATCH_SIZE = 10;
+
+// Sends one email per household (sequentially, to stay well inside the
+// relay's and Gmail's rate limits) and reports each household's outcome, so
+// the admin page can show exactly who didn't get it.
+async function sendEmailBatch(env, codes, render, { skipReplied = false } = {}) {
+  const placeholders = codes.map(() => "?").join(",");
+  const { results: rows } = await env.DB.prepare(`SELECT * FROM households WHERE invite_code IN (${placeholders})`).bind(...codes).all();
+  const byCode = Object.fromEntries(rows.map(r => [r.invite_code, rowToRecord(r)]));
+  const out = [];
+  for (const code of codes) {
+    const record = byCode[code];
+    if (!record) { out.push({ code, status: "skipped", reason: "not found" }); continue; }
+    if (skipReplied && record.response) { out.push({ code, status: "skipped", reason: "already replied" }); continue; }
+    const to = recipientFor(record);
+    if (!to) { out.push({ code, status: "skipped", reason: "no email" }); continue; }
     try {
-      await sendEmail(env, { to, subject, html: renderBroadcastEmail(record, message) });
-      sent++;
-    } catch {
-      failed++;
+      const { subject, html } = render(record);
+      await sendEmail(env, { to, subject, html });
+      out.push({ code, status: "sent" });
+    } catch (e) {
+      out.push({ code, status: "failed", reason: String(e.message || e).slice(0, 200) });
     }
   }
-  return { sent, failed };
+  return out;
+}
+
+// Constant-time password check. A plain `!==` can return sooner the earlier
+// the first mismatched character is, which in theory leaks how much of a
+// guess is right. Hashing both sides first gives timingSafeEqual (a Workers
+// extension to Web Crypto) two equal-length inputs, so the compare takes the
+// same time regardless of the guess's content or length.
+async function passwordMatches(given, expected) {
+  if (typeof given !== "string" || !expected) return false;
+  const enc = new TextEncoder();
+  const [a, b] = await Promise.all(
+    [given, expected].map(s => crypto.subtle.digest("SHA-256", enc.encode(s)))
+  );
+  return crypto.subtle.timingSafeEqual(a, b);
 }

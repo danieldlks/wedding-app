@@ -5,9 +5,18 @@ CREATE TABLE IF NOT EXISTS households (
   invited_events TEXT NOT NULL, -- JSON array of event ids
   allow_plus_one INTEGER NOT NULL DEFAULT 0,
   personal_note TEXT,
+  contact_email TEXT,           -- optional, admin-entered when creating the household (for pre-RSVP reminders)
+  contact_phone TEXT,           -- optional, admin-entered
   created_at TEXT NOT NULL,
   response TEXT                 -- JSON object, or NULL until the guest submits
 );
+-- DEPLOY NOTE: contact_email/contact_phone are new (added for admin-entered
+-- contact details). CREATE TABLE IF NOT EXISTS won't add them to an existing
+-- households table — run these once (remote and local) BEFORE deploying the
+-- code that writes them, or saving a household will fail:
+--   ALTER TABLE households ADD COLUMN contact_email TEXT;
+--   ALTER TABLE households ADD COLUMN contact_phone TEXT;
+-- Existing rows just get NULL, which the app treats as "no contact details".
 
 -- Reception floor plan: one row per table the admin places on the seat-map canvas.
 -- NOTE ON DEPLOYING THIS FILE TO AN ALREADY-MIGRATED DATABASE: `size2` is new

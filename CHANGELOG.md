@@ -4,6 +4,71 @@ Notable changes to the RSVP app, newest first. See `plan.md`/`design.md` for the
 broader feature history (v1 → v3); this file tracks discrete fixes and changes
 made along the way.
 
+## 2026-10-16 — Editable event details & time zones; Settings accordion
+
+**Feature:** plan.md §11 / design.md §12. Event name, date, start time, time zone,
+venue and an optional venue address are now edited in admin → Settings → Event
+details, saved in `app_settings`, with no code change or redeploy. Guest
+information items (dress code, gifts, …) can be added, edited, reordered and
+removed. Settings is now an accordion of four sections with summaries and
+"Unsaved" flags.
+
+**Time zones:** display text and the countdown are derived from local date + time
++ IANA zone, with daylight saving handled automatically. Reply-by cut-offs follow
+each event's own zone. Events outside the usual zone are labelled ("4:00 PM (Perth
+time)"). Maps use the address when one is set.
+
+**Removed:** the hand-typed `date`/`time`/`datetime` strings in `CONFIG.events`
+(now `date`/`time`/`timeZone` defaults), and `shortName`.
+
+**Deploy:** no database change. Existing behaviour is unchanged until something
+is edited in Settings: the defaults in `CONFIG` match what's live, except the
+wedding date now reads "Friday 6 August 2027" (no leading zero, since it's derived).
+
+**Verified:** `npm run build` passes. 62 new automated checks (25 API, 37
+browser at phone, Android and desktop sizes, including countdown accuracy
+across zones and daylight saving). All earlier suites and the 11-size layout scan
+still pass. Not yet checked on a physical phone.
+
+**Files:** `src/App.jsx`, `functions/api/admin.js`, `functions/api/rsvp.js`,
+`functions/_lib/db.js`, `functions/_lib/templates.js`, `functions/_lib/config.js`,
+`functions/_lib/time.js` (new), `design.md`, `plan.md`.
+
+## 2026-10-16 — Per-event RSVP deadlines, Settings tab, reminders & guest emails
+
+**Feature:** plan.md §10 / design.md §11. Each event now has its own reply-by
+date set by the admin in a new **Settings** tab (stored in `app_settings`),
+shown per event on the guest Details page and RSVP form. RSVPs are never locked.
+Settings also shows attending vs capacity per event: typed in for the
+engagement, and the seating tables' total for the wedding. Also added:
+- An on-site "N days left to RSVP" banner for households that haven't replied.
+- An admin-set announcement on every guest's menu page.
+- Optional contact email/phone per household.
+- "Email guests" by audience, sent in batches of 10 with progress and retry.
+  This replaces the single-request broadcast, which would have broken past
+  roughly 25–50 households.
+- Personalised RSVP reminder emails with each household's own dates and invite
+  link.
+- "Find My Seat" is hidden from households not invited to the reception.
+
+**Removed:** `CONFIG.rsvpDeadline` and the `broadcast` admin action.
+
+**Deploy:** run `ALTER TABLE households ADD COLUMN contact_email TEXT;` and
+`ALTER TABLE households ADD COLUMN contact_phone TEXT;` on the remote D1 database
+**before** deploying (saving a household fails until then). Run them as two
+separate commands; combined, the remote database rejected them. Both were applied
+to production on 2026-10-16, ahead of this deploy. Afterwards, set each
+event's reply-by date in admin → Settings.
+
+**Verified:** `npm run build` passes. 182 automated checks against an isolated
+copy of the app (own D1 state, test secrets, fake email relay, so no real emails
+were sent): API validation and partial-save behaviour, the database upgrade path
+from the old schema, and the real UI in headless Chromium at iPhone, Android and
+desktop widths, with reviewed screenshots. Not yet checked on a physical phone.
+
+**Files:** `src/App.jsx`, `functions/api/admin.js`, `functions/api/invite.js`,
+`functions/_lib/db.js`, `functions/_lib/templates.js`, `functions/_lib/config.js`,
+`schema.sql`, `design.md`, `plan.md`, `README.md`.
 ## 2026-10-10 — 3D venue display: declutter overlapping table labels
 
 **Issue:** #6. The 3D venue display's table/landmark labels are real DOM

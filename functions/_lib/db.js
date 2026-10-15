@@ -1,3 +1,5 @@
+import { EVENTS } from "./config.js";
+
 export function rowToRecord(row) {
   return {
     inviteCode: row.invite_code,
@@ -6,6 +8,10 @@ export function rowToRecord(row) {
     invitedEvents: JSON.parse(row.invited_events),
     allowPlusOne: !!row.allow_plus_one,
     personalNote: row.personal_note || "",
+    // Optional contact details the admin enters when creating the household, so
+    // they can be emailed before replying (the RSVP form collects its own).
+    contactEmail: row.contact_email || "",
+    contactPhone: row.contact_phone || "",
     createdAt: row.created_at,
     response: row.response ? JSON.parse(row.response) : null
   };
@@ -83,4 +89,62 @@ export function isSeatingRevealed(setting) {
   if (setting.mode === "open") return true;
   if (setting.mode === "scheduled" && setting.revealAt) return Date.now() >= new Date(setting.revealAt).getTime();
   return false;
+}
+
+// Admin-editable site settings, stored as rows in the generic app_settings
+// key/value table (same table as the seating-reveal gate above):
+//   rsvp_deadline_<eventId>  — 'YYYY-MM-DD' (a plain date, no time/zone)
+//   event_capacity_<eventId> — integer headcount, informational only (never enforced)
+//   announcement_message     — free text shown to every guest on their menu page
+//   announcement_until       — optional 'YYYY-MM-DD'; the announcement hides after this date
+//   event_details_<eventId>  — JSON { name, date, time, timeZone, venue, address } overriding
+//                              that event's defaults in CONFIG.events (absent = use the defaults)
+//   guest_info_items         — JSON [{ title, body }], the Details page items (absent = CONFIG.details)
+// An absent row means "not set". See design.md §11.
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+export async function getSiteSettings(db) {
+  const { results } = await db.prepare(
+    "SELECT key, value FROM app_settings WHERE key LIKE 'rsvp_deadline_%' OR key LIKE 'event_capacity_%' OR key LIKE 'announcement_%' OR key LIKE 'event_details_%' OR key = 'guest_info_items'"
+  ).all();
+  const deadlines = {}, capacities = {}, announcement = { message: "", until: "" }, events = {};
+  let guestInfo = null;
+  for (const { key, value } of results) {
+    if (key.startsWith("rsvp_deadline_") && DATE_RE.test(value || "")) deadlines[key.slice("rsvp_deadline_".length)] = value;
+    if (key.startsWith("event_capacity_") && value != null && value !== "") capacities[key.slice("event_capacity_".length)] = Number(value);
+    if (key === "announcement_message") announcement.message = value || "";
+    if (key === "announcement_until" && DATE_RE.test(value || "")) announcement.until = value;
+    if (key.startsWith("event_details_")) { try { events[key.slice("event_details_".length)] = JSON.parse(value); } catch { /* ignore a corrupt row */ } }
+    if (key === "guest_info_items") { try { guestInfo = JSON.parse(value); } catch { /* ignore */ } }
+  }
+  return { deadlines, capacities, announcement, events, guestInfo };
+}
+
+// Effective { id: { name, timeZone } } for emails: the admin's saved values over the code defaults.
+export function resolveEvents(settings) {
+  return Object.fromEntries(EVENTS.map(e => [e.id, { ...e, ...(settings.events?.[e.id] || {}) }]));
+}
+
+// The subset guests are allowed to see — capacities stay admin-only.
+export async function getGuestSiteSettings(db) {
+  const { deadlines, announcement, events, guestInfo } = await getSiteSettings(db);
+  return { deadlines, announcement, events, guestInfo };
+}
+
+export async function putSetting(db, key, value) {
+  if (value == null || value === "") {
+    await db.prepare("DELETE FROM app_settings WHERE key = ?").bind(key).run();
+  } else {
+    await db.prepare(`
+      INSERT INTO app_settings (key, value) VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).bind(key, String(value)).run();
+  }
+}
+
+export function isValidDate(s) {
+  if (!DATE_RE.test(s)) return false;
+  const [y, m, d] = s.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
 }
