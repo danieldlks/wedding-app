@@ -11,15 +11,15 @@ const CONFIG = {
   events: [
     // "datetime" is a real ISO timestamp (used by the countdown widget); "date"/"time" above stay as the
     // human-readable strings shown elsewhere. Keep both in sync if you change the schedule.
-    { id: "engagement", name: "Engagement Party", date: "Saturday 14 February 2027", time: "6:00 PM", datetime: "2027-02-14T18:00:00+10:30", venue: "The Grounds, Adelaide" },
-    { id: "wedding", name: "Wedding Ceremony & Reception", date: "Friday 06 August 2027", time: "3:00 PM", datetime: "2027-08-06T15:00:00+09:30", venue: "Longview Vineyard, Adelaide" }
+    { id: "engagement", name: "Engagement Party", date: "Saturday 20 February 2027", time: "2:30 PM", datetime: "2027-02-20T14:30:00+10:30", venue: "Sunday Church" },
+    { id: "wedding", name: "Wedding Ceremony & Reception", date: "Friday 06 August 2027", time: "3:30 PM", datetime: "2027-08-06T15:30:00+09:30", venue: "Longview Vineyard" }
   ],
-  rsvpDeadline: "Friday 1 October 2027",
+  rsvpDeadline: "Thursday 15 April 2027",
   dietaryOptions: ["Vegetarian", "Vegan", "Gluten-free", "Dairy-free", "Nut allergy", "Other"],
   // Admin password now lives server-side only (a Cloudflare Pages secret) — see functions/api/admin.js.
   // Where this app will live once hosted (used to build QR codes / invite links).
   // Leave blank to fall back to the current browser URL.
-  siteBaseUrl: "https://daniel-and-faith-wedding-rsvp.pages.dev",
+  siteBaseUrl: "https://daniel-and-faith.com",
   // Shown on the guest Details page, in addition to the event list above — edit freely
   details: [
     { title: "Dress Code", body: "Cocktail / semi-formal attire." },
