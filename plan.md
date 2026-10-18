@@ -229,3 +229,41 @@ was agreed from a mockup first (accordion over inner tabs).
     guest-information add/reorder/remove, and the "Unsaved" flags
 - **Regression:** every earlier suite still passes, and the 11-size layout scan
   is clean.
+
+---
+
+## 12. Version 7 — Realistic 3D Venue (Requested Follow-up)
+
+**Request:** make the 3D space feel like the venue's Matterport tour of
+Longview's barn once tables and chairs are set up. Guests should be able to use
+it on their phones.
+
+**Options considered:**
+1. Embed Longview's Matterport tour.
+2. Make our own 3D view look like a real room (chosen).
+3. Place our tables inside a scan (Matterport SDK or our own phone scan). This
+   was set aside: it needs venue access or cooperation, and phone-scale files
+   are tens of MB.
+
+**Built in this order:**
+1. **Lazy-load the 3D view:** guests' main bundle went from 236 KB to 95 KB
+   gzipped.
+2. **The realistic room:** furniture, procedural materials, lighting, device
+   tiers and render-on-demand.
+3. **3D in guests' Find My Seat:** named seat pins and framing for any screen.
+4. **The walk-through camera.**
+
+**Decision:** build now rather than after the final table arrangement. The room
+is generated from the live floor plan, so it follows any later changes to
+tables. Guests only see it once seating is revealed.
+
+**Testing:** isolated test app with a realistic 15-table barn layout:
+- **3D view:** guest network check (no 3D download unless tapped); labels and
+  declutter; an idle render check.
+- **Guest 3D:** 20 checks on iPhone and a simulated low-power Android covering
+  tiers, seat pins, a 4:5 phone view, Map/3D switching and no errors.
+- **Walk mode:** 17 checks covering eye height, start position, tapping the
+  floor and tables, dragging to look, keys and + / −, the walls and furniture
+  limits, guest search walking to their table, and the fading hint.
+- **Regression:** all earlier suites still pass, and the 11-size layout scan is
+  clean.
