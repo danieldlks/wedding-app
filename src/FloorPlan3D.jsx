@@ -182,15 +182,18 @@ function fp3dDeclutterLabels(s) {
     const cx = (_fp3dLabelPos.x + 1) / 2 * size.w, cy = (1 - _fp3dLabelPos.y) / 2 * size.h;
     const hw = obj.userData.w / 2 + pad, hh = obj.userData.h / 2 + pad;
     const id = obj.userData.tableId;
-    const rank = obj.userData.kind === "seat" || (id != null && id === activeTableId) ? 0
-      : id != null && id === hoveredTableId ? 1
+    // 0 = a guest's own seat label (always shown); 1 = selected/hovered table
+    // (shown unless it would cover a seat label); 2 = other tables; 3 = landmarks.
+    const rank = obj.userData.kind === "seat" ? 0
+      : id != null && (id === activeTableId || id === hoveredTableId) ? 1
       : obj.userData.kind === "table" ? 2 : 3;
     entries.push({ el, rank, dist, shown: el.style.opacity !== "0", x0: cx - hw, x1: cx + hw, y0: cy - hh, y1: cy + hh });
   }
   entries.sort((a, b) => a.rank - b.rank || b.shown - a.shown || a.dist - b.dist);
   const placed = [];
   for (const e of entries) {
-    const show = e.rank <= 1 || !placed.some(p => e.x0 < p.x1 && e.x1 > p.x0 && e.y0 < p.y1 && e.y1 > p.y0);
+    const overlaps = p => e.x0 < p.x1 && e.x1 > p.x0 && e.y0 < p.y1 && e.y1 > p.y0;
+    const show = e.rank === 0 || (e.rank === 1 ? !placed.some(p => p.rank === 0 && overlaps(p)) : !placed.some(overlaps));
     if (show) placed.push(e);
     const opacity = show ? "1" : "0";
     if (e.el.style.opacity !== opacity) e.el.style.opacity = opacity;
@@ -409,7 +412,22 @@ function buildRoom(roomW, roomD, mats) {
   const festoon = new THREE.Group();
   festoon.add(bulbMesh, ...wire);
   group.add(festoon);
-  group.userData.festoon = festoon;
+  // Timber ceiling, facing down only: from above (the dollhouse view) it's
+  // culled and invisible; from inside (walk mode) it closes the room in.
+  const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(roomW, roomD), mats.ceiling);
+  ceiling.rotation.x = Math.PI / 2; ceiling.position.set(roomW / 2, FP3D_WALL_H, roomD / 2);
+  group.add(ceiling);
+  // Exposed tie beams across the room — solid, so only shown while walking (they'd block the view from above).
+  const beams = new THREE.Group();
+  const beamCount = Math.max(3, Math.round(roomD / 3.6));
+  for (let k = 0; k < beamCount; k++) {
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(roomW, 0.24, 0.22), mats.timberDark);
+    beam.position.set(roomW / 2, FP3D_WALL_H - 0.14, (roomD / (beamCount + 1)) * (k + 1) + 0.4);
+    beams.add(beam);
+  }
+  beams.visible = false;
+  group.add(beams);
+  Object.assign(group.userData, { festoon, beams, floor });
   return group;
 }
 
@@ -422,6 +440,7 @@ function makeMaterials(roomW, roomD) {
     parquet: new THREE.MeshStandardMaterial({ map: parquetTexture([3, 3]), roughness: 0.35, metalness: 0.05 }),
     timber: new THREE.MeshStandardMaterial({ map: oakFloorTexture([1, 1]), roughness: 0.7 }),
     timberDark: new THREE.MeshStandardMaterial({ color: "#6B4A2E", roughness: 0.7 }),
+    ceiling: new THREE.MeshStandardMaterial({ map: barnBoardTexture([6, 1]), color: "#D8C3A2", roughness: 0.95, emissive: "#E9DCC6", emissiveIntensity: 0.25 }),
     barTop: new THREE.MeshStandardMaterial({ color: "#3B2A1C", roughness: 0.35 }),
     linen: new THREE.MeshStandardMaterial({ color: FP3D_LINEN, roughness: 0.92 }),
     mat: new THREE.MeshStandardMaterial({ color: "#9A8A6E", roughness: 1 }),
@@ -449,12 +468,17 @@ function fp3dAnimateCamera(s, toTarget, toCamPos) {
   const start = performance.now();
   const myGen = (s.focusGen || 0) + 1;
   s.focusGen = myGen;
+  // Lift the controls' distance/angle limits for the flight (e.g. overview ->
+  // eye level), or OrbitControls would yank the camera mid-move; the mode's
+  // limits go back on when it lands.
+  Object.assign(s.controls, { minDistance: 0, maxDistance: Infinity, minPolarAngle: 0, maxPolarAngle: Math.PI });
   function step(now) {
     if (!s.camera || s.focusGen !== myGen) return;
-    const t = Math.min(1, (now - start) / 500);
+    const t = Math.min(1, (now - start) / 600);
     const eased = 1 - Math.pow(1 - t, 3);
     s.controls.target.lerpVectors(fromTarget, toTarget, eased);
     s.camera.position.lerpVectors(fromCamPos, toCamPos, eased);
+    if (t >= 1) fp3dConfigureControls(s, s.mode || "orbit");
     s.invalidate();
     if (t < 1) requestAnimationFrame(step);
   }
@@ -463,6 +487,7 @@ function fp3dAnimateCamera(s, toTarget, toCamPos) {
 
 function fp3dZoomBy(s, factor) {
   if (!s) return;
+  if (s.mode === "walk") { fp3dStep(s, factor < 1 ? 1.4 : -1.4); return; } // + / − step forward / back while walking
   const dir = s.camera.position.clone().sub(s.controls.target);
   const dist = clamp(dir.length() * factor, s.controls.minDistance, s.controls.maxDistance);
   s.camera.position.copy(s.controls.target).add(dir.normalize().multiplyScalar(dist));
@@ -471,6 +496,100 @@ function fp3dZoomBy(s, factor) {
 
 // The selected table's linen takes a soft tint of the highlight colour (a
 // full-strength colour reads as a heavy painted drum rather than a tablecloth).
+/* ---------------- walk mode ----------------
+   Eye-level look-around, like stepping into a Matterport tour. OrbitControls
+   orbiting a target 0.1 in front of the camera is effectively "turning your
+   head"; tapping the floor walks there, tapping a table walks up to it. */
+const FP3D_EYE = 1.62;          // ≈ 1.45 m
+const FP3D_LOOK = 0.1;          // look-target distance in front of the eye
+function fp3dHorizontalDir(s) {
+  const d = s.controls.target.clone().sub(s.camera.position).setY(0);
+  return d.lengthSq() < 1e-6 ? new THREE.Vector3(0, 0, -1) : d.normalize();
+}
+function fp3dClampToRoom(s, x, z) {
+  const m = 0.7;
+  return [clamp(x, m, s.roomW - m), clamp(z, m, s.roomD - m)];
+}
+// Keep the walker out of the furniture: a destination inside a table's
+// footprint (+ its chairs) is pushed back out to just beyond the chairs.
+function fp3dPushOutOfTables(s, x, z) {
+  for (const mesh of s.tableMeshes?.values() || []) {
+    const box = new THREE.Box3().setFromObject(mesh);
+    const clear = Math.max(box.max.x - box.min.x, box.max.z - box.min.z) / 2 + FP3D_CHAIR_GAP + 0.75;
+    const dx = x - mesh.position.x, dz = z - mesh.position.z, d = Math.hypot(dx, dz);
+    if (d < clear) {
+      const ux = d > 1e-4 ? dx / d : 0, uz = d > 1e-4 ? dz / d : 1;
+      x = mesh.position.x + ux * clear; z = mesh.position.z + uz * clear;
+    }
+  }
+  return [x, z];
+}
+function fp3dWalkTo(s, x, z, faceDir) {
+  [x, z] = fp3dPushOutOfTables(s, x, z);
+  [x, z] = fp3dClampToRoom(s, x, z);
+  // faceDir may tilt down (walking up to a table looks at its top); otherwise level.
+  const dir = (faceDir || fp3dHorizontalDir(s)).clone().normalize();
+  const eye = new THREE.Vector3(x, FP3D_EYE, z);
+  fp3dAnimateCamera(s, eye.clone().add(dir.multiplyScalar(FP3D_LOOK)), eye);
+}
+// Stand a comfortable distance back from a table, facing it.
+function fp3dWalkToTable(s, mesh) {
+  const box = new THREE.Box3().setFromObject(mesh);
+  const r = Math.max(box.max.x - box.min.x, box.max.z - box.min.z) / 2 + FP3D_CHAIR_GAP + 1.1;
+  const c = mesh.position;
+  let from = s.camera.position.clone().setY(0).sub(new THREE.Vector3(c.x, 0, c.z));
+  if (from.lengthSq() < 1e-6) from = new THREE.Vector3(0, 0, 1);
+  from.normalize();
+  const [x, z] = fp3dClampToRoom(s, c.x + from.x * r, c.z + from.z * r);
+  fp3dWalkTo(s, x, z, new THREE.Vector3(c.x - x, FP3D_TABLE_H - FP3D_EYE, c.z - z)); // look down at the tabletop
+}
+function fp3dStep(s, metres) {
+  const dir = fp3dHorizontalDir(s);
+  fp3dWalkTo(s, s.camera.position.x + dir.x * metres, s.camera.position.z + dir.z * metres, dir); // stepping levels the view
+}
+function fp3dTurn(s, degrees) {
+  const dir = fp3dHorizontalDir(s).applyAxisAngle(new THREE.Vector3(0, 1, 0), THREE.MathUtils.degToRad(degrees));
+  fp3dWalkTo(s, s.camera.position.x, s.camera.position.z, dir);
+}
+// At eye level a person sees ~75° side to side; the overview's 42° lens on a
+// tall phone screen would be a slit. Widen the vertical FOV until the
+// horizontal one reaches ~75° (capped so a very tall screen isn't fish-eyed).
+function fp3dWalkFov(aspect) {
+  const v = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(75) / 2) / aspect);
+  return clamp(THREE.MathUtils.radToDeg(v), 55, 82);
+}
+function fp3dApplyFov(s) {
+  s.camera.fov = s.mode === "walk" ? fp3dWalkFov(s.camera.aspect) : 42;
+  s.camera.updateProjectionMatrix();
+}
+function fp3dConfigureControls(s, mode) {
+  const c = s.controls;
+  if (mode === "walk") {
+    Object.assign(c, { minDistance: FP3D_LOOK * 0.9, maxDistance: FP3D_LOOK * 1.1, enableZoom: false, enablePan: false, rotateSpeed: -0.35, minPolarAngle: Math.PI * 0.3, maxPolarAngle: Math.PI * 0.62 });
+  } else {
+    Object.assign(c, { minDistance: 3, maxDistance: Math.max(s.roomW, s.roomD) * 2.2, enableZoom: true, enablePan: true, rotateSpeed: 1, minPolarAngle: 0, maxPolarAngle: Math.PI / 2 - 0.03 });
+  }
+  s.beams.visible = mode === "walk";
+}
+function fp3dEnterWalk(s) {
+  s.mode = "walk";
+  fp3dConfigureControls(s, "walk");
+  fp3dApplyFov(s);
+  // Start just inside the entrance if there is one, else front-centre; face the
+  // selected table (e.g. the guest's own) or the middle of the room.
+  const start = s.entrance ? new THREE.Vector3(s.entrance.x, 0, s.entrance.z) : new THREE.Vector3(s.roomW / 2, 0, s.roomD - 1.2);
+  start.lerp(new THREE.Vector3(s.roomW / 2, 0, s.roomD / 2), 0.12);
+  const active = s.activeTableId && s.tableMeshes?.get(s.activeTableId);
+  const look = active ? active.position.clone().setY(0) : new THREE.Vector3(s.roomW / 2, 0, s.roomD / 2);
+  fp3dWalkTo(s, start.x, start.z, look.sub(start));
+}
+function fp3dExitWalk(s) {
+  s.mode = "orbit";
+  fp3dConfigureControls(s, "orbit");
+  fp3dApplyFov(s);
+  fp3dAnimateCamera(s, s.initialTarget.clone(), s.initialCamPos.clone());
+}
+
 function applyTableHighlight(tableMeshes, activeId, focusColor) {
   tableMeshes.forEach((mesh, id) => {
     const isActive = id === activeId;
@@ -491,6 +610,22 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
   selectRef.current = onSelectTable;
   const [clickedTableId, setClickedTableId] = useState(null);
   const markersKey = JSON.stringify(seatMarkers || []); // rebuild only when the markers' content changes, not on every render
+  const [mode, setMode] = useState("orbit"); // "orbit" (dollhouse overview) | "walk" (eye level)
+  const [showHint, setShowHint] = useState(false);
+  // The walk-mode hint fades after a few seconds so it doesn't cover a small screen.
+  useEffect(() => {
+    if (mode !== "walk") { setShowHint(false); return; }
+    setShowHint(true);
+    const id = setTimeout(() => setShowHint(false), 6000);
+    return () => clearTimeout(id);
+  }, [mode]);
+  function toggleWalk() {
+    const s = sceneRef.current;
+    if (!s) return;
+    if (s.mode === "walk") { fp3dExitWalk(s); setMode("orbit"); }
+    else { fp3dEnterWalk(s); setMode("walk"); }
+    s.invalidate();
+  }
 
   useImperativeHandle(ref, () => ({
     zoomIn() { fp3dZoomBy(sceneRef.current, 1 / 1.25); },
@@ -498,6 +633,7 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
     recenter() {
       const s = sceneRef.current;
       if (!s) return;
+      if (s.mode === "walk") { fp3dExitWalk(s); setMode("orbit"); return; }
       fp3dAnimateCamera(s, s.initialTarget.clone(), s.initialCamPos.clone());
     }
   }), []);
@@ -571,6 +707,7 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
     const room = buildRoom(roomW, roomD, mats);
     scene.add(room);
     const festoon = room.userData.festoon;
+    const floorMesh = room.userData.floor;
     const chairGeo = buildChairGeometries();
 
     const contentGroup = new THREE.Group();
@@ -588,6 +725,9 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
       festoon.visible = !(camera.position.y > FP3D_WALL_H - 1.4 && camera.position.y < FP3D_WALL_H + 0.8);
       renderer.render(scene, camera);
       labelRenderer.render(scene, camera);
+      // Current mode + camera position, for automated tests and debugging.
+      renderer.domElement.dataset.mode = sceneRef.current?.mode || "orbit";
+      renderer.domElement.dataset.camera = camera.position.toArray().map(v => v.toFixed(2)).join(",");
       if (sceneRef.current) fp3dDeclutterLabels(sceneRef.current);
       if (moving) invalidate();
     }
@@ -609,8 +749,28 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
     function onPointerUp(e) {
       if (downPos && Math.hypot(e.clientX - downPos[0], e.clientY - downPos[1]) > 4) return; // was a drag/orbit, not a click
       const tableId = hitTable(e);
+      const s = sceneRef.current;
+      if (s?.mode === "walk") {
+        // Walking: a table tap walks up to it (and selects it); a floor tap walks there.
+        if (tableId) { fp3dWalkToTable(s, tableMeshesRef.current.get(tableId)); setClickedTableId(tableId); selectRef.current?.(tableId); return; }
+        const hit = raycaster.intersectObject(floorMesh, false)[0];
+        if (hit) fp3dWalkTo(s, hit.point.x, hit.point.z, hit.point.clone().sub(camera.position).setY(0));
+        return;
+      }
       setClickedTableId(tableId);
       selectRef.current?.(tableId);
+    }
+    // Keyboard, when the 3D view has focus: arrows / WASD to step and turn while walking.
+    function onKeyDown(e) {
+      const s = sceneRef.current;
+      if (!s || s.mode !== "walk") return;
+      const k = e.key.toLowerCase();
+      if (k === "arrowup" || k === "w") fp3dStep(s, 1.2);
+      else if (k === "arrowdown" || k === "s") fp3dStep(s, -1.2);
+      else if (k === "arrowleft" || k === "a") fp3dTurn(s, 25);
+      else if (k === "arrowright" || k === "d") fp3dTurn(s, -25);
+      else return;
+      e.preventDefault();
     }
     function onPointerMove(e) {
       if (e.buttons) return; // orbiting — skip the raycast
@@ -625,12 +785,15 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
     renderer.domElement.addEventListener("pointerup", onPointerUp);
     renderer.domElement.addEventListener("pointermove", onPointerMove);
     renderer.domElement.addEventListener("pointerleave", onPointerLeave);
+    renderer.domElement.tabIndex = 0;
+    renderer.domElement.setAttribute("aria-label", "3D view of the reception room");
+    renderer.domElement.addEventListener("keydown", onKeyDown);
 
     const ro = new ResizeObserver(() => {
       const w = mount.clientWidth, h = mount.clientHeight;
       if (!w || !h) return;
       camera.aspect = w / h;
-      camera.updateProjectionMatrix();
+      if (sceneRef.current) fp3dApplyFov(sceneRef.current); else camera.updateProjectionMatrix();
       renderer.setSize(w, h, false);
       labelRenderer.setSize(w, h);
       sceneRef.current.size = { w, h };
@@ -640,6 +803,7 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
 
     sceneRef.current = {
       scene, camera, controls, contentGroup, center, mats, chairGeo, invalidate, renderer,
+      roomW, roomD, beams: room.userData.beams, mode: "orbit", tableMeshes: tableMeshesRef.current, entrance: null,
       labels: [], size: { w: width, h: height }, activeTableId: null, hoveredTableId: null,
       initialCamPos: camera.position.clone(), initialTarget: center.clone()
     };
@@ -653,6 +817,7 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
       renderer.domElement.removeEventListener("pointermove", onPointerMove);
       renderer.domElement.removeEventListener("pointerleave", onPointerLeave);
+      renderer.domElement.removeEventListener("keydown", onKeyDown);
       controls.dispose();
       scene.traverse(obj => {
         obj.geometry?.dispose();
@@ -679,6 +844,9 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
     });
     s.contentGroup.clear();
     tableMeshesRef.current = new Map();
+    s.tableMeshes = tableMeshesRef.current;
+    const door = (objects || []).find(o => landmarkKind(o) === "door");
+    s.entrance = door ? (([x, z]) => ({ x, z }))(fp3dLogicalToWorld(door.x, door.y)) : null;
     (objects || []).forEach(o => {
       const g = buildLandmark(o, s.mats);
       g.traverse(obj => { if (obj.isMesh) obj.userData.ownsGeometry = true; });
@@ -746,6 +914,7 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
     s.focusColor = focusColor;
     applyTableHighlight(tableMeshesRef.current, activeId, focusColor);
     const targetMesh = activeId ? tableMeshesRef.current.get(activeId) : null;
+    if (s.mode === "walk") { if (targetMesh) fp3dWalkToTable(s, targetMesh); s.invalidate(); return; }
     const target = targetMesh ? targetMesh.position.clone().setY(0.6) : s.center;
     const dist = s.camera.position.distanceTo(s.controls.target) || 6;
     const dir = s.camera.position.clone().sub(s.controls.target).normalize();
@@ -766,7 +935,17 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
     s.invalidate();
   }, [focusTableId, focusColor, clickedTableId]);
 
-  return <div ref={mountRef} style={{ width: "100%", height: "100%" }} />;
+  return (
+    <div className="fp3d-wrap">
+      <div ref={mountRef} style={{ width: "100%", height: "100%" }} />
+      <div className="fp3d-mode">
+        <button type="button" onClick={toggleWalk} aria-pressed={mode === "walk"}>
+          {mode === "walk" ? "← Overview" : "Walk around"}
+        </button>
+        {mode === "walk" && <span className={`fp3d-hint ${showHint ? "" : "hidden"}`} aria-hidden={!showHint}>Drag to look · tap the floor to walk · tap a table to go to it</span>}
+      </div>
+    </div>
+  );
 });
 
 export default FloorPlan3D;

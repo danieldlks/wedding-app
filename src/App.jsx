@@ -564,6 +564,14 @@ select.settings-input{-webkit-appearance:auto;appearance:auto;}
 .seat-view-switch button{flex:1;min-height:40px;border:none;background:none;border-radius:9px;font-size:14px;font-weight:600;color:var(--ink-soft);}
 .seat-view-switch button.on{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(32,43,34,.15);}
 @media(max-width:600px){.seating-canvas-wrap.guest-3d{aspect-ratio:4/5;}}
+/* 3D view: Walk around / Overview button and hint (rendered by FloorPlan3D) */
+.fp3d-wrap{position:relative;width:100%;height:100%;}
+.fp3d-mode{position:absolute;top:10px;left:10px;right:10px;display:flex;flex-wrap:wrap;align-items:center;gap:8px;pointer-events:none;z-index:3;}
+.fp3d-mode button{pointer-events:auto;min-height:40px;padding:0 16px;border:1px solid var(--gold-soft);border-radius:20px;background:#fff;color:var(--ink);font-size:13.5px;font-weight:600;box-shadow:0 4px 10px rgba(0,0,0,.12);}
+.fp3d-hint{background:rgba(32,43,34,.78);color:#FBF7EF;font-size:12px;line-height:1.35;padding:6px 10px;border-radius:8px;max-width:260px;}
+.fp3d-hint{transition:opacity .4s;}
+.fp3d-hint.hidden{opacity:0;}
+@media(prefers-reduced-motion:reduce){.fp3d-hint{transition:none;}}
 /* 3D view placeholder while its code downloads (FloorPlan3D is lazy-loaded) */
 .fp3d-loading{display:flex;align-items:center;justify-content:center;width:100%;height:100%;min-height:200px;color:var(--ink-soft);font-size:14px;}
 /* Admin tabs scroll sideways on a phone rather than wrapping/overflowing */
