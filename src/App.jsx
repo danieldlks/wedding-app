@@ -559,6 +559,11 @@ select.settings-input{-webkit-appearance:auto;appearance:auto;}
 .email-send{width:100%;min-height:48px;border-radius:12px;}
 @media(min-width:600px){.email-send{width:auto;min-width:240px;}}
 .email-status{margin-top:14px;padding:12px 14px;background:var(--paper-2);border-radius:10px;font-size:14px;}
+/* Guest Find My Seat: Map / 3D switch, and a taller 3D view on phones */
+.seat-view-switch{display:flex;background:var(--paper-2);border-radius:12px;padding:4px;margin:0 auto 12px;max-width:280px;}
+.seat-view-switch button{flex:1;min-height:40px;border:none;background:none;border-radius:9px;font-size:14px;font-weight:600;color:var(--ink-soft);}
+.seat-view-switch button.on{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(32,43,34,.15);}
+@media(max-width:600px){.seating-canvas-wrap.guest-3d{aspect-ratio:4/5;}}
 /* 3D view placeholder while its code downloads (FloorPlan3D is lazy-loaded) */
 .fp3d-loading{display:flex;align-items:center;justify-content:center;width:100%;height:100%;min-height:200px;color:var(--ink-soft);font-size:14px;}
 /* Admin tabs scroll sideways on a phone rather than wrapping/overflowing */
@@ -848,11 +853,21 @@ function GuestSeating({ state, actions }) {
   const [seating, setSeating] = useState(null);
   const [transform, setTransform] = useState({ panX: 0, panY: 0, zoom: 1 });
   const [fitted, setFitted] = useState(false);
+  // "map" (2D, the default) or "3d". The 3D view and three.js only download if a guest taps 3D.
+  const [view, setView] = useState("map");
+  const floorPlan3DRef = useRef(null);
+  const lastJsonRef = useRef("");
 
   useEffect(() => {
     let cancelled = false;
     function fetchSeating() {
-      apiGetSeating(state.inviteCode).then(data => { if (!cancelled) setSeating(data || { tables: [], mySeats: [], objects: [] }); });
+      apiGetSeating(state.inviteCode).then(data => {
+        if (cancelled) return;
+        const next = data || { tables: [], mySeats: [], objects: [] };
+        // Only update when something actually changed, so the 20s poll doesn't rebuild the 3D room for nothing.
+        const json = JSON.stringify(next);
+        if (json !== lastJsonRef.current) { lastJsonRef.current = json; setSeating(next); }
+      });
     }
     fetchSeating();
     // Light polling so a last-minute reassignment on the day shows up even if
@@ -883,6 +898,8 @@ function GuestSeating({ state, actions }) {
     if (!highlightSeatIndices[s.tableId]) highlightSeatIndices[s.tableId] = new Set();
     highlightSeatIndices[s.tableId].add(s.seatIndex);
   });
+  // For the 3D view: a named pin over each of this household's chairs.
+  const seatMarkers = (seating?.mySeats || []).map(s => ({ tableId: s.tableId, seatIndex: s.seatIndex, label: `${s.memberName} · seat ${s.seatIndex + 1}`, color: highlightColors[s.tableId] }));
 
   return (
     <div className="stage"><div className="card"><div className="card-inner">
@@ -901,14 +918,39 @@ function GuestSeating({ state, actions }) {
       )}
       {seating && seating.mySeats.length > 0 && (
         <>
-          <div className="seating-canvas-wrap">
-            <SeatingCanvas tables={seating.tables} objects={seating.objects} highlightColors={highlightColors} highlightSeatIndices={highlightSeatIndices} dimOthers viewTransform={transform} onViewTransformChange={setTransform} />
-            <div className="zoom-controls">
-              <button onClick={() => setTransform(t => zoomSeatTransform(t, 1.25))} aria-label="Zoom in">+</button>
-              <button onClick={() => setTransform(t => zoomSeatTransform(t, 1 / 1.25))} aria-label="Zoom out">−</button>
-              <button onClick={() => setTransform(fitSeatTransform(myTables))} aria-label="Recenter">⦿</button>
-            </div>
+          <div className="seat-view-switch" role="tablist" aria-label="Seating view">
+            <button role="tab" aria-selected={view === "map"} className={view === "map" ? "on" : ""} onClick={() => setView("map")}>Map</button>
+            <button role="tab" aria-selected={view === "3d"} className={view === "3d" ? "on" : ""} onClick={() => setView("3d")}>3D view</button>
           </div>
+          {view === "map" ? (
+            <div className="seating-canvas-wrap">
+              <SeatingCanvas tables={seating.tables} objects={seating.objects} highlightColors={highlightColors} highlightSeatIndices={highlightSeatIndices} dimOthers viewTransform={transform} onViewTransformChange={setTransform} />
+              <div className="zoom-controls">
+                <button onClick={() => setTransform(t => zoomSeatTransform(t, 1.25))} aria-label="Zoom in">+</button>
+                <button onClick={() => setTransform(t => zoomSeatTransform(t, 1 / 1.25))} aria-label="Zoom out">−</button>
+                <button onClick={() => setTransform(fitSeatTransform(myTables))} aria-label="Recenter">⦿</button>
+              </div>
+            </div>
+          ) : (
+            <div className="seating-canvas-wrap mode-3d guest-3d">
+              <Suspense fallback={<div className="fp3d-loading" role="status">Loading 3D view…</div>}>
+                <FloorPlan3D
+                  ref={floorPlan3DRef}
+                  tables={seating.tables}
+                  objects={seating.objects}
+                  focusTableId={sortedTableIds[0] || null}
+                  focusColor={highlightColors[sortedTableIds[0]]}
+                  seatMarkers={seatMarkers}
+                />
+              </Suspense>
+              <div className="zoom-controls">
+                <button onClick={() => floorPlan3DRef.current?.zoomIn()} aria-label="Zoom in">+</button>
+                <button onClick={() => floorPlan3DRef.current?.zoomOut()} aria-label="Zoom out">−</button>
+                <button onClick={() => floorPlan3DRef.current?.recenter()} aria-label="Show whole room">⦿</button>
+              </div>
+            </div>
+          )}
+          {view === "3d" && <p className="helptext" style={{ textAlign: "center", marginTop: 8 }}>Drag to look around · pinch or use + / − to zoom</p>}
           <div className="seat-legend">
             {seating.mySeats.map(s => {
               const t = seating.tables.find(tt => tt.id === s.tableId);

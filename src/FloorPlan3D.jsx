@@ -130,6 +130,15 @@ function blobShadowTexture() {
   }, { srgb: false });
 }
 
+// Soft white radial glow (tinted per guest via the material colour).
+function glowTexture() {
+  return canvasTexture(128, (ctx, S) => {
+    const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+    g.addColorStop(0, "rgba(255,255,255,.95)"); g.addColorStop(0.5, "rgba(255,255,255,.55)"); g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, S, S);
+  }, { srgb: false });
+}
+
 /* ---------------- labels (DOM text, decluttered) ---------------- */
 // Canvas-texture sprites go blurry no matter how you tune them: minified
 // (zoomed out) they alias into a grey smudge, magnified (zoomed in close)
@@ -173,7 +182,7 @@ function fp3dDeclutterLabels(s) {
     const cx = (_fp3dLabelPos.x + 1) / 2 * size.w, cy = (1 - _fp3dLabelPos.y) / 2 * size.h;
     const hw = obj.userData.w / 2 + pad, hh = obj.userData.h / 2 + pad;
     const id = obj.userData.tableId;
-    const rank = id != null && id === activeTableId ? 0
+    const rank = obj.userData.kind === "seat" || (id != null && id === activeTableId) ? 0
       : id != null && id === hoveredTableId ? 1
       : obj.userData.kind === "table" ? 2 : 3;
     entries.push({ el, rank, dist, shown: el.style.opacity !== "0", x0: cx - hw, x1: cx + hw, y0: cy - hh, y1: cy + hh });
@@ -229,6 +238,29 @@ function chairPlacements(t) {
     }
     return { x: cx + x, z: cz + z, yaw, seatIndex: i };
   });
+}
+
+// A guest's own seat: a coloured pin above the chair plus a name label that
+// is never decluttered away (see fp3dDeclutterLabels rank 0).
+function buildSeatMarker(chair, marker, mats) {
+  const group = new THREE.Group();
+  group.position.set(chair.x, 0, chair.z);
+  const mat = new THREE.MeshStandardMaterial({ color: marker.color, emissive: marker.color, emissiveIntensity: 0.35, roughness: 0.4 });
+  const head = new THREE.Mesh(mats.pinHeadGeo, mat); head.position.y = 1.55;
+  const tip = new THREE.Mesh(mats.pinTipGeo, mat); tip.position.y = 1.32; tip.rotation.x = Math.PI;
+  head.castShadow = true;
+  // A soft coloured pool on the floor under the chair — the clearest cue from above.
+  const glowMat = new THREE.MeshBasicMaterial({ color: marker.color, map: mats.glowMap, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending });
+  // Additive: the glow brightens whatever floor it's on, so it still stands out when the
+  // highlight colour (e.g. the site's gold) is close to the oak floor's own colour.
+  const glow = new THREE.Mesh(mats.glowGeo, glowMat); glow.position.y = 0.012; glow.renderOrder = 2;
+  group.add(head, tip, glow);
+  group.userData.ownsGlow = glowMat;
+  group.userData.ownsMaterial = mat;
+  const label = makeFp3dLabelObject(marker.label, { kind: "seat" });
+  label.element.style.borderLeft = `4px solid ${marker.color}`;
+  group.add(label.translateY(1.95));
+  return group;
 }
 
 // Linen-draped table (cloth falls to the floor) with a low centrepiece.
@@ -374,7 +406,10 @@ function buildRoom(roomW, roomD, mats) {
   const bulbMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(0.055, 10, 8), mats.bulb, bulbs.length);
   const m = new THREE.Matrix4();
   bulbs.forEach(([x, y, z], i) => bulbMesh.setMatrixAt(i, m.makeTranslation(x, y, z)));
-  group.add(bulbMesh, ...wire);
+  const festoon = new THREE.Group();
+  festoon.add(bulbMesh, ...wire);
+  group.add(festoon);
+  group.userData.festoon = festoon;
   return group;
 }
 
@@ -401,6 +436,10 @@ function makeMaterials(roomW, roomD) {
     vaseGeo: new THREE.CylinderGeometry(0.07, 0.06, 0.22, 16),
     posyGeo: new THREE.IcosahedronGeometry(0.16, 1).scale(1.3, 0.75, 1.3),
     candleGeo: new THREE.CylinderGeometry(0.025, 0.025, 0.14, 10),
+    pinHeadGeo: new THREE.SphereGeometry(0.12, 20, 14),
+    pinTipGeo: new THREE.ConeGeometry(0.075, 0.24, 16),
+    glowGeo: new THREE.PlaneGeometry(1.4, 1.4).rotateX(-Math.PI / 2),
+    glowMap: glowTexture(),
   };
 }
 
@@ -430,22 +469,28 @@ function fp3dZoomBy(s, factor) {
   s.invalidate();
 }
 
+// The selected table's linen takes a soft tint of the highlight colour (a
+// full-strength colour reads as a heavy painted drum rather than a tablecloth).
 function applyTableHighlight(tableMeshes, activeId, focusColor) {
   tableMeshes.forEach((mesh, id) => {
     const isActive = id === activeId;
-    mesh.material.color.set(isActive ? focusColor : FP3D_LINEN);
+    mesh.material.color.set(FP3D_LINEN);
+    if (isActive) mesh.material.color.lerp(new THREE.Color(focusColor), 0.38);
     mesh.material.emissive.set(isActive ? focusColor : "#000000");
-    mesh.material.emissiveIntensity = isActive ? 0.25 : 0;
+    mesh.material.emissiveIntensity = isActive ? 0.12 : 0;
   });
 }
 
-const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTableId, focusColor = "#A9814C", onSelectTable }, ref) {
+// seatMarkers (optional, guest view): [{ tableId, seatIndex, label, color }] —
+// the guest's own seats get a coloured cushion and a named pin.
+const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTableId, focusColor = "#A9814C", onSelectTable, seatMarkers }, ref) {
   const mountRef = useRef(null);
   const sceneRef = useRef(null);
   const tableMeshesRef = useRef(new Map());
   const selectRef = useRef(onSelectTable);
   selectRef.current = onSelectTable;
   const [clickedTableId, setClickedTableId] = useState(null);
+  const markersKey = JSON.stringify(seatMarkers || []); // rebuild only when the markers' content changes, not on every render
 
   useImperativeHandle(ref, () => ({
     zoomIn() { fp3dZoomBy(sceneRef.current, 1 / 1.25); },
@@ -473,7 +518,10 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
 
     const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias });
     renderer.setPixelRatio(quality.pixelRatio);
-    renderer.setSize(width, height);
+    // updateStyle=false: the page's CSS sizes the canvas (100% of its box);
+    // inline px sizes from three.js would override that and stretch the box.
+    renderer.setSize(width, height, false);
+    Object.assign(renderer.domElement.style, { display: "block", width: "100%", height: "100%" });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.05;
@@ -520,7 +568,9 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
     }
 
     const mats = makeMaterials(roomW, roomD);
-    scene.add(buildRoom(roomW, roomD, mats));
+    const room = buildRoom(roomW, roomD, mats);
+    scene.add(room);
+    const festoon = room.userData.festoon;
     const chairGeo = buildChairGeometries();
 
     const contentGroup = new THREE.Group();
@@ -533,6 +583,9 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
     function frame() {
       raf = 0;
       const moving = controls.update();
+      // A bulb right next to the lens renders as a big white blob, so the
+      // string lights hide while the camera is up among them.
+      festoon.visible = !(camera.position.y > FP3D_WALL_H - 1.4 && camera.position.y < FP3D_WALL_H + 0.8);
       renderer.render(scene, camera);
       labelRenderer.render(scene, camera);
       if (sceneRef.current) fp3dDeclutterLabels(sceneRef.current);
@@ -578,7 +631,7 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
       if (!w || !h) return;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
+      renderer.setSize(w, h, false);
       labelRenderer.setSize(w, h);
       sceneRef.current.size = { w, h };
       invalidate();
@@ -620,7 +673,9 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
       if (obj.isCSS2DObject) { obj.element.remove(); return; } // CSS2DRenderer never removes stale elements on its own
       // Shared geometries/materials (s.mats, s.chairGeo) are reused across rebuilds; only per-build ones are disposed.
       if (obj.userData.ownsGeometry) obj.geometry.dispose();
-      if (obj.userData.ownsMaterial) obj.material.dispose();
+      if (obj.userData.ownsMaterial === true) obj.material.dispose();
+      else if (obj.userData.ownsMaterial) obj.userData.ownsMaterial.dispose(); // seat-marker groups hold their material here
+      if (obj.userData.ownsGlow) obj.userData.ownsGlow.dispose();
     });
     s.contentGroup.clear();
     tableMeshesRef.current = new Map();
@@ -650,6 +705,17 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
       m.compose(new THREE.Vector3(c.x, 0, c.z), q.setFromAxisAngle(up, c.yaw), one);
       frames.setMatrixAt(i, m); cushions.setMatrixAt(i, m);
     });
+    // Guest's own seats: tint their cushions and add a named pin.
+    const markers = JSON.parse(markersKey);
+    const white = new THREE.Color("#FFFFFF");
+    chairs.forEach((c, i) => cushions.setColorAt(i, white));
+    markers.forEach(mk => {
+      const i = chairs.findIndex(c => c.tableId === mk.tableId && c.seatIndex === mk.seatIndex);
+      if (i < 0) return;
+      cushions.setColorAt(i, new THREE.Color(mk.color));
+      s.contentGroup.add(buildSeatMarker(chairs[i], mk, s.mats));
+    });
+    if (cushions.instanceColor) cushions.instanceColor.needsUpdate = true;
     frames.castShadow = cushions.castShadow = true;
     frames.receiveShadow = cushions.receiveShadow = true;
     s.contentGroup.add(frames, cushions);
@@ -668,7 +734,7 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
     // don't move the camera (the venue display re-polls the plan every few seconds).
     applyTableHighlight(tableMeshesRef.current, s.activeTableId, s.focusColor || focusColor);
     s.invalidate();
-  }, [tables, objects]);
+  }, [tables, objects, markersKey]);
 
   // Recolor for the externally-driven (guest search) or locally-clicked
   // selection, and fly the camera to whichever table is focused.
@@ -680,10 +746,22 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
     s.focusColor = focusColor;
     applyTableHighlight(tableMeshesRef.current, activeId, focusColor);
     const targetMesh = activeId ? tableMeshesRef.current.get(activeId) : null;
-    const target = targetMesh ? targetMesh.position.clone().setY(0) : s.center;
+    const target = targetMesh ? targetMesh.position.clone().setY(0.6) : s.center;
     const dist = s.camera.position.distanceTo(s.controls.target) || 6;
     const dir = s.camera.position.clone().sub(s.controls.target).normalize();
-    const toDist = targetMesh ? Math.min(dist, 5) : dist;
+    let toDist = dist;
+    if (targetMesh) {
+      // Back off far enough to fit the table, its chairs and any seat pins on
+      // screen — on a tall phone the narrow width is what limits it — and look
+      // down from at least ~50° so the camera sits above the string lights.
+      const box = new THREE.Box3().setFromObject(targetMesh);
+      const radius = Math.max(box.max.x - box.min.x, box.max.z - box.min.z) / 2 + FP3D_CHAIR_GAP + 0.75;
+      const tanHalfV = Math.tan(THREE.MathUtils.degToRad(s.camera.fov / 2));
+      const tanHalf = Math.min(tanHalfV, tanHalfV * s.camera.aspect);
+      toDist = clamp((radius / tanHalf) * 1.1, s.controls.minDistance, s.controls.maxDistance);
+      dir.y = Math.max(dir.y, 0.78);
+      dir.normalize();
+    }
     fp3dAnimateCamera(s, target, target.clone().add(dir.multiplyScalar(toDist)));
     s.invalidate();
   }, [focusTableId, focusColor, clickedTableId]);
