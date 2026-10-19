@@ -524,21 +524,32 @@ function fp3dClampToRoom(s, x, z) {
 }
 // Keep the walker out of the furniture: a destination inside a table's
 // footprint (+ its chairs) is pushed back out to just beyond the chairs.
+// Pushing out of one table can land inside a neighbour in a tight layout, so
+// repeat until clear of all of them; returns null if no clear spot was found.
 function fp3dPushOutOfTables(s, x, z) {
-  for (const mesh of s.tableMeshes?.values() || []) {
+  const tables = [...(s.tableMeshes?.values() || [])].map(mesh => {
     const box = new THREE.Box3().setFromObject(mesh);
-    const clear = Math.max(box.max.x - box.min.x, box.max.z - box.min.z) / 2 + FP3D_CHAIR_GAP + 0.75;
-    const dx = x - mesh.position.x, dz = z - mesh.position.z, d = Math.hypot(dx, dz);
-    if (d < clear) {
-      const ux = d > 1e-4 ? dx / d : 0, uz = d > 1e-4 ? dz / d : 1;
-      x = mesh.position.x + ux * clear; z = mesh.position.z + uz * clear;
+    return { cx: mesh.position.x, cz: mesh.position.z, clear: Math.max(box.max.x - box.min.x, box.max.z - box.min.z) / 2 + FP3D_CHAIR_GAP + 0.75 };
+  });
+  for (let pass = 0; pass < 6; pass++) {
+    let moved = false;
+    for (const t of tables) {
+      const dx = x - t.cx, dz = z - t.cz, d = Math.hypot(dx, dz);
+      if (d < t.clear - 1e-3) {
+        const ux = d > 1e-4 ? dx / d : 0, uz = d > 1e-4 ? dz / d : 1;
+        x = t.cx + ux * t.clear; z = t.cz + uz * t.clear;
+        [x, z] = fp3dClampToRoom(s, x, z);
+        moved = true;
+      }
     }
+    if (!moved) return [x, z];
   }
-  return [x, z];
+  return null;
 }
 function fp3dWalkTo(s, x, z, faceDir) {
-  [x, z] = fp3dPushOutOfTables(s, x, z);
-  [x, z] = fp3dClampToRoom(s, x, z);
+  const clear = fp3dPushOutOfTables(s, ...fp3dClampToRoom(s, x, z));
+  if (!clear) return; // boxed in by furniture: stay where you are rather than walk into a table
+  [x, z] = clear;
   // faceDir may tilt down (walking up to a table looks at its top); otherwise level.
   const dir = (faceDir || fp3dHorizontalDir(s)).clone().normalize();
   const eye = new THREE.Vector3(x, FP3D_EYE, z);
@@ -552,8 +563,17 @@ function fp3dWalkToTable(s, mesh) {
   let from = s.camera.position.clone().setY(0).sub(new THREE.Vector3(c.x, 0, c.z));
   if (from.lengthSq() < 1e-6) from = new THREE.Vector3(0, 0, 1);
   from.normalize();
-  const [x, z] = fp3dClampToRoom(s, c.x + from.x * r, c.z + from.z * r);
-  fp3dWalkTo(s, x, z, new THREE.Vector3(c.x - x, FP3D_TABLE_H - FP3D_EYE, c.z - z)); // look down at the tabletop
+  // The side you approach from may be wedged against a wall or another table:
+  // try other sides, nearest first, and stand at the first spot that's clear.
+  const up = new THREE.Vector3(0, 1, 0);
+  for (const deg of [0, 30, -30, 60, -60, 90, -90, 120, -120, 150, -150, 180]) {
+    const d = from.clone().applyAxisAngle(up, THREE.MathUtils.degToRad(deg));
+    const spot = fp3dPushOutOfTables(s, ...fp3dClampToRoom(s, c.x + d.x * r, c.z + d.z * r));
+    if (spot && Math.hypot(spot[0] - c.x, spot[1] - c.z) < r + 1.2) {
+      fp3dWalkTo(s, spot[0], spot[1], new THREE.Vector3(c.x - spot[0], FP3D_TABLE_H - FP3D_EYE, c.z - spot[1])); // look down at the tabletop
+      return;
+    }
+  }
 }
 function fp3dStep(s, metres) {
   const dir = fp3dHorizontalDir(s);
