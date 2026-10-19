@@ -173,6 +173,31 @@ function csvSafe(v) {
   return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
 }
 
+// Calls fn every intervalMs, but only while the page is actually on screen.
+// A locked phone, background tab or other app makes no requests (each one
+// counts towards Cloudflare's free-plan limit of 100,000 Function requests a
+// day). Coming back on screen refreshes straight away if one is due.
+// immediate: also call it on start (false when the caller has just loaded).
+function useVisiblePolling(fn, intervalMs, { enabled = true, immediate = true } = {}) {
+  const fnRef = useRef(fn);
+  fnRef.current = fn;
+  useEffect(() => {
+    if (!enabled) return;
+    let last = immediate ? 0 : Date.now(), id = null;
+    const run = () => { last = Date.now(); fnRef.current(); };
+    const start = () => {
+      if (id) return;
+      if (Date.now() - last >= intervalMs) run();
+      id = setInterval(run, intervalMs);
+    };
+    const stop = () => { clearInterval(id); id = null; };
+    const onVisibility = () => (document.visibilityState === "hidden" ? stop() : start());
+    onVisibility();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => { stop(); document.removeEventListener("visibilitychange", onVisibility); };
+  }, [enabled, immediate, intervalMs]);
+}
+
 /* =========================================================
    BACKEND — Cloudflare Pages Functions under /api
    ========================================================= */
@@ -880,23 +905,20 @@ function GuestSeating({ state, actions }) {
   const floorPlan3DRef = useRef(null);
   const lastJsonRef = useRef("");
 
-  useEffect(() => {
-    let cancelled = false;
-    function fetchSeating() {
-      apiGetSeating(state.inviteCode).then(data => {
-        if (cancelled) return;
-        const next = data || { tables: [], mySeats: [], objects: [] };
-        // Only update when something actually changed, so the 20s poll doesn't rebuild the 3D room for nothing.
-        const json = JSON.stringify(next);
-        if (json !== lastJsonRef.current) { lastJsonRef.current = json; setSeating(next); }
-      });
-    }
-    fetchSeating();
-    // Light polling so a last-minute reassignment on the day shows up even if
-    // this page has been open since the morning — see the admin tab's polling too.
-    const id = setInterval(fetchSeating, 20000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [state.inviteCode]);
+  const aliveRef = useRef(true);
+  useEffect(() => () => { aliveRef.current = false; }, []);
+  // Light polling so a last-minute reassignment on the day shows up: every 60s,
+  // only while this page is on screen (see useVisiblePolling), so a room full of
+  // guests can't run through Cloudflare's daily request allowance.
+  useVisiblePolling(() => {
+    apiGetSeating(state.inviteCode).then(data => {
+      if (!aliveRef.current) return;
+      const next = data || { tables: [], mySeats: [], objects: [] };
+      // Only update when something actually changed, so a poll doesn't rebuild the 3D room for nothing.
+      const json = JSON.stringify(next);
+      if (json !== lastJsonRef.current) { lastJsonRef.current = json; setSeating(next); }
+    });
+  }, 60000);
 
   // The room now includes every table, not just the guest's own — but the
   // default/recenter view should still zoom to *their* seat, not fit the
@@ -2036,11 +2058,9 @@ function AdminSeating({ state, actions }) {
 
   // Background refresh so a second admin's changes (on another device) show
   // up here within a few seconds, without needing full real-time push infra.
-  useEffect(() => {
-    if (!state.seatingLoaded) return;
-    const id = setInterval(() => actions.loadSeating(true), 5000);
-    return () => clearInterval(id);
-  }, [state.seatingLoaded]);
+  // Paused while this tab isn't on screen: left open all day it would otherwise
+  // use ~17,000 of the 100,000 free daily Function requests.
+  useVisiblePolling(() => actions.loadSeating(true), 5000, { enabled: state.seatingLoaded, immediate: false });
 
   if (state.seatingLoading && !state.seatingLoaded) {
     return <div className="empty-state"><div className="em-ic">✦</div>Loading seating chart…</div>;
