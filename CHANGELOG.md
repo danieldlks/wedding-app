@@ -4,6 +4,18 @@ Notable changes to the RSVP app, newest first. See `plan.md`/`design.md` for the
 broader feature history (v1 → v3); this file tracks discrete fixes and changes
 made along the way.
 
+## 2026-10-19 — Fix: 2D seat counter drawn over the bottom chair
+
+**Issue:** found while reviewing issue #2. In the admin seat map (and the
+downloaded floor-plan image), each table's "0/10" seat counter was drawn 16
+units below the table edge, right on top of its bottom chair, since chairs sit
+12 units out with a 4-unit radius.
+
+**Fix:** the counter now sits inside the table, under the table name, which
+moves up slightly to make room. It's clear of the chairs on every table shape.
+
+**Files:** `src/App.jsx` (`drawFloorPlan`).
+
 ## 2026-10-19 — Realistic 3D venue, guest 3D seat finder & walk-through
 
 **Feature:** plan.md §12 / design.md §13.
