@@ -1793,16 +1793,19 @@ function drawFloorPlan(ctx, opts) {
       }
     });
 
+    // With a seat counter, the name moves up a little and the counter sits
+    // inside the table beneath it — below the table it collided with the
+    // bottom chair (chairs are drawn 12 units outside the edge).
     ctx.fillStyle = "#202B22";
     ctx.font = "600 15px 'Work Sans', sans-serif";
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(t.label, 0, 0);
+    ctx.fillText(t.label, 0, occupancy ? -7 : 0);
 
     if (occupancy) {
       const count = occupancy[t.id] || 0;
       ctx.font = "600 11px 'Work Sans', sans-serif";
-      ctx.fillStyle = count > t.capacity ? "#B6503F" : "#6E7F63";
-      ctx.fillText(`${count}/${t.capacity}`, 0, dims.h / 2 + 16);
+      ctx.fillStyle = count > t.capacity ? "#B6503F" : "#57654E";
+      ctx.fillText(`${count}/${t.capacity}`, 0, 10);
     }
     ctx.restore();
   });
