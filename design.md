@@ -588,3 +588,81 @@ Components read events through `eventsList()` / `eventById()` and items through
 calls `applySiteSettings(state.siteSettings)` at the top of each render, so those
 always reflect the latest saved settings, for guests (from `/api/invite`) and
 the admin (from `get-settings`).
+
+---
+
+## 13. Version 7 — Realistic 3D Venue, Guest 3D Seat Finder & Walk-Through
+
+### 13.1 What's New
+
+- **The 3D view is a furnished barn room**, not flat blocks. Everything is
+  generated in code (`src/FloorPlan3D.jsx`); textures are painted onto canvases
+  at load time, so nothing extra is downloaded:
+  - an oak plank floor, and whitewashed board walls with skirting
+  - linen-draped tables with a vase, greenery and candle centrepiece
+  - wooden chairs with cushions, from each table's capacity
+  - festoon string lights, warm lighting and soft shadows
+  - a timber ceiling and tie beams, seen only when walking around
+  - **Landmarks are styled by their label:** "dance" → parquet floor, "bar" →
+    counter, "stage/band/DJ" → riser, "door/entrance/exit" → door frame,
+    "cake/gift/sign/photo/…" → linen side table, walls/barriers → timber
+    half-wall, anything else → timber plinth.
+  - **Dollhouse view:** walls face inward only, so the walls nearest the camera
+    vanish and you see in. The ceiling faces down, so it's invisible from above.
+- **Chairs match the 2D seat numbers.** They are placed in `getSeatPositions()`
+  order (now shared via `src/seatingGeometry.js`), so seat N is the same chair in
+  2D, 3D and the admin seat picker.
+- **Guests get a 3D option in Find My Seat:** a Map / 3D view switch, with Map as
+  the default.
+  - In 3D the camera flies to their table, framed to fit the table, its chairs
+    and the pins on any screen shape.
+  - Each household member's chair gets a coloured pin with a name label (never
+    hidden by the label declutter), a tinted cushion and a floor glow.
+- **Walk around:** an eye-level mode in both the venue display and the guest
+  view. It starts at the entrance.
+  - Drag to look; tap the floor to walk; tap a table to walk up to it.
+  - + / − and arrow keys step and turn.
+  - It keeps you inside the room and out of the furniture, and uses a wider
+    (~75°) lens.
+
+### 13.2 Performance
+
+| | Before | After |
+|---|---|---|
+| Main bundle (every guest) | 236 KB gzipped (incl. three.js) | **95 KB** |
+| 3D chunk (only when 3D is opened) | n/a | ~157 KB, cached after first use |
+
+- **Lazy loading:** `FloorPlan3D` is loaded with `React.lazy`. A full guest
+  visit that doesn't tap 3D requests no 3D code (tested).
+- **Render on demand:** it draws only when something changes, such as the
+  camera moving (including damping), hover, selection, data or a resize. Idle,
+  it requests no frames, which saves battery on phones.
+- **Device tiers** (`fp3dQuality()`):
+  - **high** (desktop/tablet): 2048 px soft shadow maps.
+  - **medium** (phones): 1024 px shadow maps.
+  - **low** (small screens with ≤ 4 cores or ≤ 3 GB memory): no shadow maps,
+    no MSAA and a 1.25 pixel ratio. Every tier gets soft "blob" contact shadows.
+- **Draw calls:** all chairs are two instanced meshes, frame and cushion, for
+  the whole room.
+- **Data refreshes:** Find My Seat's 20 s poll and the venue display's refresh
+  only rebuild the room when the data actually changed, and never move the
+  camera.
+
+### 13.3 Scale & Coordinates
+
+1 world unit ≈ 0.9 m (`FP3D_SCALE = 1/45`, so a 90-unit round table ≈ 1.8 m).
+The room is the floor plan's `SEAT_LW × SEAT_LH` (1000 × 700, about 20 × 14 m):
+
+- walls 3.4 units high
+- tabletops at 0.84
+- eye height in walk mode 1.62 (≈ 1.45 m)
+
+### 13.4 Known Limits
+
+- It's a stylised barn, not a scan of Longview's. Exact proportions, windows
+  and colours aren't modelled.
+- Walking doesn't collide with landmarks (bar, stage, …), only with tables and
+  the walls.
+- Tested in headless Chromium at phone, tablet and desktop sizes, with a
+  simulated low-power phone. Still to try on a real phone and on the lobby
+  screen.

@@ -4,6 +4,42 @@ Notable changes to the RSVP app, newest first. See `plan.md`/`design.md` for the
 broader feature history (v1 → v3); this file tracks discrete fixes and changes
 made along the way.
 
+## 2026-10-19 — Realistic 3D venue, guest 3D seat finder & walk-through
+
+**Feature:** plan.md §12 / design.md §13.
+- **The 3D venue view is now a furnished barn:** oak floor, whitewashed board
+  walls, linen tables with centrepieces, chairs per seat (matching the 2D seat
+  numbers), landmarks styled by name, festoon lights and soft shadows. It's all
+  generated in code, so nothing extra is downloaded.
+- **Guests' Find My Seat** gets a Map / 3D switch: their table, named seat pins
+  and a floor glow.
+- **"Walk around":** an eye-level walk-through, starting at the entrance; drag
+  to look, tap to walk.
+
+**Performance:**
+- **Guests download less:** the 3D view and three.js are lazy-loaded, so the
+  bundle every guest downloads drops from 236 KB to 95 KB gzipped. The 3D chunk
+  (~157 KB) loads only when 3D is opened.
+- **Battery:** it renders on demand instead of every frame.
+- **Weaker phones:** device tiers drop shadow maps and resolution on low-power
+  phones.
+
+**Deploy:** no database change.
+
+**Verified:** `npm run build` passes, and all earlier suites still pass. New
+checks:
+- a guest visit downloads no 3D code unless 3D is tapped
+- the view is idle when nothing moves
+- 20 guest-3D checks (iPhone and simulated low-power Android)
+- 17 walk-mode checks
+- a clean 11-size layout scan
+
+Not yet checked on a physical phone or the lobby screen.
+
+**Files:** `src/FloorPlan3D.jsx` (new; 3D moved out of `App.jsx` and
+rebuilt), `src/seatingGeometry.js` (new; shared floor-plan geometry),
+`src/App.jsx`, `design.md`, `plan.md`.
+
 ## 2026-10-16 — Editable event details & time zones; Settings accordion
 
 **Feature:** plan.md §11 / design.md §12. Event name, date, start time, time zone,
