@@ -181,6 +181,7 @@ function fp3dDeclutterLabels(s) {
     _fp3dLabelPos.project(camera);
     const cx = (_fp3dLabelPos.x + 1) / 2 * size.w, cy = (1 - _fp3dLabelPos.y) / 2 * size.h;
     const hw = obj.userData.w / 2 + pad, hh = obj.userData.h / 2 + pad;
+    // (cy is the label's anchor; any stacking offset applied below is separate, via margin-top.)
     const id = obj.userData.tableId;
     // 0 = a guest's own seat label (always shown); 1 = selected/hovered table
     // (shown unless it would cover a seat label); 2 = other tables; 3 = landmarks.
@@ -192,6 +193,17 @@ function fp3dDeclutterLabels(s) {
   entries.sort((a, b) => a.rank - b.rank || b.shown - a.shown || a.dist - b.dist);
   const placed = [];
   for (const e of entries) {
+    // A household's own seat labels are always shown, so instead of hiding one
+    // that would cover another (neighbouring chairs), stack it just above.
+    if (e.rank === 0) {
+      // Nearest free slot, alternating up and down, so it stays close to its pin.
+      const step = e.y1 - e.y0 + 2;
+      const clashes = k => placed.some(p => p.rank === 0 && e.x0 < p.x1 && e.x1 > p.x0 && e.y0 + k * step < p.y1 && e.y1 + k * step > p.y0);
+      const shift = [0, -1, 1, -2, 2, -3, 3].find(k => !clashes(k)) ?? 0;
+      e.y0 += shift * step; e.y1 += shift * step;
+      const mt = shift ? `${shift * step}px` : "";
+      if (e.el.style.marginTop !== mt) e.el.style.marginTop = mt;
+    }
     const overlaps = p => e.x0 < p.x1 && e.x1 > p.x0 && e.y0 < p.y1 && e.y1 > p.y0;
     const show = e.rank === 0 || (e.rank === 1 ? !placed.some(p => p.rank === 0 && overlaps(p)) : !placed.some(overlaps));
     if (show) placed.push(e);
@@ -262,7 +274,7 @@ function buildSeatMarker(chair, marker, mats) {
   group.userData.ownsMaterial = mat;
   const label = makeFp3dLabelObject(marker.label, { kind: "seat" });
   label.element.style.borderLeft = `4px solid ${marker.color}`;
-  group.add(label.translateY(1.95));
+  group.add(label.translateY(1.82)); // just above the pin head
   return group;
 }
 
@@ -888,6 +900,7 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
     frames.receiveShadow = cushions.receiveShadow = true;
     s.contentGroup.add(frames, cushions);
     s.chairs = chairs;
+    s.markerCount = markers.length;
     // Soft contact shadows under everything (the only shadows on low-tier devices).
     const blobMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), s.mats.blob, Math.max(1, blobs.length));
     blobMesh.count = blobs.length;
@@ -924,7 +937,8 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
       // screen — on a tall phone the narrow width is what limits it — and look
       // down from at least ~50° so the camera sits above the string lights.
       const box = new THREE.Box3().setFromObject(targetMesh);
-      const radius = Math.max(box.max.x - box.min.x, box.max.z - box.min.z) / 2 + FP3D_CHAIR_GAP + 0.75;
+      // Extra margin when the table has name pins, so a column of names fits on screen too.
+      const radius = Math.max(box.max.x - box.min.x, box.max.z - box.min.z) / 2 + FP3D_CHAIR_GAP + 0.75 + (s.markerCount ? 1.1 : 0);
       const tanHalfV = Math.tan(THREE.MathUtils.degToRad(s.camera.fov / 2));
       const tanHalf = Math.min(tanHalfV, tanHalfV * s.camera.aspect);
       toDist = clamp((radius / tanHalf) * 1.1, s.controls.minDistance, s.controls.maxDistance);

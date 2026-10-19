@@ -857,6 +857,20 @@ function GuestDetails({ state, actions }) {
   );
 }
 
+// Short labels for a household's seat pins in 3D: first names ("Alice"). If two
+// people share a first name, add a surname initial ("Sam B." / "Sam C."); if
+// that still clashes, the full name; identical full names get their seat number.
+function shortGuestNames(people) {
+  const words = n => (n || "").trim().split(/\s+/).filter(Boolean);
+  const first = n => words(n)[0] || "Guest";
+  const withInitial = n => { const w = words(n); return w.length > 1 ? `${w[0]} ${w[w.length - 1][0].toUpperCase()}.` : first(n); };
+  const clashes = (list, i) => list.filter(x => x.toLowerCase() === list[i].toLowerCase()).length > 1;
+  let labels = people.map(p => first(p.name));
+  labels = labels.map((l, i) => (clashes(labels, i) ? withInitial(people[i].name) : l));
+  labels = labels.map((l, i) => (clashes(labels, i) ? words(people[i].name).join(" ") || l : l));
+  return labels.map((l, i) => (clashes(labels, i) ? `${l} (seat ${people[i].seatIndex + 1})` : l));
+}
+
 function GuestSeating({ state, actions }) {
   const [seating, setSeating] = useState(null);
   const [transform, setTransform] = useState({ panX: 0, panY: 0, zoom: 1 });
@@ -907,7 +921,9 @@ function GuestSeating({ state, actions }) {
     highlightSeatIndices[s.tableId].add(s.seatIndex);
   });
   // For the 3D view: a named pin over each of this household's chairs.
-  const seatMarkers = (seating?.mySeats || []).map(s => ({ tableId: s.tableId, seatIndex: s.seatIndex, label: `${s.memberName} · seat ${s.seatIndex + 1}`, color: highlightColors[s.tableId] }));
+  const mySeatList = seating?.mySeats || [];
+  const pinNames = shortGuestNames(mySeatList.map(s => ({ name: s.memberName, seatIndex: s.seatIndex })));
+  const seatMarkers = mySeatList.map((s, i) => ({ tableId: s.tableId, seatIndex: s.seatIndex, label: pinNames[i], color: highlightColors[s.tableId] }));
 
   return (
     <div className="stage"><div className="card"><div className="card-inner">
