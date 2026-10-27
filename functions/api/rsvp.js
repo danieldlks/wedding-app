@@ -30,11 +30,15 @@ export async function onRequestPost({ request, env }) {
   const record = rowToRecord({ ...row, response: JSON.stringify(response) });
 
   // Best-effort notifications — an email hiccup shouldn't block the guest's RSVP from saving.
-  const events = resolveEvents(await getSiteSettings(env.DB));
+  // The alert to the couple can be switched off in Settings to save on the
+  // relay's daily Gmail allowance; the guest's own confirmation always goes.
+  const settings = await getSiteSettings(env.DB);
+  const events = resolveEvents(settings);
+  const updated = !!row.response;
   await Promise.allSettled([
-    sendEmail(env, { to: contactEmail, subject: `RSVP confirmed — ${record.householdName}`, html: renderGuestConfirmationEmail(record, events) }),
-    env.ADMIN_NOTIFY_EMAIL
-      ? sendEmail(env, { to: env.ADMIN_NOTIFY_EMAIL, subject: `New RSVP from ${record.householdName}`, html: renderAdminNotifyEmail(record, events) })
+    sendEmail(env, { to: contactEmail, subject: `RSVP confirmed — ${record.householdName}`, html: renderGuestConfirmationEmail(record, events, { deadlines: settings.deadlines, updated }) }),
+    env.ADMIN_NOTIFY_EMAIL && settings.notifications.rsvpAlerts
+      ? sendEmail(env, { to: env.ADMIN_NOTIFY_EMAIL, subject: `${updated ? "Updated" : "New"} RSVP from ${record.householdName}`, html: renderAdminNotifyEmail(record, events, { updated }) })
       : Promise.resolve()
   ]);
 

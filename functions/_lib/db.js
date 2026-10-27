@@ -100,24 +100,27 @@ export function isSeatingRevealed(setting) {
 //   event_details_<eventId>  — JSON { name, date, time, timeZone, venue, address } overriding
 //                              that event's defaults in CONFIG.events (absent = use the defaults)
 //   guest_info_items         — JSON [{ title, body }], the Details page items (absent = CONFIG.details)
+//   admin_rsvp_alerts        — 'off' stops the "New RSVP" email to ADMIN_NOTIFY_EMAIL (absent = on)
 // An absent row means "not set". See design.md §11.
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export async function getSiteSettings(db) {
   const { results } = await db.prepare(
-    "SELECT key, value FROM app_settings WHERE key LIKE 'rsvp_deadline_%' OR key LIKE 'event_capacity_%' OR key LIKE 'announcement_%' OR key LIKE 'event_details_%' OR key = 'guest_info_items'"
+    "SELECT key, value FROM app_settings WHERE key LIKE 'rsvp_deadline_%' OR key LIKE 'event_capacity_%' OR key LIKE 'announcement_%' OR key LIKE 'event_details_%' OR key = 'guest_info_items' OR key = 'admin_rsvp_alerts'"
   ).all();
   const deadlines = {}, capacities = {}, announcement = { message: "", until: "" }, events = {};
   let guestInfo = null;
+  const notifications = { rsvpAlerts: true };
   for (const { key, value } of results) {
     if (key.startsWith("rsvp_deadline_") && DATE_RE.test(value || "")) deadlines[key.slice("rsvp_deadline_".length)] = value;
     if (key.startsWith("event_capacity_") && value != null && value !== "") capacities[key.slice("event_capacity_".length)] = Number(value);
     if (key === "announcement_message") announcement.message = value || "";
     if (key === "announcement_until" && DATE_RE.test(value || "")) announcement.until = value;
     if (key.startsWith("event_details_")) { try { events[key.slice("event_details_".length)] = JSON.parse(value); } catch { /* ignore a corrupt row */ } }
+    if (key === "admin_rsvp_alerts") notifications.rsvpAlerts = value !== "off";
     if (key === "guest_info_items") { try { guestInfo = JSON.parse(value); } catch { /* ignore */ } }
   }
-  return { deadlines, capacities, announcement, events, guestInfo };
+  return { deadlines, capacities, announcement, events, guestInfo, notifications };
 }
 
 // Effective { id: { name, timeZone } } for emails: the admin's saved values over the code defaults.
@@ -125,7 +128,7 @@ export function resolveEvents(settings) {
   return Object.fromEntries(EVENTS.map(e => [e.id, { ...e, ...(settings.events?.[e.id] || {}) }]));
 }
 
-// The subset guests are allowed to see — capacities stay admin-only.
+// The subset guests are allowed to see — capacities and notifications stay admin-only.
 export async function getGuestSiteSettings(db) {
   const { deadlines, announcement, events, guestInfo } = await getSiteSettings(db);
   return { deadlines, announcement, events, guestInfo };

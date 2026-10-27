@@ -4,6 +4,52 @@ Notable changes to the RSVP app, newest first. See `plan.md`/`design.md` for the
 broader feature history (v1 → v3); this file tracks discrete fixes and changes
 made along the way.
 
+## 2026-10-28 — Redesigned emails, RSVP alert switch & emails-left-today
+
+**Emails:** all four emails now match the site, built with tables and inline
+styles so they display correctly in email apps.
+- **Guest emails (confirmation, update, reminder):**
+  - **Header:** a dark green "Daniel & Faith" band.
+  - **Body:** a cream card, with a "To {household}" line instead of "Hi …,". That
+    stops the double greeting when an update begins "Hi everyone!".
+  - **Personal invitation:** each has a button to the household's own invitation,
+    plus a backup link.
+  - **Sign-off:** "With love".
+- **The confirmation** groups answers by event (attending / can't make it) and
+  includes dietary notes.
+  - It no longer repeats the guest's own message back to them.
+  - It has a gentler opening line when no one in the household is coming.
+  - It reads "Thanks for updating your RSVP" on a change.
+- **The admin alert** shows the headcount per event and a row per person with
+  ticks and dietary needs, plus the message, tap-to-email and tap-to-call links,
+  and the invite code. Its subject says "Updated RSVP" when a household changes
+  their answers.
+- **No QR codes in emails,** by choice: most guests read email on the phone
+  they'd need to scan with.
+
+**Settings → Email notifications:**
+- **Alert switch:** turns the "New RSVP" email to `ADMIN_NOTIFY_EMAIL` on or off,
+  to save the daily Gmail allowance. It's stored as `admin_rsvp_alerts` = `off`;
+  on is the default. Guests always get their confirmation.
+- **Emails left today:** the count comes from the relay through the new
+  `email-status` admin action. It's also shown as a badge on the Email guests
+  panel, and the "too many recipients" warning now uses the real number.
+
+**Needs a relay redeploy:** `apps-script/Code.gs` gains an `action: "quota"`
+request, answered with `MailApp.getRemainingDailyQuota()`. Until the Apps Script
+is updated (Manage deployments → edit → New version, which keeps the same URL),
+Settings shows "relay needs updating". Sending email keeps working either way.
+
+**Files:**
+- `functions/_lib/templates.js`
+- `functions/_lib/email.js` (`getEmailQuota`)
+- `functions/_lib/db.js`
+- `functions/api/rsvp.js`
+- `functions/api/admin.js`
+- `apps-script/Code.gs`
+- `src/App.jsx` (`NotificationSettings`, `EmailGuestsPanel`)
+- `README.md`
+
 ## 2026-10-19 — Fix: 2D seat counter drawn over the bottom chair
 
 **Issue:** found while reviewing issue #2. In the admin seat map (and the

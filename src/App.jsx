@@ -577,6 +577,25 @@ const CSS = `
 .segmented button.on{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(32,43,34,.15);}
 select.settings-input{-webkit-appearance:auto;appearance:auto;}
 .email-summary{font-size:13.5px;margin-top:8px;color:var(--ink-soft);}
+.email-panel-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:12px;}
+.email-panel-head h3{margin:0;}
+.email-quota{font-size:12px;font-weight:600;color:var(--sage-dark);background:#E4EBDF;border-radius:10px;padding:2px 9px;white-space:nowrap;}
+.email-quota.low{color:var(--error);background:#F4E2DE;}
+/* Admin: Settings → Email notifications */
+.switch-row{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;}
+.switch-text{flex:1;min-width:0;margin:0;cursor:pointer;}
+.switch-title{display:block;font-size:15px;font-weight:600;color:var(--ink);}
+.switch{flex:none;-webkit-appearance:none;appearance:none;position:relative;width:52px;height:30px;margin:2px 0 0;border-radius:15px;background:#CFCBC2;cursor:pointer;transition:background .2s;}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .2s;}
+.switch:checked{background:var(--sage);}
+.switch:checked::after{transform:translateX(22px);}
+.switch:focus-visible{outline:2px solid var(--sage);outline-offset:2px;}
+@media(prefers-reduced-motion:reduce){.switch,.switch::after{transition:none;}}
+.email-quota-row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-top:16px;padding-top:14px;border-top:1px solid var(--gold-soft);font-size:13.5px;color:var(--ink-soft);}
+.email-quota-row strong{color:var(--ink);text-align:right;font-weight:600;}
+.email-quota-row strong.low{color:var(--error);}
+.email-quota-row.msg{flex-direction:column;gap:4px;}
+.email-quota-row.msg strong{text-align:left;font-weight:500;color:var(--ink-soft);}
 .email-summary strong{color:var(--ink);}
 .email-skipped{font-size:13px;margin-top:6px;color:var(--ink-soft);}
 .email-skipped summary{cursor:pointer;color:var(--sage-dark);text-decoration:underline;min-height:32px;display:flex;align-items:center;}
@@ -1391,9 +1410,14 @@ function EmailSendStatus({ state, actions, retryPayload }) {
 
 function EmailGuestsPanel({ state, actions }) {
   const reminder = state.emailKind === "reminder";
+  useEffect(() => { actions.loadEmailStatus(); }, []);
+  const left = state.emailStatus?.remaining;
   return (
     <div className="row-card email-panel">
-      <h3>Email guests</h3>
+      <div className="email-panel-head">
+        <h3>Email guests</h3>
+        {Number.isFinite(left) && <span className={`email-quota ${left < 10 ? "low" : ""}`}>{left} email{left === 1 ? "" : "s"} left today</span>}
+      </div>
       <div className="segmented" role="tablist" aria-label="Email type">
         <button role="tab" aria-selected={!reminder} className={!reminder ? "on" : ""} disabled={state.emailSending}
           onClick={() => actions.patch({ emailKind: "update", emailResult: null })}>Update</button>
@@ -1405,7 +1429,9 @@ function EmailGuestsPanel({ state, actions }) {
   );
 }
 
-function AudienceSummary({ withEmail, noEmail, skippedLabel = "no email" }) {
+function AudienceSummary({ state, withEmail, noEmail, skippedLabel = "no email" }) {
+  const left = state.emailStatus?.remaining;
+  const known = Number.isFinite(left);
   return (
     <>
       <div className="email-summary">
@@ -1418,7 +1444,9 @@ function AudienceSummary({ withEmail, noEmail, skippedLabel = "no email" }) {
           <ul className="email-list">{noEmail.map(([code, r]) => <li key={code}>{r.householdName}</li>)}</ul>
         </details>
       )}
-      {withEmail.length > GMAIL_DAILY_LIMIT && (
+      {known ? withEmail.length > left && (
+        <div className="settings-warn">Gmail can only send {left} more email{left === 1 ? "" : "s"} today — {withEmail.length - left} of these won't go through. Use "Retry" tomorrow for any that don't.</div>
+      ) : withEmail.length > GMAIL_DAILY_LIMIT && (
         <div className="settings-warn">Gmail only sends to about {GMAIL_DAILY_LIMIT} people a day — some of these may fail. Use "Retry" tomorrow for any that do.</div>
       )}
     </>
@@ -1446,7 +1474,7 @@ function ReminderEmailForm({ state, actions }) {
           onChange={e => actions.patch({ reminderAudience: e.target.value, emailResult: null })}>
           {audiences.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
         </select>
-        <AudienceSummary withEmail={withEmail} noEmail={noEmail} />
+        <AudienceSummary state={state} withEmail={withEmail} noEmail={noEmail} />
       </div>
       <div className="field">
         <label htmlFor="reminder-subject">Subject</label>
@@ -1486,7 +1514,7 @@ function UpdateEmailForm({ state, actions }) {
           onChange={e => actions.patch({ emailAudience: e.target.value, emailResult: null })}>
           {audiences.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
         </select>
-        <AudienceSummary withEmail={withEmail} noEmail={noEmail} />
+        <AudienceSummary state={state} withEmail={withEmail} noEmail={noEmail} />
       </div>
       <div className="field">
         <label htmlFor="email-subject">Subject</label>
@@ -2451,7 +2479,7 @@ function savedCapacityStr(site, id) { return site.capacities?.[id] != null ? Str
 function AdminSettings({ state, actions }) {
   const [open, setOpen] = useState("events");
   const toggle = id => () => setOpen(o => (o === id ? null : id));
-  const { deadlines, capacities, announcement, events, guestInfo } = state.siteSettings;
+  const { deadlines, capacities, announcement, events, guestInfo, notifications } = state.siteSettings;
   return (
     <div className="settings-page">
       <div className="settings-intro">
@@ -2462,6 +2490,7 @@ function AdminSettings({ state, actions }) {
       <DeadlineSettings key={JSON.stringify([deadlines, capacities])} state={state} actions={actions} open={open === "deadlines"} onToggle={toggle("deadlines")} />
       <AnnouncementSettings key={JSON.stringify(announcement)} state={state} actions={actions} open={open === "announcement"} onToggle={toggle("announcement")} />
       <GuestInfoSettings key={JSON.stringify(guestInfo)} state={state} actions={actions} open={open === "info"} onToggle={toggle("info")} />
+      <NotificationSettings key={JSON.stringify(notifications)} state={state} actions={actions} open={open === "email"} onToggle={toggle("email")} />
     </div>
   );
 }
@@ -2472,6 +2501,7 @@ const SETTINGS_ICONS = {
   deadlines: <svg {...SETTINGS_ICON_PROPS}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>,
   announcement: <svg {...SETTINGS_ICON_PROPS}><path d="M3 11v2a1 1 0 0 0 1 1h3l5 4V6L7 10H4a1 1 0 0 0-1 1z" /><path d="M16 9a4 4 0 0 1 0 6" /></svg>,
   info: <svg {...SETTINGS_ICON_PROPS}><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7.5v.5" /></svg>,
+  email: <svg {...SETTINGS_ICON_PROPS}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></svg>,
 };
 
 function SettingsAccordion({ id, title, summary, open, onToggle, dirty, children }) {
@@ -2649,6 +2679,54 @@ function GuestInfoSettings({ state, actions, open, onToggle }) {
       <div className={`settings-actions ${dirty ? "dirty" : ""}`}>
         <button className="btn btn-primary" disabled={state.loading || !dirty || missingTitle} onClick={() => actions.saveSettings({ guestInfo: clean })}>
           {state.loading ? <><span className="spinner" />Saving…</> : !dirty ? "Guest information saved" : missingTitle ? "Every item needs a title" : "Save guest information"}
+        </button>
+      </div>
+    </SettingsAccordion>
+  );
+}
+
+function NotificationSettings({ state, actions, open, onToggle }) {
+  const saved = state.siteSettings.notifications?.rsvpAlerts !== false;
+  const [alerts, setAlerts] = useState(saved);
+  const dirty = alerts !== saved;
+  // Ask the relay for today's count each time the section is opened.
+  useEffect(() => { if (open) actions.loadEmailStatus(); }, [open]);
+  const st = state.emailStatus;
+  const left = st?.remaining;
+  const quotaText = !st ? "Checking…"
+    : Number.isFinite(left) ? `${left} of about ${GMAIL_DAILY_LIMIT}`
+    : st.reason === "relay-outdated" ? "Not available yet — the Google Apps Script relay needs updating (see README)."
+    : st.reason === "not-configured" ? "Not available — the email relay isn't set up."
+    : "Couldn't check right now — try again later.";
+  const summary = `New RSVP alerts: ${saved ? "On" : "Off"}${Number.isFinite(left) ? ` · ${left} email${left === 1 ? "" : "s"} left today` : ""}`;
+  return (
+    <SettingsAccordion id="email" title="Email notifications" summary={summary} open={open} onToggle={onToggle} dirty={dirty}>
+      <p className="settings-help">
+        Every email the site sends (RSVP confirmations, your alerts, updates and reminders) comes out of the same Gmail
+        allowance of about {GMAIL_DAILY_LIMIT} a day, which resets daily.
+      </p>
+      <div className="settings-card">
+        <div className="switch-row">
+          <label className="switch-text" htmlFor="rsvp-alerts">
+            <span className="switch-title">Email me when a guest RSVPs</span>
+            <span className="helptext" style={{ marginTop: 3 }}>
+              Sends a summary to {st?.notifyEmail ? <strong>{st.notifyEmail}</strong> : "your notification email"} each time a household replies or
+              changes their answers. Guests always get their own confirmation either way.
+            </span>
+          </label>
+          <input id="rsvp-alerts" type="checkbox" role="switch" className="switch" checked={alerts} onChange={e => setAlerts(e.target.checked)} />
+        </div>
+        {!alerts && <div className="helptext" style={{ marginTop: 10 }}>With alerts off, new replies still show in the Guest list straight away.</div>}
+        {st && !st.notifyEmail && alerts && <div className="settings-warn">No notification email is set up (ADMIN_NOTIFY_EMAIL), so alerts aren't being sent.</div>}
+        <div className={`email-quota-row ${Number.isFinite(left) || !st ? "" : "msg"}`}>
+          <span>Emails left today</span>
+          <strong className={Number.isFinite(left) && left < 10 ? "low" : ""}>{quotaText}</strong>
+        </div>
+      </div>
+      <div className={`settings-actions ${dirty ? "dirty" : ""}`}>
+        <button className="btn btn-primary" disabled={state.loading || !dirty}
+          onClick={() => actions.saveSettings({ notifications: { rsvpAlerts: alerts } })}>
+          {state.loading ? <><span className="spinner" />Saving…</> : dirty ? (alerts ? "Turn alerts on" : "Turn alerts off") : "Saved"}
         </button>
       </div>
     </SettingsAccordion>
@@ -2856,6 +2934,7 @@ export default function App() {
     editingCode: null,
     // admin: email guests (see EmailGuestsPanel)
     emailKind: "update", // update | reminder
+    emailStatus: null, // { notifyEmail, remaining, reason } from "email-status" (see loadEmailStatus)
     emailAudience: "all",
     reminderAudience: "not-replied",
     reminderSubject: "A friendly reminder to RSVP",
@@ -3274,6 +3353,16 @@ export default function App() {
   }
 
   /* ---------- admin: email guests ---------- */
+  // How many emails Gmail will still send today (asked of the Apps Script
+  // relay) and where RSVP alerts go. Best-effort: a failure just hides the count.
+  async function loadEmailStatus() {
+    try {
+      patch({ emailStatus: await apiAdmin(state.adminPassword, "email-status") });
+    } catch (e) {
+      patch({ emailStatus: { notifyEmail: "", remaining: null, reason: "unavailable" } });
+    }
+  }
+
   // Sends in batches of EMAIL_BATCH_SIZE households per request (the server
   // caps it), updating a progress bar between batches. A failed batch marks
   // just its own households as failed, so the rest still go out.
@@ -3297,6 +3386,7 @@ export default function App() {
     const failed = results.filter(r => r.status !== "sent");
     patch({ emailSending: false, emailProgress: null, emailResult: { sent, failed }, ...(failed.length === 0 && payload.kind === "update" ? { emailSubject: "", emailMessage: "" } : {}) });
     showToast(`Sent to ${sent} household${sent === 1 ? "" : "s"}${failed.length ? `, ${failed.length} didn't go through` : ""}.`);
+    loadEmailStatus();
   }
 
   function previewInvite(code) {
@@ -3347,7 +3437,7 @@ export default function App() {
     startGuestForm, updateDraft, updateMember, toggleAttend, toggleDiet, addExtraGuest, removeExtraGuest, validateGuestStep1, submitGuestRSVP,
     submitAdminLogin, refreshAdmin, exitToPublic,
     startAddHousehold, startEditHousehold, cancelHouseholdDraft, updateHouseholdField, updateHMemberName, addHMember, removeHMember, toggleHEvent, saveHousehold, deleteHousehold,
-    sendGuestEmails,
+    sendGuestEmails, loadEmailStatus,
     previewInvite, exitPreview, toggleRow, copyLink, exportCSV,
     loadSeating, selectTable, deselectTable, updateTableDraftField, addTable, saveTableDraft, deleteTable, moveTable, armGuest, assignSeat,
     selectObject, deselectObject, updateObjectDraftField, addObject, saveObjectDraft, deleteObject, moveObject,

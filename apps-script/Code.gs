@@ -8,6 +8,10 @@
  * match the Pages secret EMAIL_SHARED_SECRET (use a long random string for both).
  *
  * Free quota: 100 emails/day on a personal Gmail account (higher on Workspace).
+ *
+ * Updating this file later: paste the new code, then Deploy > Manage deployments >
+ * edit (pencil) the existing deployment > Version: "New version" > Deploy. That
+ * keeps the same /exec URL, so EMAIL_WEBAPP_URL doesn't need to change.
  */
 
 const SHARED_SECRET = "REPLACE_WITH_A_LONG_RANDOM_STRING";
@@ -24,6 +28,13 @@ function doPost(e) {
   if (!body.secret || body.secret !== SHARED_SECRET) {
     return ContentService.createTextOutput("Unauthorized").setMimeType(ContentService.MimeType.TEXT);
   }
+  // Quota check for the admin Settings page: how many more emails Gmail will
+  // send today. Sends nothing.
+  if (body.action === "quota") {
+    return ContentService.createTextOutput(JSON.stringify({ remaining: MailApp.getRemainingDailyQuota() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
   if (!body.to || !body.subject || !body.html) {
     return ContentService.createTextOutput("Missing to/subject/html").setMimeType(ContentService.MimeType.TEXT);
   }
