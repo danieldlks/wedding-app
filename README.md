@@ -42,6 +42,9 @@ architecture rationale.
    - Replace `SHARED_SECRET` with a long random string (e.g. `openssl rand -hex 32`).
    - Deploy → New deployment → type **Web app** → Execute as **Me** → Who has access
      **Anyone** → Deploy. Copy the `/exec` URL it gives you.
+   - When `Code.gs` changes later, paste the new code, then Deploy → **Manage
+     deployments** → edit (pencil) the existing deployment → Version **New version**
+     → Deploy. This keeps the same `/exec` URL, so no secret needs changing.
 
 4. **Secrets** — set these for the deployed Pages project:
    ```
@@ -93,6 +96,8 @@ This builds the frontend (`vite build` → `dist/`) and uploads it, along with
 - Admin dashboard: the small "Admin" link bottom-right of the guest-facing pages.
   The password is checked server-side (`functions/api/admin.js`) — it is never
   shipped in the client bundle.
-- Emails (guest confirmation, admin notify-on-RSVP, admin broadcast updates) send
-  via the Gmail account behind the Apps Script deployment. Free quota is 100
-  emails/day on a personal Gmail account.
+- Emails (guest confirmation, admin notify-on-RSVP, admin broadcast updates and
+  reminders) send via the Gmail account behind the Apps Script deployment. Free
+  quota is 100 emails/day on a personal Gmail account. Admin → Settings → Email
+  notifications shows how many are left today and can switch off the
+  notify-on-RSVP alert to save quota (guests still get their confirmation).

@@ -1,6 +1,6 @@
 import { rowToRecord, genId, genInviteCode, listAllRecords, listSeating, getSiteSettings, putSetting, isValidDate, resolveEvents } from "../_lib/db.js";
 import { isValidTimeZone } from "../_lib/time.js";
-import { sendEmail } from "../_lib/email.js";
+import { sendEmail, getEmailQuota } from "../_lib/email.js";
 import { renderUpdateEmail, renderReminderEmail, recipientFor } from "../_lib/templates.js";
 import { ADMIN_HOSTS, EVENTS } from "../_lib/config.js";
 
@@ -122,6 +122,9 @@ export async function onRequestPost({ request, env }) {
         if (until && !isValidDate(until)) return new Response("Invalid announcement end date", { status: 400 });
         writes.push(["announcement_message", message], ["announcement_until", message ? until : ""]);
       }
+      if (payload?.notifications && "rsvpAlerts" in payload.notifications) {
+        writes.push(["admin_rsvp_alerts", payload.notifications.rsvpAlerts ? "" : "off"]);
+      }
       for (const [key, value] of writes) await putSetting(env.DB, key, value);
       return Response.json(await getSiteSettings(env.DB));
     }
@@ -175,6 +178,12 @@ export async function onRequestPost({ request, env }) {
       return Response.json(await listSeating(env.DB));
     }
 
+    case "email-status":
+      // For Settings and the Email guests panel: where RSVP alerts go, and how
+      // many emails the Gmail relay can still send today (null if the relay is
+      // an older version without the quota check, or unreachable).
+      return Response.json({ notifyEmail: env.ADMIN_NOTIFY_EMAIL || "", ...(await getEmailQuota(env)) });
+
     case "send-emails": {
       // One small batch per request. The admin page splits the recipient list
       // and calls this repeatedly (showing progress), because a Pages Function
@@ -186,7 +195,7 @@ export async function onRequestPost({ request, env }) {
       const message = String(payload?.message || "").trim();
       if (!subject || subject.length > 200) return new Response("Subject is required (max 200 characters)", { status: 400 });
       if (!message || message.length > 5000) return new Response("Message is required (max 5000 characters)", { status: 400 });
-      return Response.json({ results: await sendEmailBatch(env, codes, record => ({ subject, html: renderUpdateEmail(record, message) })) });
+      return Response.json({ results: await sendEmailBatch(env, codes, record => ({ subject, html: renderUpdateEmail(record, subject, message) })) });
     }
 
     case "send-reminders": {

@@ -15,3 +15,24 @@ export async function sendEmail(env, { to, subject, html }) {
   const text = await res.text();
   if (!res.ok || text.trim() !== "OK") throw new Error(`Email send failed: ${res.status} ${text.slice(0, 200)}`);
 }
+
+// Asks the relay how many more emails Gmail will send today
+// (MailApp.getRemainingDailyQuota). Relays deployed before this check existed
+// answer "Missing to/subject/html", reported as { remaining: null, reason: "relay-outdated" }.
+export async function getEmailQuota(env) {
+  if (!env.EMAIL_WEBAPP_URL || !env.EMAIL_SHARED_SECRET) return { remaining: null, reason: "not-configured" };
+  try {
+    const res = await fetch(env.EMAIL_WEBAPP_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ secret: env.EMAIL_SHARED_SECRET, action: "quota" })
+    });
+    const text = (await res.text()).trim();
+    let data = null;
+    try { data = JSON.parse(text); } catch { /* not JSON: an older relay or an error page */ }
+    if (data && Number.isFinite(data.remaining)) return { remaining: data.remaining };
+    return { remaining: null, reason: text.startsWith("Missing to/subject/html") ? "relay-outdated" : "unavailable" };
+  } catch {
+    return { remaining: null, reason: "unavailable" };
+  }
+}
