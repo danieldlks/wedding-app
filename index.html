@@ -2,9 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover lets the page draw edge to edge on notched / Dynamic Island
+         iPhones; the app pads itself with env(safe-area-inset-*) (see .rsvp-root in App.jsx). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <!-- Colours the phone's status/address bar to match the site's dark header band. -->
     <meta name="theme-color" content="#202B22" />
+    <!-- Added to the iPhone Home Screen: open full screen, with white status-bar text
+         over the app's own dark green strip behind the clock and Dynamic Island. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Daniel &amp; Faith" />
     <!-- Page-level reset, inline so it applies before the app's JS loads: removes the
          browser's default 8px body margin (the white frame around every page) and
          paints the area behind the app, including iOS/Android overscroll, in the site's
