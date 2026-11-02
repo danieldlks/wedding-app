@@ -77,7 +77,7 @@ export async function listSeating(db) {
   const reveal = await getSeatingRevealSetting(db);
   return {
     tables: tableRows.map(rowToTable), assignments, objects: objectRows.map(rowToFloorObject),
-    revealMode: reveal.mode, revealAt: reveal.revealAt, chairColor: await getChairColor(db)
+    revealMode: reveal.mode, revealAt: reveal.revealAt, chairColor: await getChairColor(db), room: await getRoom(db)
   };
 }
 
@@ -85,6 +85,13 @@ export async function listSeating(db) {
 export async function getChairColor(db) {
   const row = await db.prepare("SELECT value FROM app_settings WHERE key = 'chair_color'").first();
   return isHexColor(row?.value) ? row.value : null;
+}
+
+// The room's size in floor-plan units (50 = 1 m); null = the default 1000 × 700 (20 m × 14 m).
+export async function getRoom(db) {
+  const { results } = await db.prepare("SELECT key, value FROM app_settings WHERE key IN ('room_width', 'room_depth')").all();
+  const m = Object.fromEntries(results.map(r => [r.key, Number(r.value)]));
+  return m.room_width > 0 && m.room_depth > 0 ? { w: m.room_width, h: m.room_depth } : null;
 }
 
 export function isHexColor(v) { return typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v); }

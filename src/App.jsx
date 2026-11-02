@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, lazy, Suspense } from "react";
-import { SEAT_LW, SEAT_LH, clamp, tableDims, triangleVertices, getSeatPositionsLocal, tableAngle, featureDims, featureAngle, isLineObject, textColorOn, FLOOR_COLORS, CHAIR_COLORS, DEFAULT_CHAIR_COLOR } from "./seatingGeometry.js";
+import { DEFAULT_ROOM, roomOf, metres, layoutExtent, layoutBounds, snapUpHalfM, snapDownHalfM, UNITS_PER_M, ROOM_MIN, ROOM_MAX, clamp, tableDims, triangleVertices, getSeatPositionsLocal, tableAngle, featureDims, featureAngle, isLineObject, textColorOn, FLOOR_COLORS, CHAIR_COLORS, DEFAULT_CHAIR_COLOR } from "./seatingGeometry.js";
 // The 3D venue view (and three.js) is split into its own file and only
 // downloaded the first time someone switches to 3D.
 const FloorPlan3D = lazy(() => import("./FloorPlan3D.jsx"));
@@ -521,6 +521,15 @@ const CSS = `
 .chip-btn{border:1px solid var(--gold-soft);background:#fff;border-radius:18px;min-height:36px;padding:0 13px;font-size:13px;font-weight:600;color:var(--ink);}
 .rotate-value{min-width:42px;text-align:center;font-weight:600;font-size:14px;}
 .apply-all{margin-top:8px;font-size:13px;}
+.room-size{margin:0 0 12px;}
+.room-size-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;}
+.room-size-value{font-size:15px;font-weight:600;}
+.room-size-tip{flex-basis:100%;margin:0;}
+.room-size-form{background:#fff;border:1px solid var(--gold-soft);padding:14px 16px;margin-top:10px;max-width:520px;}
+.room-size-fields{display:flex;align-items:flex-end;gap:10px;}
+.room-size-fields .field{flex:1;margin-bottom:8px;}
+.room-size-x{padding-bottom:22px;font-weight:600;color:var(--ink-soft);}
+.room-notice{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin-top:8px;padding:9px 14px;background:#E4EBDF;border-radius:10px;font-size:13.5px;font-weight:500;color:var(--sage-dark);}
 .room-style{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin:0 0 12px;}
 .room-style-label{font-size:12px;letter-spacing:.08em;text-transform:uppercase;font-weight:600;color:var(--ink-soft);}
 .table-editor-panel h4{margin:0 0 14px;font-family:var(--display);font-size:18px;}
@@ -1003,7 +1012,7 @@ function GuestSeating({ state, actions }) {
 
   useEffect(() => {
     if (seating && myTables.length > 0 && !fitted) {
-      setTransform(fitSeatTransform(myTables));
+      setTransform(fitSeatTransform(myTables, seating.room));
       setFitted(true);
     }
   }, [seating, fitted]);
@@ -1045,11 +1054,11 @@ function GuestSeating({ state, actions }) {
           </div>
           {view === "map" ? (
             <div className="seating-canvas-wrap">
-              <SeatingCanvas tables={seating.tables} objects={seating.objects} chairColor={seating.chairColor} highlightColors={highlightColors} highlightSeatIndices={highlightSeatIndices} dimOthers viewTransform={transform} onViewTransformChange={setTransform} />
+              <SeatingCanvas tables={seating.tables} objects={seating.objects} chairColor={seating.chairColor} room={seating.room} highlightColors={highlightColors} highlightSeatIndices={highlightSeatIndices} dimOthers viewTransform={transform} onViewTransformChange={setTransform} />
               <div className="zoom-controls">
-                <button onClick={() => setTransform(t => zoomSeatTransform(t, 1.25))} aria-label="Zoom in">+</button>
-                <button onClick={() => setTransform(t => zoomSeatTransform(t, 1 / 1.25))} aria-label="Zoom out">−</button>
-                <button onClick={() => setTransform(fitSeatTransform(myTables))} aria-label="Recenter">⦿</button>
+                <button onClick={() => setTransform(t => zoomSeatTransform(t, 1.25, seating.room))} aria-label="Zoom in">+</button>
+                <button onClick={() => setTransform(t => zoomSeatTransform(t, 1 / 1.25, seating.room))} aria-label="Zoom out">−</button>
+                <button onClick={() => setTransform(fitSeatTransform(myTables, seating.room))} aria-label="Recenter">⦿</button>
               </div>
             </div>
           ) : (
@@ -1060,6 +1069,8 @@ function GuestSeating({ state, actions }) {
                   tables={seating.tables}
                   objects={seating.objects}
                   chairColor={seating.chairColor}
+                  room={seating.room}
+                  key={seating.room ? `${seating.room.w}x${seating.room.h}` : "room"}
                   focusTableId={sortedTableIds[0] || null}
                   focusColor={highlightColors[sortedTableIds[0]]}
                   seatMarkers={seatMarkers}
@@ -1690,12 +1701,12 @@ function roundRectPath(ctx, x, y, w, h, r) {
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
 }
-function seatToLogical(e, canvas) {
+function seatToLogical(e, canvas, room = DEFAULT_ROOM) {
   const rect = canvas.getBoundingClientRect();
   const evt = e.touches && e.touches[0] ? e.touches[0] : e;
   return {
-    x: (evt.clientX - rect.left) * (SEAT_LW / rect.width),
-    y: (evt.clientY - rect.top) * (SEAT_LH / rect.height)
+    x: (evt.clientX - rect.left) * (room.w / rect.width),
+    y: (evt.clientY - rect.top) * (room.h / rect.height)
   };
 }
 function hitTestTable(tables, x, y) {
@@ -1733,7 +1744,7 @@ const FLOOR_ITEM_NAMES = {
 
 // Returns null (no hit), "body" (move the whole shape), or for lines "p1"/"p2"
 // (drag just that endpoint) so a wall/barrier can be stretched, not just moved.
-function hitTestObject(o, x, y) {
+function hitTestObject(o, x, y, room) {
   if (isLineObject(o)) {
     if (Math.hypot(x - o.x, y - o.y) <= 10) return "p1";
     if (Math.hypot(x - o.x2, y - o.y2) <= 10) return "p2";
@@ -1742,7 +1753,7 @@ function hitTestObject(o, x, y) {
   const dx = x - o.x, dy = y - o.y;
   if (o.type === "fireplace" || o.type === "stairs") {
     // Rotate the point into the item's own frame, then test its w×d footprint.
-    const { w, d } = featureDims(o), a = featureAngle(o) - Math.PI / 2;
+    const { w, d } = featureDims(o), a = featureAngle(o, room) - Math.PI / 2;
     const lx = dx * Math.cos(-a) - dy * Math.sin(-a), ly = dx * Math.sin(-a) + dy * Math.cos(-a);
     return Math.abs(lx) <= w / 2 && Math.abs(ly) <= d / 2 ? "body" : null;
   }
@@ -1750,14 +1761,15 @@ function hitTestObject(o, x, y) {
   if (o.type === "triangle") return pointInTriangle(x, y, triangleVertices(o)) ? "body" : null;
   return Math.abs(dx) <= o.size / 2 && Math.abs(dy) <= o.size / 2 ? "body" : null; // rect
 }
-function hitTestObjects(objects, x, y) {
+function hitTestObjects(objects, x, y, room) {
   for (let i = objects.length - 1; i >= 0; i--) {
-    const handle = hitTestObject(objects[i], x, y);
+    const handle = hitTestObject(objects[i], x, y, room);
     if (handle) return { object: objects[i], handle };
   }
   return null;
 }
-function fitSeatTransform(tables) {
+function fitSeatTransform(tables, room = DEFAULT_ROOM) {
+  const { w: RW, h: RH } = roomOf(room);
   if (!tables.length) return { panX: 0, panY: 0, zoom: 1 };
   const pad = 70;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -1768,15 +1780,16 @@ function fitSeatTransform(tables) {
   });
   minX -= pad; minY -= pad; maxX += pad; maxY += pad;
   const boxW = Math.max(1, maxX - minX), boxH = Math.max(1, maxY - minY);
-  const zoom = clamp(Math.min(SEAT_LW / boxW, SEAT_LH / boxH), 0.6, 2.5);
+  const zoom = clamp(Math.min(RW / boxW, RH / boxH), 0.6, 2.5);
   const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
-  return { zoom, panX: SEAT_LW / 2 - cx * zoom, panY: SEAT_LH / 2 - cy * zoom };
+  return { zoom, panX: RW / 2 - cx * zoom, panY: RH / 2 - cy * zoom };
 }
-function zoomSeatTransform(t, factor) {
+function zoomSeatTransform(t, factor, room = DEFAULT_ROOM) {
+  const { w: RW, h: RH } = roomOf(room);
   const zoom = clamp((t.zoom || 1) * factor, 0.5, 3);
-  const cx = (SEAT_LW / 2 - (t.panX || 0)) / (t.zoom || 1);
-  const cy = (SEAT_LH / 2 - (t.panY || 0)) / (t.zoom || 1);
-  return { zoom, panX: SEAT_LW / 2 - cx * zoom, panY: SEAT_LH / 2 - cy * zoom };
+  const cx = (RW / 2 - (t.panX || 0)) / (t.zoom || 1);
+  const cy = (RH / 2 - (t.panY || 0)) / (t.zoom || 1);
+  return { zoom, panX: RW / 2 - cx * zoom, panY: RH / 2 - cy * zoom };
 }
 
 // Draws one frame into an already-transformed ctx (translated/scaled to the
@@ -1785,8 +1798,10 @@ function zoomSeatTransform(t, factor) {
 function drawFloorPlan(ctx, opts) {
   const {
     tables, objects, editable, selectedTableId, selectedObjectId,
-    occupancy, occupiedSeats, highlightColors, highlightSeatIndices, zoom = 1, showGrid = true, dimOthers = false, chairColor = null
+    occupancy, occupiedSeats, highlightColors, highlightSeatIndices, zoom = 1, showGrid = true, dimOthers = false, chairColor = null,
+    room = DEFAULT_ROOM, showScale = false
   } = opts;
+  const { w: SEAT_LW, h: SEAT_LH } = roomOf(room);
 
   if (showGrid) {
     const dotGrid = new Path2D();
@@ -1803,6 +1818,16 @@ function drawFloorPlan(ctx, opts) {
   ctx.strokeStyle = "rgba(169,129,76,.4)";
   ctx.lineWidth = 2 / zoom;
   ctx.strokeRect(10, 10, SEAT_LW - 20, SEAT_LH - 20);
+  if (showScale) {
+    // A 5 m scale bar in the bottom-left corner (2 m in a small room).
+    const m = SEAT_LW >= 700 ? 5 : 2, len = m * UNITS_PER_M, x0 = 24, y0 = SEAT_LH - 24;
+    ctx.save();
+    ctx.strokeStyle = "rgba(74,81,72,.75)"; ctx.lineWidth = 2; ctx.beginPath();
+    ctx.moveTo(x0, y0 - 5); ctx.lineTo(x0, y0); ctx.lineTo(x0 + len, y0); ctx.lineTo(x0 + len, y0 - 5); ctx.stroke();
+    ctx.fillStyle = "rgba(74,81,72,.9)"; ctx.font = "600 11px 'Work Sans', sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+    ctx.fillText(`${m} m`, x0 + len / 2, y0 - 4);
+    ctx.restore();
+  }
 
   // Floor objects draw first (background layer) so tables visually sit on top of them.
   objects.forEach(o => {
@@ -1859,7 +1884,7 @@ function drawFloorPlan(ctx, opts) {
       }
     } else if (o.type === "fireplace" || o.type === "stairs") {
       // Rotated footprint drawings (see featureDims/featureAngle).
-      const { w, d } = featureDims(o), a = featureAngle(o);
+      const { w, d } = featureDims(o), a = featureAngle(o, room);
       ctx.translate(o.x, o.y); ctx.rotate(a - Math.PI / 2);
       if (o.type === "fireplace") {
         ctx.fillStyle = "#E4DDD0"; ctx.strokeStyle = isSelected ? "#6E7F63" : "#8F8576"; ctx.lineWidth = isSelected ? 3 : 1.5;
@@ -1992,8 +2017,9 @@ function drawFloorPlan(ctx, opts) {
 // something the couple can hand to a venue or caterer, so it deliberately
 // shows table capacity/occupancy (useful for a headcount) but not the grid
 // (a snap aid, not something a venue needs to see) or any selection state.
-function exportFloorPlanPNG(tables, objects, occupancy, title, chairColor = null) {
-  const scale = 1.6, margin = 40, titleH = 70;
+function exportFloorPlanPNG(tables, objects, occupancy, title, chairColor = null, room = DEFAULT_ROOM) {
+  const { w: SEAT_LW, h: SEAT_LH } = roomOf(room);
+  const scale = Math.min(1.6, 3200 / Math.max(SEAT_LW, SEAT_LH)), margin = 40, titleH = 70; // capped for very large rooms
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(SEAT_LW * scale + margin * 2);
   canvas.height = Math.round(SEAT_LH * scale + margin * 2 + titleH);
@@ -2009,7 +2035,7 @@ function exportFloorPlanPNG(tables, objects, occupancy, title, chairColor = null
   ctx.save();
   ctx.translate(margin, titleH + margin / 2);
   ctx.scale(scale, scale);
-  drawFloorPlan(ctx, { tables, objects, occupancy, zoom: scale, showGrid: false, chairColor });
+  drawFloorPlan(ctx, { tables, objects, occupancy, zoom: scale, showGrid: false, chairColor, room, showScale: true });
   ctx.restore();
 
   const a = document.createElement("a");
@@ -2020,33 +2046,113 @@ function exportFloorPlanPNG(tables, objects, occupancy, title, chairColor = null
   document.body.removeChild(a);
 }
 
+const ROOM_HANDLE = 22; // the corner resize handle's size, in plan units
+
+// Editor overlays for resizing the room: the bottom-right corner handle, the new edge while it's
+// dragged (a dashed outline when shrinking), and a "grows to …" banner when an item is dragged past
+// the edge or the room is being enlarged.
+function drawRoomResizeUI(ctx, room, roomDrag, growTo) {
+  const { w, h } = room;
+  ctx.save();
+  // corner handles: diagonal grip lines in rounded squares, bottom-right ◢ and top-left ◤
+  const handle = (hx, hy, flip, active) => {
+    ctx.fillStyle = active ? "#6E7F63" : "rgba(255,255,255,.95)"; ctx.strokeStyle = "#6E7F63"; ctx.lineWidth = 1.5;
+    roundRectPath(ctx, hx, hy, ROOM_HANDLE, ROOM_HANDLE, 5); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = active ? "#fff" : "#6E7F63"; ctx.lineWidth = 1.6; ctx.beginPath();
+    for (const k of [7, 13]) {
+      if (flip) { ctx.moveTo(hx + 4, hy + ROOM_HANDLE - k); ctx.lineTo(hx + ROOM_HANDLE - k, hy + 4); }
+      else { ctx.moveTo(hx + ROOM_HANDLE - 4, hy + k); ctx.lineTo(hx + k, hy + ROOM_HANDLE - 4); }
+    }
+    ctx.stroke();
+  };
+  handle(w - ROOM_HANDLE - 4, h - ROOM_HANDLE - 4, false, roomDrag?.corner === "br");
+  handle(4, 4, true, roomDrag?.corner === "tl");
+  const target = roomDrag || growTo;
+  if (target) {
+    const sx = target.shiftX || 0, sy = target.shiftY || 0;
+    // In today's coordinates the new room spans x -sx .. target.w - sx, y -sy .. target.h - sy.
+    const L = -sx, T = -sy, R = target.w - sx, Bm = target.h - sy;
+    ctx.setLineDash([8, 6]); ctx.strokeStyle = "#6E7F63"; ctx.lineWidth = 2.5;
+    if (R < w) { ctx.beginPath(); ctx.moveTo(R, Math.max(0, T)); ctx.lineTo(R, Math.min(h, Bm)); ctx.stroke(); }
+    if (Bm < h) { ctx.beginPath(); ctx.moveTo(Math.max(0, L), Bm); ctx.lineTo(Math.min(w, R), Bm); ctx.stroke(); }
+    if (L > 0) { ctx.beginPath(); ctx.moveTo(L, Math.max(0, T)); ctx.lineTo(L, Math.min(h, Bm)); ctx.stroke(); }
+    if (T > 0) { ctx.beginPath(); ctx.moveTo(Math.max(0, L), T); ctx.lineTo(Math.min(w, R), T); ctx.stroke(); }
+    ctx.setLineDash([]);
+    // edges that grow get a glow band
+    ctx.fillStyle = "rgba(110,127,99,.22)";
+    if (R > w) ctx.fillRect(w - 14, 0, 14, h);
+    if (Bm > h) ctx.fillRect(0, h - 14, w, 14);
+    if (L < 0) ctx.fillRect(0, 0, 14, h);
+    if (T < 0) ctx.fillRect(0, 0, w, 14);
+    const grow = target.w > w || target.h > h;
+    const label = `${grow && !roomDrag ? "Room grows to " : ""}${metres(target.w)} × ${metres(target.h)}`;
+    ctx.font = "600 15px 'Work Sans', sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const tw = ctx.measureText(label).width + 28, cx = w / 2, cy = 34;
+    ctx.fillStyle = "#202B22"; roundRectPath(ctx, cx - tw / 2, cy - 16, tw, 32, 16); ctx.fill();
+    ctx.fillStyle = "#FBF7EF"; ctx.fillText(label, cx, cy + 1);
+  }
+  ctx.restore();
+}
+
 function SeatingCanvas({
   tables, objects, editable, selectedTableId, onSelectTable, onDragTableEnd, occupancy,
   occupiedSeats, highlightColors, highlightSeatIndices, dimOthers, chairColor,
   selectedObjectId, onSelectObject, onObjectDragEnd,
-  viewTransform, onViewTransformChange
+  viewTransform, onViewTransformChange, room: roomProp, onResizeRoom
 }) {
+  const room = roomOf(roomProp);
+  const { w: SEAT_LW, h: SEAT_LH } = room;
   const canvasRef = useRef(null);
+  // Room resizing in the editor: dragging the corner handle, or dragging an item past the right/bottom
+  // edge (the room grows to fit it on release). `roomDrag` is the size being previewed while dragging.
+  const [roomDrag, setRoomDrag] = useState(null); // { w, h } | null
   const dragStartRef = useRef(null);
   const panStartRef = useRef(null);
   const [liveDrag, setLiveDrag] = useState(null); // { kind: "table"|"object", id, x, y, x2, y2 }
   const vtRef = useRef(viewTransform);
+  const roomRef = useRef(room);
+  roomRef.current = room;
   const cbRef = useRef(onViewTransformChange);
   vtRef.current = viewTransform;
   cbRef.current = onViewTransformChange;
 
   const objs = objects || [];
-  const effectiveTables = liveDrag?.kind === "table" ? tables.map(t => (t.id === liveDrag.id ? { ...t, x: liveDrag.x, y: liveDrag.y } : t)) : tables;
-  const effectiveObjects = liveDrag?.kind === "object"
+  const draggedTables = liveDrag?.kind === "table" ? tables.map(t => (t.id === liveDrag.id ? { ...t, x: liveDrag.x, y: liveDrag.y } : t)) : tables;
+  const draggedObjects = liveDrag?.kind === "object"
     ? objs.map(o => (o.id === liveDrag.id ? { ...o, ...(liveDrag.x != null && { x: liveDrag.x, y: liveDrag.y }), ...(liveDrag.x2 != null && { x2: liveDrag.x2, y2: liveDrag.y2 }) } : o))
     : objs;
+  // Dragged past the right/bottom edge: the room will grow to this size on release (never shrinks here).
+  // Only when the dragged item itself pokes out of the room — moving something that's merely near an
+  // edge must never resize the room.
+  // Past the left/top edge, the room grows on that side: everything shifts right/down by
+  // shiftX/shiftY (the plan's coordinates start at the top-left corner).
+  const growTo = editable && liveDrag && onResizeRoom ? (() => {
+    const item = liveDrag.kind === "table" ? draggedTables.filter(t => t.id === liveDrag.id) : [];
+    const itemObjs = liveDrag.kind === "object" ? draggedObjects.filter(o => o.id === liveDrag.id) : [];
+    const ib = layoutBounds(item, itemObjs);
+    const outR = snapUpHalfM(ib.maxX) > SEAT_LW, outB = snapUpHalfM(ib.maxY) > SEAT_LH, outL = ib.minX < 0, outT = ib.minY < 0;
+    if (!outR && !outB && !outL && !outT) return null;
+    const all = layoutBounds(draggedTables, draggedObjects);
+    const shiftX = outL ? snapUpHalfM(-all.minX + UNITS_PER_M) : 0, shiftY = outT ? snapUpHalfM(-all.minY + UNITS_PER_M) : 0;
+    const w = Math.min(ROOM_MAX, Math.max(SEAT_LW, outR ? snapUpHalfM(all.maxX + UNITS_PER_M) : SEAT_LW) + shiftX);
+    const h = Math.min(ROOM_MAX, Math.max(SEAT_LH, outB ? snapUpHalfM(all.maxY + UNITS_PER_M) : SEAT_LH) + shiftY);
+    return { w, h, shiftX, shiftY };
+  })() : null;
+  // Until release, an item past an edge is drawn pinned at that edge (the canvas can't show beyond it).
+  const pin = (x, y) => [clamp(x, 8, SEAT_LW - 8), clamp(y, 8, SEAT_LH - 8)];
+  const effectiveTables = liveDrag?.kind === "table" ? draggedTables.map(t => (t.id === liveDrag.id ? { ...t, ...(([x, y]) => ({ x, y }))(pin(t.x, t.y)) } : t)) : draggedTables;
+  const effectiveObjects = liveDrag?.kind === "object" ? draggedObjects.map(o => {
+    if (o.id !== liveDrag.id) return o;
+    const [x, y] = pin(o.x, o.y); const p2 = o.x2 != null ? pin(o.x2, o.y2) : [o.x2, o.y2];
+    return { ...o, x, y, x2: p2[0], y2: p2[1] };
+  }) : draggedObjects;
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || editable) return;
     const onWheel = e => {
       e.preventDefault();
-      const pt = seatToLogical(e, canvas);
+      const pt = seatToLogical(e, canvas, roomRef.current);
       const cur = vtRef.current || { panX: 0, panY: 0, zoom: 1 };
       const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
       const newZoom = clamp((cur.zoom || 1) * factor, 0.5, 3);
@@ -2062,6 +2168,7 @@ function SeatingCanvas({
     const canvas = canvasRef.current;
     if (!canvas) return;
     const dpr = window.devicePixelRatio || 1;
+    // The bitmap is the room's size (×dpr); CSS stretches it to the box's width, so a bigger room draws smaller.
     const targetW = Math.round(SEAT_LW * dpr), targetH = Math.round(SEAT_LH * dpr);
     if (canvas.width !== targetW || canvas.height !== targetH) { canvas.width = targetW; canvas.height = targetH; }
     const ctx = canvas.getContext("2d");
@@ -2080,15 +2187,28 @@ function SeatingCanvas({
     ctx.scale(zoom, zoom);
     drawFloorPlan(ctx, {
       tables: effectiveTables, objects: effectiveObjects, editable, selectedTableId, selectedObjectId,
-      occupancy: editable ? occupancy : null, occupiedSeats, highlightColors, highlightSeatIndices, zoom, dimOthers, chairColor
+      occupancy: editable ? occupancy : null, occupiedSeats, highlightColors, highlightSeatIndices, zoom, dimOthers, chairColor,
+      room, showScale: editable
     });
     ctx.restore();
-  }, [effectiveTables, effectiveObjects, editable, selectedTableId, selectedObjectId, occupancy, occupiedSeats, highlightColors, highlightSeatIndices, dimOthers, viewTransform, chairColor]);
+    if (editable && onResizeRoom) drawRoomResizeUI(ctx, room, roomDrag, growTo);
+  }, [effectiveTables, effectiveObjects, editable, selectedTableId, selectedObjectId, occupancy, occupiedSeats, highlightColors, highlightSeatIndices, dimOthers, viewTransform, chairColor, SEAT_LW, SEAT_LH, roomDrag, growTo?.w, growTo?.h, growTo?.shiftX, growTo?.shiftY]);
 
   function handlePointerDown(e) {
     const canvas = canvasRef.current;
-    const pt = seatToLogical(e, canvas);
+    const pt = seatToLogical(e, canvas, room);
     if (editable) {
+      // The room's corner handles (bottom-right ◢, top-left ◤) resize the room.
+      const near = (cx, cy) => Math.abs(pt.x - cx) <= ROOM_HANDLE && Math.abs(pt.y - cy) <= ROOM_HANDLE;
+      const corner = !onResizeRoom ? null
+        : near(SEAT_LW - ROOM_HANDLE / 2 - 4, SEAT_LH - ROOM_HANDLE / 2 - 4) ? "br"
+        : near(ROOM_HANDLE / 2 + 4, ROOM_HANDLE / 2 + 4) ? "tl" : null;
+      if (corner) {
+        dragStartRef.current = { kind: "room", corner, startW: SEAT_LW, startH: SEAT_LH, startPtX: pt.x, startPtY: pt.y, min: layoutExtent(tables, objs), bounds: layoutBounds(tables, objs), empty: !tables.length && !objs.length };
+        setRoomDrag({ w: SEAT_LW, h: SEAT_LH, shiftX: 0, shiftY: 0, corner });
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
       const tableHit = hitTestTable(tables, pt.x, pt.y);
       if (tableHit) {
         onSelectTable(tableHit.id);
@@ -2097,7 +2217,7 @@ function SeatingCanvas({
         canvas.setPointerCapture(e.pointerId);
         return;
       }
-      const objHit = hitTestObjects(objs, pt.x, pt.y);
+      const objHit = hitTestObjects(objs, pt.x, pt.y, room);
       if (objHit) {
         onSelectObject(objHit.object.id);
         onSelectTable(null);
@@ -2118,25 +2238,40 @@ function SeatingCanvas({
   }
   function handlePointerMove(e) {
     const canvas = canvasRef.current;
-    const pt = seatToLogical(e, canvas);
+    const pt = seatToLogical(e, canvas, room);
     const d = dragStartRef.current;
     if (editable && d) {
       const dx = pt.x - d.startPtX, dy = pt.y - d.startPtY;
+      if (d.kind === "room") {
+        // Corner handles snap to 0.5 m; never smaller than the layout (+1 m) or 6 m, never over 100 m.
+        const half = UNITS_PER_M / 2, snap = v => Math.round(v / half) * half;
+        if (d.corner === "br") {
+          setRoomDrag({ w: clamp(snap(d.startW + dx), Math.max(ROOM_MIN, d.min.w), ROOM_MAX), h: clamp(snap(d.startH + dy), Math.max(ROOM_MIN, d.min.h), ROOM_MAX), shiftX: 0, shiftY: 0, corner: "br" });
+        } else {
+          // Top-left: growing adds space on the left/top (everything shifts right/down); shrinking
+          // removes space there, but never past 1 m in front of the nearest table/item.
+          const minShiftX = d.empty ? -(d.startW - ROOM_MIN) : -snapDownHalfM(Math.max(0, d.bounds.minX - UNITS_PER_M));
+          const minShiftY = d.empty ? -(d.startH - ROOM_MIN) : -snapDownHalfM(Math.max(0, d.bounds.minY - UNITS_PER_M));
+          let shiftX = clamp(snap(-dx), minShiftX, ROOM_MAX - d.startW), shiftY = clamp(snap(-dy), minShiftY, ROOM_MAX - d.startH);
+          shiftX = Math.max(shiftX, ROOM_MIN - d.startW); shiftY = Math.max(shiftY, ROOM_MIN - d.startH);
+          setRoomDrag({ w: d.startW + shiftX, h: d.startH + shiftY, shiftX, shiftY, corner: "tl" });
+        }
+        return;
+      }
+      // Items can be dragged past any edge when the room can be resized (it grows on release).
+      const lo = onResizeRoom ? -ROOM_MAX : 0, XM = onResizeRoom ? ROOM_MAX : SEAT_LW, YM = onResizeRoom ? ROOM_MAX : SEAT_LH;
+      const sx = v => snapClamp(v, lo, XM), sy = v => snapClamp(v, lo, YM);
       if (d.kind === "table") {
-        setLiveDrag({ kind: "table", id: d.id, x: snapClamp(d.startX + dx, 0, SEAT_LW), y: snapClamp(d.startY + dy, 0, SEAT_LH) });
+        setLiveDrag({ kind: "table", id: d.id, x: sx(d.startX + dx), y: sy(d.startY + dy) });
       } else if (d.handle === "p1") {
-        setLiveDrag({ kind: "object", id: d.id, x: snapClamp(d.startX + dx, 0, SEAT_LW), y: snapClamp(d.startY + dy, 0, SEAT_LH) });
+        setLiveDrag({ kind: "object", id: d.id, x: sx(d.startX + dx), y: sy(d.startY + dy) });
       } else if (d.handle === "p2") {
-        setLiveDrag({ kind: "object", id: d.id, x2: snapClamp(d.startX2 + dx, 0, SEAT_LW), y2: snapClamp(d.startY2 + dy, 0, SEAT_LH) });
+        setLiveDrag({ kind: "object", id: d.id, x2: sx(d.startX2 + dx), y2: sy(d.startY2 + dy) });
       } else if (d.startX2 != null) {
         // dragging a line's body translates both endpoints together
-        setLiveDrag({
-          kind: "object", id: d.id,
-          x: snapClamp(d.startX + dx, 0, SEAT_LW), y: snapClamp(d.startY + dy, 0, SEAT_LH),
-          x2: snapClamp(d.startX2 + dx, 0, SEAT_LW), y2: snapClamp(d.startY2 + dy, 0, SEAT_LH)
-        });
+        setLiveDrag({ kind: "object", id: d.id, x: sx(d.startX + dx), y: sy(d.startY + dy), x2: sx(d.startX2 + dx), y2: sy(d.startY2 + dy) });
       } else {
-        setLiveDrag({ kind: "object", id: d.id, x: snapClamp(d.startX + dx, 0, SEAT_LW), y: snapClamp(d.startY + dy, 0, SEAT_LH) });
+        setLiveDrag({ kind: "object", id: d.id, x: sx(d.startX + dx), y: sy(d.startY + dy) });
       }
     } else if (!editable && panStartRef.current) {
       const p = panStartRef.current;
@@ -2145,18 +2280,22 @@ function SeatingCanvas({
   }
   function handlePointerUp() {
     const d = dragStartRef.current;
-    if (editable && d && liveDrag) {
-      if (d.kind === "table") onDragTableEnd(liveDrag.id, liveDrag.x, liveDrag.y);
+    if (editable && d?.kind === "room") {
+      if (roomDrag && (roomDrag.w !== SEAT_LW || roomDrag.h !== SEAT_LH)) onResizeRoom({ w: roomDrag.w, h: roomDrag.h }, { shiftX: roomDrag.shiftX, shiftY: roomDrag.shiftY });
+    } else if (editable && d && liveDrag) {
+      // `growTo` (if set) is the bigger room this drop needs; the parent saves it with the move.
+      if (d.kind === "table") onDragTableEnd(liveDrag.id, liveDrag.x, liveDrag.y, growTo);
       else {
         const changes = {};
         if (liveDrag.x != null) { changes.x = liveDrag.x; changes.y = liveDrag.y; }
         if (liveDrag.x2 != null) { changes.x2 = liveDrag.x2; changes.y2 = liveDrag.y2; }
-        onObjectDragEnd(liveDrag.id, changes);
+        onObjectDragEnd(liveDrag.id, changes, growTo);
       }
     }
     dragStartRef.current = null;
     panStartRef.current = null;
     setLiveDrag(null);
+    setRoomDrag(null);
   }
   return (
     <canvas
@@ -2347,6 +2486,71 @@ function ColorSwatches({ value, onChange, options = FLOOR_COLORS, noneLabel, lab
   );
 }
 
+// Room size: shown as "20 m × 14 m"; "Resize" opens exact width/depth fields (in metres), buttons to
+// add space on the left/top (which shifts everything over), and "Fit to layout" (the smallest room
+// that still holds everything). The corner handle on the plan and dragging items past the edge do
+// the same thing by hand (see SeatingCanvas).
+function RoomSizePanel({ state, actions }) {
+  const room = roomOf(state.seatingRoom);
+  const min = layoutExtent(state.seatingTables, state.seatingObjects);
+  const [open, setOpen] = useState(false);
+  const [wM, setWM] = useState(""), [hM, setHM] = useState("");
+  const startEdit = () => { setWM(String(room.w / UNITS_PER_M)); setHM(String(room.h / UNITS_PER_M)); setOpen(true); };
+  const toUnits = v => Math.round(Number(v) * 2) / 2 * UNITS_PER_M; // half-metres
+  const w = toUnits(wM), h = toUnits(hM);
+  const err = !open ? "" : !(w >= ROOM_MIN && h >= ROOM_MIN && w <= ROOM_MAX && h <= ROOM_MAX) ? "Use between 6 m and 100 m each way."
+    : w < min.w || h < min.h ? `Your layout needs at least ${metres(min.w)} × ${metres(min.h)} — move tables in first, or make it bigger.` : "";
+  const notice = state.roomNotice;
+  useEffect(() => {
+    if (!notice) return;
+    const id = setTimeout(() => actions.patch({ roomNotice: null }), 10000);
+    return () => clearTimeout(id);
+  }, [notice]);
+  const addSpace = (side) => actions.saveRoom(
+    side === "left" ? { w: Math.min(ROOM_MAX, room.w + UNITS_PER_M), h: room.h } : { w: room.w, h: Math.min(ROOM_MAX, room.h + UNITS_PER_M) },
+    side === "left" ? { shiftX: UNITS_PER_M } : { shiftY: UNITS_PER_M });
+  return (
+    <div className="room-size">
+      <div className="room-size-row">
+        <span className="room-style-label">Room</span>
+        <strong className="room-size-value">{metres(room.w)} × {metres(room.h)}</strong>
+        {!open && <button type="button" className="chip-btn" onClick={startEdit}>Resize</button>}
+        <span className="helptext room-size-tip">Drag the ◤ or ◢ corner of the plan, or drag a table past any edge, to change the room's size.</span>
+      </div>
+      {notice && (
+        <div className="room-notice" role="status">
+          <span>{notice.text}</span>
+          <button type="button" className="btn-link" onClick={actions.undoRoomGrow} disabled={state.loading}>Undo</button>
+        </div>
+      )}
+      {open && (
+        <div className="room-size-form">
+          <div className="room-size-fields">
+            <div className="field"><label htmlFor="room-w">Width (m)</label>
+              <input id="room-w" className="settings-input" type="number" inputMode="decimal" min="6" max="100" step="0.5" value={wM} onChange={e => setWM(e.target.value)} />
+            </div>
+            <span className="room-size-x" aria-hidden="true">×</span>
+            <div className="field"><label htmlFor="room-h">Depth (m)</label>
+              <input id="room-h" className="settings-input" type="number" inputMode="decimal" min="6" max="100" step="0.5" value={hM} onChange={e => setHM(e.target.value)} />
+            </div>
+          </div>
+          {err && <div className="settings-warn" style={{ marginTop: 0 }}>{err}</div>}
+          <div className="rotate-row" style={{ marginTop: 10 }}>
+            <button type="button" className="chip-btn" disabled={state.loading} onClick={() => { setWM(String(min.w / UNITS_PER_M)); setHM(String(min.h / UNITS_PER_M)); }}>Fit to layout</button>
+            <button type="button" className="chip-btn" disabled={state.loading || room.w >= ROOM_MAX} onClick={() => addSpace("left")}>+ 1 m on the left</button>
+            <button type="button" className="chip-btn" disabled={state.loading || room.h >= ROOM_MAX} onClick={() => addSpace("top")}>+ 1 m at the top</button>
+          </div>
+          <div className="btn-row" style={{ marginTop: 12 }}>
+            <button className="btn btn-ghost" onClick={() => setOpen(false)}>Close</button>
+            <button className="btn btn-primary" disabled={state.loading || !!err || (w === room.w && h === room.h)}
+              onClick={async () => { if (await actions.saveRoom({ w, h })) setOpen(false); }}>Save size</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AdminSeating({ state, actions }) {
   useEffect(() => { if (!state.seatingLoaded && !state.seatingLoading) actions.loadSeating(); }, [state.seatingLoaded, state.seatingLoading]);
 
@@ -2410,6 +2614,7 @@ function AdminSeating({ state, actions }) {
           <button className="btn btn-ghost" style={{ flex: "none" }} onClick={() => actions.patch({ view: "venue-display" })}>🖥 Open venue display</button>
         </div>
       </div>
+      <RoomSizePanel state={state} actions={actions} />
       <div className="room-style">
         <span className="room-style-label">Chairs (whole venue)</span>
         <ColorSwatches label="Venue chair colour" options={CHAIR_COLORS} value={state.seatingChairColor || DEFAULT_CHAIR_COLOR} onChange={c => actions.saveChairColor(c)} />
@@ -2438,6 +2643,8 @@ function AdminSeating({ state, actions }) {
               tables={previewTables}
               objects={previewObjects}
               chairColor={state.seatingChairColor}
+              room={state.seatingRoom}
+              onResizeRoom={(r, shift) => actions.saveRoom(r, shift)}
               editable
               selectedTableId={state.selectedTableId}
               onSelectTable={actions.selectTable}
@@ -2546,7 +2753,7 @@ function AdminSeating({ state, actions }) {
               {(selectedObject.type === "fireplace" || selectedObject.type === "stairs") && (
                 <div className="field style-field"><label>{selectedObject.type === "stairs" ? "Direction (climbs toward)" : "Facing"}</label>
                   <div className="rotate-row">
-                    <button type="button" className="chip-btn" onClick={() => actions.updateObjectDraftField("rotation", Math.round(featureAngle(state.objectDraft) * 180 / Math.PI + 90 + 360) % 360)}>↻ Rotate 90°</button>
+                    <button type="button" className="chip-btn" onClick={() => actions.updateObjectDraftField("rotation", Math.round(featureAngle(state.objectDraft, roomOf(state.seatingRoom)) * 180 / Math.PI + 90 + 360) % 360)}>↻ Rotate 90°</button>
                     {state.objectDraft.rotation != null && <button type="button" className="chip-btn" onClick={() => actions.updateObjectDraftField("rotation", null)}>Auto (nearest wall)</button>}
                   </div>
                 </div>
@@ -2580,7 +2787,7 @@ function AdminSeating({ state, actions }) {
 function VenueDisplay({ state, actions }) {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(null); // { tableId, tableLabel, seatIndex, name } | null — name/seatIndex null when selected by clicking a table rather than a guest
-  const [transform, setTransform] = useState(() => fitSeatTransform(state.seatingTables));
+  const [transform, setTransform] = useState(() => fitSeatTransform(state.seatingTables, state.seatingRoom));
   const [viewMode, setViewMode] = useState("2d"); // '2d' | '3d' — see issue #4
   const floorPlan3DRef = useRef(null);
   const animGenRef = useRef(0);
@@ -2627,7 +2834,7 @@ function VenueDisplay({ state, actions }) {
   function selectGuest(g) {
     setSelected({ tableId: g.tableId, tableLabel: g.tableLabel, seatIndex: g.seatIndex, name: g.name });
     const table = state.seatingTables.find(t => t.id === g.tableId);
-    if (table) animateTo(fitSeatTransform([table]));
+    if (table) animateTo(fitSeatTransform([table], state.seatingRoom));
   }
   // Reverse lookup for the 3D view: clicking a table (rather than searching a
   // name) selects it and shows everyone seated there.
@@ -2639,7 +2846,7 @@ function VenueDisplay({ state, actions }) {
   }
   function showWholeRoom() {
     setSelected(null);
-    animateTo(fitSeatTransform(state.seatingTables));
+    animateTo(fitSeatTransform(state.seatingTables, state.seatingRoom));
   }
 
   const highlightColors = selected ? { [selected.tableId]: "#A9814C" } : {};
@@ -2693,21 +2900,22 @@ function VenueDisplay({ state, actions }) {
               </div>
             </div>
           </div>
-          <div className={`seating-canvas-wrap ${viewMode === "3d" ? "mode-3d" : ""}`}>
+          <div className={`seating-canvas-wrap ${viewMode === "3d" ? "mode-3d" : ""}`} style={viewMode === "3d" ? { aspectRatio: `${roomOf(state.seatingRoom).w} / ${roomOf(state.seatingRoom).h}` } : undefined}>
             {viewMode === "2d" ? (
               <>
                 <SeatingCanvas
                   tables={state.seatingTables}
                   objects={state.seatingObjects}
                   chairColor={state.seatingChairColor}
+                  room={state.seatingRoom}
                   highlightColors={highlightColors}
                   highlightSeatIndices={highlightSeatIndices}
                   viewTransform={transform}
                   onViewTransformChange={setTransform}
                 />
                 <div className="zoom-controls">
-                  <button onClick={() => setTransform(t => zoomSeatTransform(t, 1.25))} aria-label="Zoom in">+</button>
-                  <button onClick={() => setTransform(t => zoomSeatTransform(t, 1 / 1.25))} aria-label="Zoom out">−</button>
+                  <button onClick={() => setTransform(t => zoomSeatTransform(t, 1.25, state.seatingRoom))} aria-label="Zoom in">+</button>
+                  <button onClick={() => setTransform(t => zoomSeatTransform(t, 1 / 1.25, state.seatingRoom))} aria-label="Zoom out">−</button>
                   <button onClick={showWholeRoom} aria-label="Show whole room">⦿</button>
                 </div>
               </>
@@ -2719,6 +2927,8 @@ function VenueDisplay({ state, actions }) {
                     tables={state.seatingTables}
                     objects={state.seatingObjects}
                     chairColor={state.seatingChairColor}
+                    room={state.seatingRoom}
+                    key={state.seatingRoom ? `${state.seatingRoom.w}x${state.seatingRoom.h}` : "room"}
                     focusTableId={selected?.tableId || null}
                     onSelectTable={selectTable}
                   />
@@ -3249,6 +3459,8 @@ export default function App() {
     seatingAssignments: {},
     seatingObjects: [],
     seatingChairColor: null, // the venue's chair colour (each table may override it)
+    seatingRoom: null, // { w, h } in plan units (50 = 1 m); null = the default 20 m × 14 m
+    roomNotice: null, // { text, undo } after the room grew to fit a dropped item
     seatingRevealMode: "locked",
     seatingRevealAt: null,
     seatingLoaded: false,
@@ -3274,7 +3486,7 @@ export default function App() {
     const mySeq = ++seatingSeqRef.current;
     const data = await apiAdmin(state.adminPassword, action, payload);
     if (seatingSeqRef.current !== mySeq) return null; // superseded by a newer request; drop it
-    patch({ seatingTables: data.tables, seatingAssignments: data.assignments, seatingObjects: data.objects, seatingRevealMode: data.revealMode, seatingRevealAt: data.revealAt, seatingChairColor: data.chairColor || null });
+    patch({ seatingTables: data.tables, seatingAssignments: data.assignments, seatingObjects: data.objects, seatingRevealMode: data.revealMode, seatingRevealAt: data.revealAt, seatingChairColor: data.chairColor || null, seatingRoom: data.room || null });
     return data;
   }
   async function saveSeatingReveal(mode, revealAt) {
@@ -3550,10 +3762,16 @@ export default function App() {
       showToast("Couldn't delete the table.");
     }
   }
-  async function moveTable(id, x, y) {
+  async function moveTable(id, x, y, growTo) {
     const t = state.seatingTables.find(t => t.id === id);
     if (!t) return;
-    patch({ seatingTables: state.seatingTables.map(tt => (tt.id === id ? { ...tt, x, y } : tt)) });
+    if (growTo) return growRoomAndMove(growTo, { kind: "table", id, before: { x: t.x, y: t.y }, after: { x, y } });
+    // Keep the open edit panel's copy in step too: its unsaved values are drawn over the plan
+    // (live preview), so a stale x/y there would pull the table back to where it was.
+    patch({
+      seatingTables: state.seatingTables.map(tt => (tt.id === id ? { ...tt, x, y } : tt)),
+      ...(state.tableDraft?.id === id && { tableDraft: { ...state.tableDraft, x, y } })
+    });
     try {
       await seatingMutate("save-table", { ...t, x, y });
     } catch (e) {
@@ -3570,7 +3788,8 @@ export default function App() {
   // `make(x, y)` comes from ROOM_ITEM_GROUPS; new items land near the middle, nudged so repeats don't stack.
   async function addObject(make) {
     const n = state.seatingObjects.length;
-    const baseX = SEAT_LW / 2 + ((n * 37) % 120) - 60, baseY = SEAT_LH / 2 + ((n * 23) % 80) - 40;
+    const { w: RW, h: RH } = roomOf(state.seatingRoom);
+    const baseX = RW / 2 + ((n * 37) % 120) - 60, baseY = RH / 2 + ((n * 23) % 80) - 40;
     const obj = { id: genId(), x2: null, y2: null, rotation: null, color: null, ...make(Math.round(baseX), Math.round(baseY)) };
     patch({ loading: true });
     try {
@@ -3606,15 +3825,97 @@ export default function App() {
       showToast("Couldn't delete that.");
     }
   }
-  async function moveObject(id, changes) {
+  async function moveObject(id, changes, growTo) {
     const o = state.seatingObjects.find(o => o.id === id);
     if (!o) return;
+    if (growTo) return growRoomAndMove(growTo, { kind: "object", id, before: { x: o.x, y: o.y, x2: o.x2, y2: o.y2 }, after: changes });
     const updated = { ...o, ...changes };
-    patch({ seatingObjects: state.seatingObjects.map(oo => (oo.id === id ? updated : oo)) });
+    patch({
+      seatingObjects: state.seatingObjects.map(oo => (oo.id === id ? updated : oo)),
+      ...(state.objectDraft?.id === id && { objectDraft: { ...state.objectDraft, ...changes } }) // see moveTable
+    });
     try {
       await seatingMutate("save-object", updated);
     } catch (e) {
       showToast("Couldn't save that shape's position.");
+    }
+  }
+  // A fireplace/stairs left on "auto" faces the nearest wall, so resizing the room could turn it.
+  // Before any resize, save each one's current direction so it stays put.
+  async function pinAutoRotations() {
+    const room = roomOf(state.seatingRoom);
+    for (const o of state.seatingObjects.filter(o => (o.type === "fireplace" || o.type === "stairs") && o.rotation == null)) {
+      await seatingMutate("save-object", { ...o, rotation: Math.round(featureAngle(o, room) * 180 / Math.PI + 360) % 360 });
+    }
+  }
+  // Dropped past an edge: grow the room to fit, then move the item there. Growing on the left/top
+  // shifts everything right/down by growTo.shiftX/shiftY (done on the server in the same save), so the
+  // dropped spot is shifted too. A notice offers Undo (old room size, shift back, the item's old spot).
+  async function growRoomAndMove(growTo, move) {
+    const prevRoom = roomOf(state.seatingRoom);
+    const sx = growTo.shiftX || 0, sy = growTo.shiftY || 0;
+    const room = { w: growTo.w, h: growTo.h };
+    const sh = it => ({ ...it, x: it.x + sx, y: it.y + sy, ...(it.x2 != null && { x2: it.x2 + sx, y2: it.y2 + sy }) });
+    const after = { ...move.after, x: move.after.x != null ? move.after.x + sx : undefined, y: move.after.y != null ? move.after.y + sy : undefined,
+      ...(move.after.x2 != null && { x2: move.after.x2 + sx, y2: move.after.y2 + sy }) };
+    Object.keys(after).forEach(k => after[k] === undefined && delete after[k]);
+    const isTable = move.kind === "table";
+    const tables = state.seatingTables.map(t => (isTable && t.id === move.id ? { ...sh(t), ...after } : sh(t)));
+    const objects = state.seatingObjects.map(o => (!isTable && o.id === move.id ? { ...sh(o), ...after } : sh(o)));
+    const draftKey = isTable ? "tableDraft" : "objectDraft", otherKey = isTable ? "objectDraft" : "tableDraft";
+    patch({
+      seatingRoom: room, seatingTables: tables, seatingObjects: objects,
+      ...(state[draftKey] && { [draftKey]: state[draftKey].id === move.id ? { ...sh(state[draftKey]), ...after } : sh(state[draftKey]) }),
+      ...(state[otherKey] && { [otherKey]: sh(state[otherKey]) }),
+      roomNotice: { text: `Room extended to ${metres(room.w)} × ${metres(room.h)}`, undo: { room: prevRoom, shiftX: sx, shiftY: sy, move } }
+    });
+    try {
+      await pinAutoRotations();
+      await seatingMutate("save-room", { ...room, shiftX: sx, shiftY: sy });
+      const item = (isTable ? tables : objects).find(it => it.id === move.id);
+      await seatingMutate(isTable ? "save-table" : "save-object", item);
+    } catch (e) {
+      showToast("Couldn't extend the room.");
+    }
+  }
+  async function undoRoomGrow() {
+    const u = state.roomNotice?.undo;
+    if (!u) return;
+    patch({ roomNotice: null, loading: true });
+    try {
+      const isTable = u.move.kind === "table";
+      // Put the item back (in today's shifted coordinates), then shrink the room and shift everything back.
+      const item = (isTable ? state.seatingTables : state.seatingObjects).find(it => it.id === u.move.id);
+      const b = u.move.before;
+      const back = { ...b, x: b.x + u.shiftX, y: b.y + u.shiftY, ...(b.x2 != null && { x2: b.x2 + u.shiftX, y2: b.y2 + u.shiftY }) };
+      await seatingMutate(isTable ? "save-table" : "save-object", { ...item, ...back });
+      await seatingMutate("save-room", { ...u.room, shiftX: -u.shiftX, shiftY: -u.shiftY });
+      const unshift = d => d && { ...d, x: d.x - u.shiftX, y: d.y - u.shiftY, ...(d.x2 != null && { x2: d.x2 - u.shiftX, y2: d.y2 - u.shiftY }) };
+      patch({
+        loading: false,
+        ...(state.tableDraft && { tableDraft: isTable && state.tableDraft.id === u.move.id ? { ...state.tableDraft, ...b } : unshift(state.tableDraft) }),
+        ...(state.objectDraft && { objectDraft: !isTable && state.objectDraft.id === u.move.id ? { ...state.objectDraft, ...b } : unshift(state.objectDraft) })
+      });
+    } catch (e) {
+      patch({ loading: false });
+      showToast("Couldn't undo that.");
+    }
+  }
+  // Set the room's size (and optionally shift everything right/down to add space on the left/top).
+  async function saveRoom(room, { shiftX = 0, shiftY = 0, quiet = false } = {}) {
+    patch({ loading: true, roomNotice: null });
+    try {
+      await pinAutoRotations();
+      await seatingMutate("save-room", { ...room, shiftX, shiftY });
+      // An open edit panel holds a position too; shift it along with everything else.
+      const sh = d => d && (shiftX || shiftY) ? { ...d, x: d.x + shiftX, y: d.y + shiftY, ...(d.x2 != null && { x2: d.x2 + shiftX, y2: d.y2 + shiftY }) } : d;
+      patch({ loading: false, tableDraft: sh(state.tableDraft), objectDraft: sh(state.objectDraft) });
+      if (!quiet) showToast(`Room is now ${metres(room.w)} × ${metres(room.h)}.`);
+      return true;
+    } catch (e) {
+      patch({ loading: false });
+      showToast("Couldn't resize the room.");
+      return false;
     }
   }
   async function saveChairColor(color) {
@@ -3637,7 +3938,7 @@ export default function App() {
   function downloadFloorPlan() {
     const occupancy = {};
     Object.values(state.seatingAssignments).forEach(a => { occupancy[a.tableId] = (occupancy[a.tableId] || 0) + 1; });
-    exportFloorPlanPNG(state.seatingTables, state.seatingObjects, occupancy, `${CONFIG.coupleNames} — Reception Floor Plan`, state.seatingChairColor);
+    exportFloorPlanPNG(state.seatingTables, state.seatingObjects, occupancy, `${CONFIG.coupleNames} — Reception Floor Plan`, state.seatingChairColor, roomOf(state.seatingRoom));
   }
   function armGuest(memberId, inviteCode) {
     patch({ armedGuest: state.armedGuest?.memberId === memberId ? null : { memberId, inviteCode } });
@@ -3758,7 +4059,7 @@ export default function App() {
     previewInvite, exitPreview, toggleRow, copyLink, exportCSV,
     loadSeating, selectTable, deselectTable, updateTableDraftField, addTable, saveTableDraft, deleteTable, moveTable, armGuest, assignSeat,
     selectObject, deselectObject, updateObjectDraftField, addObject, saveObjectDraft, deleteObject, moveObject,
-    setTableShape, downloadFloorPlan, saveSeatingReveal, saveChairColor, styleAllTables,
+    setTableShape, downloadFloorPlan, saveSeatingReveal, saveChairColor, styleAllTables, saveRoom, undoRoomGrow,
     saveSettings
   };
 

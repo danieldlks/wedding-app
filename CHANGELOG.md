@@ -4,6 +4,33 @@ Notable changes to the RSVP app, newest first. See `plan.md`/`design.md` for the
 broader feature history (v1 → v3); this file tracks discrete fixes and changes
 made along the way.
 
+## 2026-11-03 — Resizable room; fix dragged tables snapping back
+
+**Fix:**
+- **What happened:** after dragging a table or item on the admin plan, it stayed drawn in its old spot until it was deselected, and "Save details" would put it back.
+- **Cause:** a stale copy of its position in the edit panel, introduced by PR #22's live preview.
+- **Now:** dragging updates that copy too.
+
+**Feature: room size.** The room was a fixed 20 m × 14 m (1000 × 700 plan units; 50 units = 1 m). It can now be resized three ways:
+- **Exact size:** Room → Resize, then enter width × depth in metres, in 0.5 m steps from 6 m to 100 m. "Fit to layout" sets the smallest size that still holds everything. "+ 1 m on the left / at the top" adds space by shifting everything over.
+- **Bottom-right handle:** drag the ◢ in the plan's bottom-right corner. The size shows as you drag, and it can't shrink past your tables.
+- **Top-left handle:** drag the ◤ in the top-left corner to add or remove space on the left and top. Everything shifts over to match, and the room can't shrink to within 1 m of your nearest table.
+- **On the go:** drag a table or item past any edge (left, top, right or bottom) and the room grows to fit it on release. Growing on the left or top shifts everything over. A notice offers Undo, which reverses the shift too. Only an item that actually goes past the edge grows the room; one that's merely near an edge doesn't.
+- **Fireplaces and stairs on automatic facing** keep their direction when the room is resized.
+
+**Also:**
+- **Scale bar:** the editor and the downloaded image show a 5 m scale bar.
+- **Everywhere follows the size:** the 2D plan, 3D view, walk-through, guest Find My Seat and the venue display.
+- **Storage:** saved in `app_settings` as `room_width` and `room_depth`, so no database change is needed.
+
+**Files:**
+- `src/App.jsx`
+- `src/FloorPlan3D.jsx`
+- `src/seatingGeometry.js`
+- `functions/_lib/db.js`
+- `functions/api/admin.js`
+- `functions/api/seating.js`
+
 ## 2026-11-02 — Floor plan: room features, colours, rotating tables, clearer 3D labels
 
 **Feature:**

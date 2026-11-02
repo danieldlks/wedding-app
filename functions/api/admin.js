@@ -168,6 +168,22 @@ export async function onRequestPost({ request, env }) {
       return Response.json(await listSeating(env.DB));
     }
 
+    case "save-room": {
+      // The room's size in plan units (50 = 1 m), 6 m to 100 m. Optional shiftX/shiftY move every
+      // table and item right/down (to add space on the left/top) in the same save.
+      const w = Math.round(Number(payload?.w)), h = Math.round(Number(payload?.h));
+      if (!(w >= 300 && w <= 5000 && h >= 300 && h <= 5000)) return new Response("Room must be between 6 m and 100 m each way", { status: 400 });
+      const sx = Math.round(Number(payload?.shiftX) || 0), sy = Math.round(Number(payload?.shiftY) || 0);
+      if (Math.abs(sx) > 5000 || Math.abs(sy) > 5000) return new Response("Invalid shift", { status: 400 });
+      if (sx || sy) {
+        await env.DB.prepare("UPDATE seating_tables SET x = x + ?, y = y + ?").bind(sx, sy).run();
+        await env.DB.prepare("UPDATE floor_objects SET x = x + ?, y = y + ?, x2 = x2 + ?, y2 = y2 + ?").bind(sx, sy, sx, sy).run();
+      }
+      await putSetting(env.DB, "room_width", w);
+      await putSetting(env.DB, "room_depth", h);
+      return Response.json(await listSeating(env.DB));
+    }
+
     case "style-all-tables": {
       // One tablecloth colour for every table (null = plain linen).
       const c = payload?.color;
