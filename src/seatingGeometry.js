@@ -2,8 +2,28 @@
 // venue view (src/FloorPlan3D.jsx), so both always agree on where a table and
 // each of its chairs are. No React, no three.js.
 
+// The room's default size in floor-plan units. The admin can resize the room
+// (app_settings room_width / room_depth); everything takes the room as { w, h }.
 export const SEAT_LW = 1000;
 export const SEAT_LH = 700;
+export const DEFAULT_ROOM = { w: SEAT_LW, h: SEAT_LH };
+// 50 plan units = 1 metre (a round table of 90 units is ~1.8 m across; the 50-unit dot grid is 1 m).
+export const UNITS_PER_M = 50;
+export const ROOM_MIN = 300, ROOM_MAX = 5000; // 6 m .. 100 m
+export function roomOf(r) { return r && r.w > 0 && r.h > 0 ? r : DEFAULT_ROOM; }
+export function metres(units) { const m = Math.round((units / UNITS_PER_M) * 10) / 10; return `${Number.isInteger(m) ? m : m.toFixed(1)} m`; }
+// Smallest room (snapped to 0.5 m) that still holds every table and item, with a margin
+// (default 1 m) on the right/bottom.
+export function layoutExtent(tables, objects, margin = UNITS_PER_M) {
+  let maxX = 0, maxY = 0;
+  for (const t of tables || []) { const { w, h } = tableDims(t); const r = Math.hypot(w, h) / 2 + 14; maxX = Math.max(maxX, t.x + r); maxY = Math.max(maxY, t.y + r); }
+  for (const o of objects || []) {
+    const r = o.type === "fireplace" || o.type === "stairs" ? Math.hypot(featureDims(o).w, featureDims(o).d) / 2 : (o.size || 0) / 2;
+    maxX = Math.max(maxX, o.x + r, o.x2 != null ? o.x2 + 6 : 0); maxY = Math.max(maxY, o.y + r, o.y2 != null ? o.y2 + 6 : 0);
+  }
+  const snap = v => Math.ceil(v / (UNITS_PER_M / 2)) * (UNITS_PER_M / 2);
+  return { w: Math.max(ROOM_MIN, snap(maxX + margin)), h: Math.max(ROOM_MIN, snap(maxY + margin)) };
+}
 
 export function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
 
@@ -73,10 +93,11 @@ export function isLineObject(o) { return LINE_TYPES.includes(o.type); }
 export function featureDims(o) {
   return o.type === "fireplace" ? { w: o.size, d: o.size * 0.38 } : { w: o.size * 0.55, d: o.size };
 }
-export function featureAngle(o) {
+export function featureAngle(o, room = DEFAULT_ROOM) {
+  const { w: RW, h: RH } = roomOf(room);
   if (o.rotation != null && Number.isFinite(Number(o.rotation))) return (Number(o.rotation) * Math.PI) / 180;
   // Not set: face away from (fireplace) or climb toward (stairs) the nearest wall.
-  const walls = [[o.x, Math.PI], [SEAT_LW - o.x, 0], [o.y, -Math.PI / 2], [SEAT_LH - o.y, Math.PI / 2]];
+  const walls = [[o.x, Math.PI], [RW - o.x, 0], [o.y, -Math.PI / 2], [RH - o.y, Math.PI / 2]];
   const [, toWall] = walls.reduce((a, b) => (b[0] < a[0] ? b : a));
   return o.type === "fireplace" ? toWall + Math.PI : toWall;
 }

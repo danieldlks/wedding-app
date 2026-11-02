@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DRenderer, CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { SEAT_LW, SEAT_LH, clamp, tableDims, triangleVertices, getSeatPositionsLocal, tableAngle, featureDims, featureAngle, DEFAULT_CHAIR_COLOR } from "./seatingGeometry.js";
+import { roomOf, clamp, tableDims, triangleVertices, getSeatPositionsLocal, tableAngle, featureDims, featureAngle, DEFAULT_CHAIR_COLOR } from "./seatingGeometry.js";
 
 // A furnished "dollhouse" of the reception room, built from the same
 // seating_tables / floor_objects data the 2D SeatingCanvas draws (issue #4).
@@ -416,7 +416,7 @@ let FP3D_STONE = null;
 // Fireplace, stairs and curtain models. Fireplace/stairs are built in a local
 // frame (width on x, depth on z, front / climb direction = +z), then turned to
 // featureAngle(); curtains run between the item's two end points like a wall.
-function buildFeature(o, mats) {
+function buildFeature(o, mats, room) {
   const group = new THREE.Group();
   if (o.type === "curtain") {
     const dx = o.x2 - o.x, dy = o.y2 - o.y;
@@ -485,7 +485,7 @@ function buildFeature(o, mats) {
     rail.position.set(side, (rise + H) / 2 + railH, 0); rail.rotation.x = Math.atan2(D - run, H - rise); inner.add(rail);
     labelY = H + 0.6;
   }
-  const a = featureAngle(o);
+  const a = featureAngle(o, room);
   const [px, pz] = fp3dLogicalToWorld(o.x, o.y);
   inner.position.set(px, 0, pz); inner.rotation.y = Math.PI / 2 - a;
   group.add(inner);
@@ -555,11 +555,11 @@ function buildWindow(o, mats) {
   return group;
 }
 
-function buildLandmark(o, mats) {
+function buildLandmark(o, mats, room) {
   if (o.type === "pillar") return buildPillar(o, mats);
   if (o.type === "post") return buildPost(o, mats);
   if (o.type === "window") return buildWindow(o, mats);
-  if (o.type === "fireplace" || o.type === "stairs" || o.type === "curtain") return buildFeature(o, mats);
+  if (o.type === "fireplace" || o.type === "stairs" || o.type === "curtain") return buildFeature(o, mats, room);
   const group = new THREE.Group();
   const kind = landmarkKind(o);
   let labelY = 1.0;
@@ -864,7 +864,7 @@ function applyTableHighlight(tableMeshes, activeId, focusColor) {
 
 // seatMarkers (optional, guest view): [{ tableId, seatIndex, label, color }] —
 // the guest's own seats get a coloured cushion and a named pin.
-const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, chairColor = null, focusTableId, focusColor = "#A9814C", onSelectTable, seatMarkers }, ref) {
+const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, room: roomProp, chairColor = null, focusTableId, focusColor = "#A9814C", onSelectTable, seatMarkers }, ref) {
   const mountRef = useRef(null);
   const sceneRef = useRef(null);
   const tableMeshesRef = useRef(new Map());
@@ -909,7 +909,9 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, chairColo
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(FP3D_BG);
 
-    const [roomW, roomD] = fp3dLogicalToWorld(SEAT_LW, SEAT_LH);
+    // The room's size is fixed for this component's life: parents remount it (key) when it changes.
+    const room = roomOf(roomProp);
+    const [roomW, roomD] = fp3dLogicalToWorld(room.w, room.h);
     const camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 200);
     const center = new THREE.Vector3(roomW / 2, 0, roomD / 2);
     // Look more steeply down on a busy room so the back rows aren't squashed together.
@@ -968,10 +970,10 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, chairColo
     }
 
     const mats = makeMaterials(roomW, roomD);
-    const room = buildRoom(roomW, roomD, mats);
-    scene.add(room);
-    const festoon = room.userData.festoon;
-    const floorMesh = room.userData.floor;
+    const roomShell = buildRoom(roomW, roomD, mats);
+    scene.add(roomShell);
+    const festoon = roomShell.userData.festoon;
+    const floorMesh = roomShell.userData.floor;
     const chairGeo = buildChairGeometries();
 
     const contentGroup = new THREE.Group();
@@ -1067,7 +1069,7 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, chairColo
 
     sceneRef.current = {
       scene, camera, controls, contentGroup, center, mats, chairGeo, invalidate, renderer,
-      roomW, roomD, beams: room.userData.beams, mode: "orbit", tableMeshes: tableMeshesRef.current, entrance: null,
+      roomW, roomD, room, beams: roomShell.userData.beams, mode: "orbit", tableMeshes: tableMeshesRef.current, entrance: null,
       labels: [], size: { w: width, h: height }, activeTableId: null, hoveredTableId: null,
       initialCamPos: camera.position.clone(), initialTarget: center.clone()
     };
@@ -1114,7 +1116,7 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, chairColo
     // Shared materials live in s.mats; anything else (a chosen colour, curtain fabric) belongs to its mesh.
     s.obstacles = [];
     (objects || []).forEach(o => {
-      const g = buildLandmark(o, s.mats);
+      const g = buildLandmark(o, s.mats, s.room);
       const shared = new Set(Object.values(s.mats)); // after building: some shared materials are made on first use
       g.traverse(obj => {
         if (!obj.isMesh) return;
