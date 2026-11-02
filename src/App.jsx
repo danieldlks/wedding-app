@@ -3553,7 +3553,12 @@ export default function App() {
   async function moveTable(id, x, y) {
     const t = state.seatingTables.find(t => t.id === id);
     if (!t) return;
-    patch({ seatingTables: state.seatingTables.map(tt => (tt.id === id ? { ...tt, x, y } : tt)) });
+    // Keep the open edit panel's copy in step too: its unsaved values are drawn over the plan
+    // (live preview), so a stale x/y there would pull the table back to where it was.
+    patch({
+      seatingTables: state.seatingTables.map(tt => (tt.id === id ? { ...tt, x, y } : tt)),
+      ...(state.tableDraft?.id === id && { tableDraft: { ...state.tableDraft, x, y } })
+    });
     try {
       await seatingMutate("save-table", { ...t, x, y });
     } catch (e) {
@@ -3610,7 +3615,10 @@ export default function App() {
     const o = state.seatingObjects.find(o => o.id === id);
     if (!o) return;
     const updated = { ...o, ...changes };
-    patch({ seatingObjects: state.seatingObjects.map(oo => (oo.id === id ? updated : oo)) });
+    patch({
+      seatingObjects: state.seatingObjects.map(oo => (oo.id === id ? updated : oo)),
+      ...(state.objectDraft?.id === id && { objectDraft: { ...state.objectDraft, ...changes } }) // see moveTable
+    });
     try {
       await seatingMutate("save-object", updated);
     } catch (e) {
