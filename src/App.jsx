@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, lazy, Suspense } from "react";
-import { DEFAULT_ROOM, roomOf, metres, layoutExtent, UNITS_PER_M, ROOM_MIN, ROOM_MAX, clamp, tableDims, triangleVertices, getSeatPositionsLocal, tableAngle, featureDims, featureAngle, isLineObject, textColorOn, FLOOR_COLORS, CHAIR_COLORS, DEFAULT_CHAIR_COLOR } from "./seatingGeometry.js";
+import { DEFAULT_ROOM, roomOf, metres, layoutExtent, layoutBounds, snapUpHalfM, snapDownHalfM, UNITS_PER_M, ROOM_MIN, ROOM_MAX, clamp, tableDims, triangleVertices, getSeatPositionsLocal, tableAngle, featureDims, featureAngle, isLineObject, textColorOn, FLOOR_COLORS, CHAIR_COLORS, DEFAULT_CHAIR_COLOR } from "./seatingGeometry.js";
 // The 3D venue view (and three.js) is split into its own file and only
 // downloaded the first time someone switches to 3D.
 const FloorPlan3D = lazy(() => import("./FloorPlan3D.jsx"));
@@ -2054,24 +2054,36 @@ const ROOM_HANDLE = 22; // the corner resize handle's size, in plan units
 function drawRoomResizeUI(ctx, room, roomDrag, growTo) {
   const { w, h } = room;
   ctx.save();
-  // corner handle: two diagonal grip lines in a rounded square
-  const hx = w - ROOM_HANDLE - 4, hy = h - ROOM_HANDLE - 4;
-  ctx.fillStyle = roomDrag ? "#6E7F63" : "rgba(255,255,255,.95)"; ctx.strokeStyle = "#6E7F63"; ctx.lineWidth = 1.5;
-  roundRectPath(ctx, hx, hy, ROOM_HANDLE, ROOM_HANDLE, 5); ctx.fill(); ctx.stroke();
-  ctx.strokeStyle = roomDrag ? "#fff" : "#6E7F63"; ctx.lineWidth = 1.6; ctx.beginPath();
-  for (const k of [7, 13]) { ctx.moveTo(hx + ROOM_HANDLE - 4, hy + k); ctx.lineTo(hx + k, hy + ROOM_HANDLE - 4); }
-  ctx.stroke();
+  // corner handles: diagonal grip lines in rounded squares, bottom-right ◢ and top-left ◤
+  const handle = (hx, hy, flip, active) => {
+    ctx.fillStyle = active ? "#6E7F63" : "rgba(255,255,255,.95)"; ctx.strokeStyle = "#6E7F63"; ctx.lineWidth = 1.5;
+    roundRectPath(ctx, hx, hy, ROOM_HANDLE, ROOM_HANDLE, 5); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = active ? "#fff" : "#6E7F63"; ctx.lineWidth = 1.6; ctx.beginPath();
+    for (const k of [7, 13]) {
+      if (flip) { ctx.moveTo(hx + 4, hy + ROOM_HANDLE - k); ctx.lineTo(hx + ROOM_HANDLE - k, hy + 4); }
+      else { ctx.moveTo(hx + ROOM_HANDLE - 4, hy + k); ctx.lineTo(hx + k, hy + ROOM_HANDLE - 4); }
+    }
+    ctx.stroke();
+  };
+  handle(w - ROOM_HANDLE - 4, h - ROOM_HANDLE - 4, false, roomDrag?.corner === "br");
+  handle(4, 4, true, roomDrag?.corner === "tl");
   const target = roomDrag || growTo;
   if (target) {
-    // the new size's edges, where they fall inside the current view
+    const sx = target.shiftX || 0, sy = target.shiftY || 0;
+    // In today's coordinates the new room spans x -sx .. target.w - sx, y -sy .. target.h - sy.
+    const L = -sx, T = -sy, R = target.w - sx, Bm = target.h - sy;
     ctx.setLineDash([8, 6]); ctx.strokeStyle = "#6E7F63"; ctx.lineWidth = 2.5;
-    if (target.w < w) { ctx.beginPath(); ctx.moveTo(target.w, 0); ctx.lineTo(target.w, Math.min(h, target.h)); ctx.stroke(); }
-    if (target.h < h) { ctx.beginPath(); ctx.moveTo(0, target.h); ctx.lineTo(Math.min(w, target.w), target.h); ctx.stroke(); }
+    if (R < w) { ctx.beginPath(); ctx.moveTo(R, Math.max(0, T)); ctx.lineTo(R, Math.min(h, Bm)); ctx.stroke(); }
+    if (Bm < h) { ctx.beginPath(); ctx.moveTo(Math.max(0, L), Bm); ctx.lineTo(Math.min(w, R), Bm); ctx.stroke(); }
+    if (L > 0) { ctx.beginPath(); ctx.moveTo(L, Math.max(0, T)); ctx.lineTo(L, Math.min(h, Bm)); ctx.stroke(); }
+    if (T > 0) { ctx.beginPath(); ctx.moveTo(Math.max(0, L), T); ctx.lineTo(Math.min(w, R), T); ctx.stroke(); }
     ctx.setLineDash([]);
     // edges that grow get a glow band
     ctx.fillStyle = "rgba(110,127,99,.22)";
-    if (target.w > w) ctx.fillRect(w - 14, 0, 14, h);
-    if (target.h > h) ctx.fillRect(0, h - 14, w, 14);
+    if (R > w) ctx.fillRect(w - 14, 0, 14, h);
+    if (Bm > h) ctx.fillRect(0, h - 14, w, 14);
+    if (L < 0) ctx.fillRect(0, 0, 14, h);
+    if (T < 0) ctx.fillRect(0, 0, w, 14);
     const grow = target.w > w || target.h > h;
     const label = `${grow && !roomDrag ? "Room grows to " : ""}${metres(target.w)} × ${metres(target.h)}`;
     ctx.font = "600 15px 'Work Sans', sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -2112,17 +2124,22 @@ function SeatingCanvas({
   // Dragged past the right/bottom edge: the room will grow to this size on release (never shrinks here).
   // Only when the dragged item itself pokes out of the room — moving something that's merely near an
   // edge must never resize the room.
+  // Past the left/top edge, the room grows on that side: everything shifts right/down by
+  // shiftX/shiftY (the plan's coordinates start at the top-left corner).
   const growTo = editable && liveDrag && onResizeRoom ? (() => {
     const item = liveDrag.kind === "table" ? draggedTables.filter(t => t.id === liveDrag.id) : [];
     const itemObjs = liveDrag.kind === "object" ? draggedObjects.filter(o => o.id === liveDrag.id) : [];
-    const out = layoutExtent(item, itemObjs, 0);
-    if (out.w <= SEAT_LW && out.h <= SEAT_LH) return null;
-    const need = layoutExtent(draggedTables, draggedObjects);
-    const g = { w: Math.min(ROOM_MAX, Math.max(SEAT_LW, need.w)), h: Math.min(ROOM_MAX, Math.max(SEAT_LH, need.h)) };
-    return g.w > SEAT_LW || g.h > SEAT_LH ? g : null;
+    const ib = layoutBounds(item, itemObjs);
+    const outR = snapUpHalfM(ib.maxX) > SEAT_LW, outB = snapUpHalfM(ib.maxY) > SEAT_LH, outL = ib.minX < 0, outT = ib.minY < 0;
+    if (!outR && !outB && !outL && !outT) return null;
+    const all = layoutBounds(draggedTables, draggedObjects);
+    const shiftX = outL ? snapUpHalfM(-all.minX + UNITS_PER_M) : 0, shiftY = outT ? snapUpHalfM(-all.minY + UNITS_PER_M) : 0;
+    const w = Math.min(ROOM_MAX, Math.max(SEAT_LW, outR ? snapUpHalfM(all.maxX + UNITS_PER_M) : SEAT_LW) + shiftX);
+    const h = Math.min(ROOM_MAX, Math.max(SEAT_LH, outB ? snapUpHalfM(all.maxY + UNITS_PER_M) : SEAT_LH) + shiftY);
+    return { w, h, shiftX, shiftY };
   })() : null;
-  // Until release, an item past the edge is drawn pinned at the edge (the canvas can't show beyond it).
-  const pin = (x, y) => [Math.min(x, SEAT_LW - 8), Math.min(y, SEAT_LH - 8)];
+  // Until release, an item past an edge is drawn pinned at that edge (the canvas can't show beyond it).
+  const pin = (x, y) => [clamp(x, 8, SEAT_LW - 8), clamp(y, 8, SEAT_LH - 8)];
   const effectiveTables = liveDrag?.kind === "table" ? draggedTables.map(t => (t.id === liveDrag.id ? { ...t, ...(([x, y]) => ({ x, y }))(pin(t.x, t.y)) } : t)) : draggedTables;
   const effectiveObjects = liveDrag?.kind === "object" ? draggedObjects.map(o => {
     if (o.id !== liveDrag.id) return o;
@@ -2175,16 +2192,20 @@ function SeatingCanvas({
     });
     ctx.restore();
     if (editable && onResizeRoom) drawRoomResizeUI(ctx, room, roomDrag, growTo);
-  }, [effectiveTables, effectiveObjects, editable, selectedTableId, selectedObjectId, occupancy, occupiedSeats, highlightColors, highlightSeatIndices, dimOthers, viewTransform, chairColor, SEAT_LW, SEAT_LH, roomDrag, growTo?.w, growTo?.h]);
+  }, [effectiveTables, effectiveObjects, editable, selectedTableId, selectedObjectId, occupancy, occupiedSeats, highlightColors, highlightSeatIndices, dimOthers, viewTransform, chairColor, SEAT_LW, SEAT_LH, roomDrag, growTo?.w, growTo?.h, growTo?.shiftX, growTo?.shiftY]);
 
   function handlePointerDown(e) {
     const canvas = canvasRef.current;
     const pt = seatToLogical(e, canvas, room);
     if (editable) {
-      // The room's corner handle (bottom-right) resizes the room.
-      if (onResizeRoom && Math.abs(pt.x - (SEAT_LW - ROOM_HANDLE / 2 - 4)) <= ROOM_HANDLE && Math.abs(pt.y - (SEAT_LH - ROOM_HANDLE / 2 - 4)) <= ROOM_HANDLE) {
-        dragStartRef.current = { kind: "room", startW: SEAT_LW, startH: SEAT_LH, startPtX: pt.x, startPtY: pt.y, min: layoutExtent(tables, objs) };
-        setRoomDrag({ w: SEAT_LW, h: SEAT_LH });
+      // The room's corner handles (bottom-right ◢, top-left ◤) resize the room.
+      const near = (cx, cy) => Math.abs(pt.x - cx) <= ROOM_HANDLE && Math.abs(pt.y - cy) <= ROOM_HANDLE;
+      const corner = !onResizeRoom ? null
+        : near(SEAT_LW - ROOM_HANDLE / 2 - 4, SEAT_LH - ROOM_HANDLE / 2 - 4) ? "br"
+        : near(ROOM_HANDLE / 2 + 4, ROOM_HANDLE / 2 + 4) ? "tl" : null;
+      if (corner) {
+        dragStartRef.current = { kind: "room", corner, startW: SEAT_LW, startH: SEAT_LH, startPtX: pt.x, startPtY: pt.y, min: layoutExtent(tables, objs), bounds: layoutBounds(tables, objs), empty: !tables.length && !objs.length };
+        setRoomDrag({ w: SEAT_LW, h: SEAT_LH, shiftX: 0, shiftY: 0, corner });
         canvas.setPointerCapture(e.pointerId);
         return;
       }
@@ -2222,14 +2243,24 @@ function SeatingCanvas({
     if (editable && d) {
       const dx = pt.x - d.startPtX, dy = pt.y - d.startPtY;
       if (d.kind === "room") {
-        // Corner handle: snap to 0.5 m; never smaller than the layout (or 6 m), never over 100 m.
+        // Corner handles snap to 0.5 m; never smaller than the layout (+1 m) or 6 m, never over 100 m.
         const half = UNITS_PER_M / 2, snap = v => Math.round(v / half) * half;
-        setRoomDrag({ w: clamp(snap(d.startW + dx), Math.max(ROOM_MIN, d.min.w), ROOM_MAX), h: clamp(snap(d.startH + dy), Math.max(ROOM_MIN, d.min.h), ROOM_MAX) });
+        if (d.corner === "br") {
+          setRoomDrag({ w: clamp(snap(d.startW + dx), Math.max(ROOM_MIN, d.min.w), ROOM_MAX), h: clamp(snap(d.startH + dy), Math.max(ROOM_MIN, d.min.h), ROOM_MAX), shiftX: 0, shiftY: 0, corner: "br" });
+        } else {
+          // Top-left: growing adds space on the left/top (everything shifts right/down); shrinking
+          // removes space there, but never past 1 m in front of the nearest table/item.
+          const minShiftX = d.empty ? -(d.startW - ROOM_MIN) : -snapDownHalfM(Math.max(0, d.bounds.minX - UNITS_PER_M));
+          const minShiftY = d.empty ? -(d.startH - ROOM_MIN) : -snapDownHalfM(Math.max(0, d.bounds.minY - UNITS_PER_M));
+          let shiftX = clamp(snap(-dx), minShiftX, ROOM_MAX - d.startW), shiftY = clamp(snap(-dy), minShiftY, ROOM_MAX - d.startH);
+          shiftX = Math.max(shiftX, ROOM_MIN - d.startW); shiftY = Math.max(shiftY, ROOM_MIN - d.startH);
+          setRoomDrag({ w: d.startW + shiftX, h: d.startH + shiftY, shiftX, shiftY, corner: "tl" });
+        }
         return;
       }
-      // Items can be dragged past the right/bottom edge (the room grows on release); the left/top edge stops them.
-      const XM = onResizeRoom ? ROOM_MAX : SEAT_LW, YM = onResizeRoom ? ROOM_MAX : SEAT_LH;
-      const sx = v => snapClamp(v, 0, XM), sy = v => snapClamp(v, 0, YM);
+      // Items can be dragged past any edge when the room can be resized (it grows on release).
+      const lo = onResizeRoom ? -ROOM_MAX : 0, XM = onResizeRoom ? ROOM_MAX : SEAT_LW, YM = onResizeRoom ? ROOM_MAX : SEAT_LH;
+      const sx = v => snapClamp(v, lo, XM), sy = v => snapClamp(v, lo, YM);
       if (d.kind === "table") {
         setLiveDrag({ kind: "table", id: d.id, x: sx(d.startX + dx), y: sy(d.startY + dy) });
       } else if (d.handle === "p1") {
@@ -2250,7 +2281,7 @@ function SeatingCanvas({
   function handlePointerUp() {
     const d = dragStartRef.current;
     if (editable && d?.kind === "room") {
-      if (roomDrag && (roomDrag.w !== SEAT_LW || roomDrag.h !== SEAT_LH)) onResizeRoom(roomDrag, "handle");
+      if (roomDrag && (roomDrag.w !== SEAT_LW || roomDrag.h !== SEAT_LH)) onResizeRoom({ w: roomDrag.w, h: roomDrag.h }, { shiftX: roomDrag.shiftX, shiftY: roomDrag.shiftY });
     } else if (editable && d && liveDrag) {
       // `growTo` (if set) is the bigger room this drop needs; the parent saves it with the move.
       if (d.kind === "table") onDragTableEnd(liveDrag.id, liveDrag.x, liveDrag.y, growTo);
@@ -2484,7 +2515,7 @@ function RoomSizePanel({ state, actions }) {
         <span className="room-style-label">Room</span>
         <strong className="room-size-value">{metres(room.w)} × {metres(room.h)}</strong>
         {!open && <button type="button" className="chip-btn" onClick={startEdit}>Resize</button>}
-        <span className="helptext room-size-tip">Drag the ◢ corner of the plan, or drag a table past the edge, to make the room bigger.</span>
+        <span className="helptext room-size-tip">Drag the ◤ or ◢ corner of the plan, or drag a table past any edge, to change the room's size.</span>
       </div>
       {notice && (
         <div className="room-notice" role="status">
@@ -2613,7 +2644,7 @@ function AdminSeating({ state, actions }) {
               objects={previewObjects}
               chairColor={state.seatingChairColor}
               room={state.seatingRoom}
-              onResizeRoom={r => actions.saveRoom(r)}
+              onResizeRoom={(r, shift) => actions.saveRoom(r, shift)}
               editable
               selectedTableId={state.selectedTableId}
               onSelectTable={actions.selectTable}
@@ -3809,21 +3840,40 @@ export default function App() {
       showToast("Couldn't save that shape's position.");
     }
   }
-  // Dropped past the right/bottom edge: grow the room to fit, then move the item there.
-  // A notice offers Undo (old room size and the item's old spot).
+  // A fireplace/stairs left on "auto" faces the nearest wall, so resizing the room could turn it.
+  // Before any resize, save each one's current direction so it stays put.
+  async function pinAutoRotations() {
+    const room = roomOf(state.seatingRoom);
+    for (const o of state.seatingObjects.filter(o => (o.type === "fireplace" || o.type === "stairs") && o.rotation == null)) {
+      await seatingMutate("save-object", { ...o, rotation: Math.round(featureAngle(o, room) * 180 / Math.PI + 360) % 360 });
+    }
+  }
+  // Dropped past an edge: grow the room to fit, then move the item there. Growing on the left/top
+  // shifts everything right/down by growTo.shiftX/shiftY (done on the server in the same save), so the
+  // dropped spot is shifted too. A notice offers Undo (old room size, shift back, the item's old spot).
   async function growRoomAndMove(growTo, move) {
     const prevRoom = roomOf(state.seatingRoom);
-    const apply = (list, m, pos) => list.map(it => (it.id === m.id ? { ...it, ...pos } : it));
-    const key = move.kind === "table" ? "seatingTables" : "seatingObjects", draftKey = move.kind === "table" ? "tableDraft" : "objectDraft";
+    const sx = growTo.shiftX || 0, sy = growTo.shiftY || 0;
+    const room = { w: growTo.w, h: growTo.h };
+    const sh = it => ({ ...it, x: it.x + sx, y: it.y + sy, ...(it.x2 != null && { x2: it.x2 + sx, y2: it.y2 + sy }) });
+    const after = { ...move.after, x: move.after.x != null ? move.after.x + sx : undefined, y: move.after.y != null ? move.after.y + sy : undefined,
+      ...(move.after.x2 != null && { x2: move.after.x2 + sx, y2: move.after.y2 + sy }) };
+    Object.keys(after).forEach(k => after[k] === undefined && delete after[k]);
+    const isTable = move.kind === "table";
+    const tables = state.seatingTables.map(t => (isTable && t.id === move.id ? { ...sh(t), ...after } : sh(t)));
+    const objects = state.seatingObjects.map(o => (!isTable && o.id === move.id ? { ...sh(o), ...after } : sh(o)));
+    const draftKey = isTable ? "tableDraft" : "objectDraft", otherKey = isTable ? "objectDraft" : "tableDraft";
     patch({
-      seatingRoom: growTo, [key]: apply(state[key], move, move.after),
-      ...(state[draftKey]?.id === move.id && { [draftKey]: { ...state[draftKey], ...move.after } }),
-      roomNotice: { text: `Room extended to ${metres(growTo.w)} × ${metres(growTo.h)}`, undo: { room: prevRoom, move } }
+      seatingRoom: room, seatingTables: tables, seatingObjects: objects,
+      ...(state[draftKey] && { [draftKey]: state[draftKey].id === move.id ? { ...sh(state[draftKey]), ...after } : sh(state[draftKey]) }),
+      ...(state[otherKey] && { [otherKey]: sh(state[otherKey]) }),
+      roomNotice: { text: `Room extended to ${metres(room.w)} × ${metres(room.h)}`, undo: { room: prevRoom, shiftX: sx, shiftY: sy, move } }
     });
     try {
-      await seatingMutate("save-room", growTo);
-      const item = (move.kind === "table" ? state.seatingTables : state.seatingObjects).find(it => it.id === move.id);
-      await seatingMutate(move.kind === "table" ? "save-table" : "save-object", { ...item, ...move.after });
+      await pinAutoRotations();
+      await seatingMutate("save-room", { ...room, shiftX: sx, shiftY: sy });
+      const item = (isTable ? tables : objects).find(it => it.id === move.id);
+      await seatingMutate(isTable ? "save-table" : "save-object", item);
     } catch (e) {
       showToast("Couldn't extend the room.");
     }
@@ -3833,11 +3883,19 @@ export default function App() {
     if (!u) return;
     patch({ roomNotice: null, loading: true });
     try {
-      const item = (u.move.kind === "table" ? state.seatingTables : state.seatingObjects).find(it => it.id === u.move.id);
-      await seatingMutate(u.move.kind === "table" ? "save-table" : "save-object", { ...item, ...u.move.before });
-      await seatingMutate("save-room", u.room);
-      const draftKey = u.move.kind === "table" ? "tableDraft" : "objectDraft";
-      patch({ loading: false, ...(state[draftKey]?.id === u.move.id && { [draftKey]: { ...state[draftKey], ...u.move.before } }) });
+      const isTable = u.move.kind === "table";
+      // Put the item back (in today's shifted coordinates), then shrink the room and shift everything back.
+      const item = (isTable ? state.seatingTables : state.seatingObjects).find(it => it.id === u.move.id);
+      const b = u.move.before;
+      const back = { ...b, x: b.x + u.shiftX, y: b.y + u.shiftY, ...(b.x2 != null && { x2: b.x2 + u.shiftX, y2: b.y2 + u.shiftY }) };
+      await seatingMutate(isTable ? "save-table" : "save-object", { ...item, ...back });
+      await seatingMutate("save-room", { ...u.room, shiftX: -u.shiftX, shiftY: -u.shiftY });
+      const unshift = d => d && { ...d, x: d.x - u.shiftX, y: d.y - u.shiftY, ...(d.x2 != null && { x2: d.x2 - u.shiftX, y2: d.y2 - u.shiftY }) };
+      patch({
+        loading: false,
+        ...(state.tableDraft && { tableDraft: isTable && state.tableDraft.id === u.move.id ? { ...state.tableDraft, ...b } : unshift(state.tableDraft) }),
+        ...(state.objectDraft && { objectDraft: !isTable && state.objectDraft.id === u.move.id ? { ...state.objectDraft, ...b } : unshift(state.objectDraft) })
+      });
     } catch (e) {
       patch({ loading: false });
       showToast("Couldn't undo that.");
@@ -3847,8 +3905,11 @@ export default function App() {
   async function saveRoom(room, { shiftX = 0, shiftY = 0, quiet = false } = {}) {
     patch({ loading: true, roomNotice: null });
     try {
+      await pinAutoRotations();
       await seatingMutate("save-room", { ...room, shiftX, shiftY });
-      patch({ loading: false });
+      // An open edit panel holds a position too; shift it along with everything else.
+      const sh = d => d && (shiftX || shiftY) ? { ...d, x: d.x + shiftX, y: d.y + shiftY, ...(d.x2 != null && { x2: d.x2 + shiftX, y2: d.y2 + shiftY }) } : d;
+      patch({ loading: false, tableDraft: sh(state.tableDraft), objectDraft: sh(state.objectDraft) });
       if (!quiet) showToast(`Room is now ${metres(room.w)} × ${metres(room.h)}.`);
       return true;
     } catch (e) {

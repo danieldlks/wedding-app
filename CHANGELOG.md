@@ -13,8 +13,10 @@ made along the way.
 
 **Feature: room size.** The room was a fixed 20 m × 14 m (1000 × 700 plan units; 50 units = 1 m). It can now be resized three ways:
 - **Exact size:** Room → Resize, then enter width × depth in metres, in 0.5 m steps from 6 m to 100 m. "Fit to layout" sets the smallest size that still holds everything. "+ 1 m on the left / at the top" adds space by shifting everything over.
-- **Corner handle:** drag the ◢ in the plan's bottom-right corner. The size shows as you drag, and it can't shrink past your tables.
-- **On the go:** drag a table or item past the right or bottom edge and the room grows to fit it on release. A notice offers Undo. Only an item that actually goes past the edge grows the room; one that's merely near an edge doesn't.
+- **Bottom-right handle:** drag the ◢ in the plan's bottom-right corner. The size shows as you drag, and it can't shrink past your tables.
+- **Top-left handle:** drag the ◤ in the top-left corner to add or remove space on the left and top. Everything shifts over to match, and the room can't shrink to within 1 m of your nearest table.
+- **On the go:** drag a table or item past any edge (left, top, right or bottom) and the room grows to fit it on release. Growing on the left or top shifts everything over. A notice offers Undo, which reverses the shift too. Only an item that actually goes past the edge grows the room; one that's merely near an edge doesn't.
+- **Fireplaces and stairs on automatic facing** keep their direction when the room is resized.
 
 **Also:**
 - **Scale bar:** the editor and the downloaded image show a 5 m scale bar.

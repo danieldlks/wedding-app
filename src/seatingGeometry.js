@@ -15,15 +15,23 @@ export function metres(units) { const m = Math.round((units / UNITS_PER_M) * 10)
 // Smallest room (snapped to 0.5 m) that still holds every table and item, with a margin
 // (default 1 m) on the right/bottom.
 export function layoutExtent(tables, objects, margin = UNITS_PER_M) {
-  let maxX = 0, maxY = 0;
-  for (const t of tables || []) { const { w, h } = tableDims(t); const r = Math.hypot(w, h) / 2 + 14; maxX = Math.max(maxX, t.x + r); maxY = Math.max(maxY, t.y + r); }
+  const { maxX, maxY } = layoutBounds(tables, objects);
+  return { w: Math.max(ROOM_MIN, snapUpHalfM(maxX + margin)), h: Math.max(ROOM_MIN, snapUpHalfM(maxY + margin)) };
+}
+// Raw outer bounds of everything placed (tables include their chairs). Empty layout: all 0.
+export function layoutBounds(tables, objects) {
+  let minX = Infinity, minY = Infinity, maxX = 0, maxY = 0;
+  const add = (x0, y0, x1, y1) => { minX = Math.min(minX, x0); minY = Math.min(minY, y0); maxX = Math.max(maxX, x1); maxY = Math.max(maxY, y1); };
+  for (const t of tables || []) { const { w, h } = tableDims(t); const r = Math.hypot(w, h) / 2 + 14; add(t.x - r, t.y - r, t.x + r, t.y + r); }
   for (const o of objects || []) {
     const r = o.type === "fireplace" || o.type === "stairs" ? Math.hypot(featureDims(o).w, featureDims(o).d) / 2 : (o.size || 0) / 2;
-    maxX = Math.max(maxX, o.x + r, o.x2 != null ? o.x2 + 6 : 0); maxY = Math.max(maxY, o.y + r, o.y2 != null ? o.y2 + 6 : 0);
+    add(o.x - r, o.y - r, o.x + r, o.y + r);
+    if (o.x2 != null) add(o.x2 - 6, o.y2 - 6, o.x2 + 6, o.y2 + 6);
   }
-  const snap = v => Math.ceil(v / (UNITS_PER_M / 2)) * (UNITS_PER_M / 2);
-  return { w: Math.max(ROOM_MIN, snap(maxX + margin)), h: Math.max(ROOM_MIN, snap(maxY + margin)) };
+  return minX === Infinity ? { minX: 0, minY: 0, maxX: 0, maxY: 0 } : { minX, minY, maxX, maxY };
 }
+export function snapUpHalfM(v) { return Math.ceil(v / (UNITS_PER_M / 2)) * (UNITS_PER_M / 2); }
+export function snapDownHalfM(v) { return Math.floor(v / (UNITS_PER_M / 2)) * (UNITS_PER_M / 2); }
 
 export function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
 
