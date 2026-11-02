@@ -35,8 +35,15 @@ CREATE TABLE IF NOT EXISTS seating_tables (
   size2 REAL,                          -- long axis (oval, banquet only) — see getSeatPositions()/tableDims() in src/App.jsx
   rotation REAL NOT NULL DEFAULT 0,    -- degrees, unused by the current UI (kept for future use)
   capacity INTEGER NOT NULL DEFAULT 8,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  color TEXT,                          -- tablecloth '#rrggbb' (NULL = white linen)
+  chair_color TEXT                     -- this table's chairs (NULL = the venue's chair colour, app_settings chair_color)
 );
+-- DEPLOY NOTE (floor-plan features): an existing database needs, run one at a time:
+--   ALTER TABLE seating_tables ADD COLUMN color TEXT;
+--   ALTER TABLE seating_tables ADD COLUMN chair_color TEXT;
+--   ALTER TABLE floor_objects ADD COLUMN rotation REAL;
+--   ALTER TABLE floor_objects ADD COLUMN color TEXT;
 
 -- Per-seat assignment, one row per invited guest (member_id from a
 -- household's members JSON). seat_index (0-based) picks a specific chair
@@ -68,14 +75,16 @@ CREATE TABLE IF NOT EXISTS seat_assignments (
 -- other three shapes use (x,y) as center and `size` as diameter/side length.
 CREATE TABLE IF NOT EXISTS floor_objects (
   id TEXT PRIMARY KEY,
-  type TEXT NOT NULL,   -- 'circle' | 'rect' | 'triangle' | 'line'
+  type TEXT NOT NULL,   -- 'circle' | 'rect' | 'triangle' | 'line' | 'fireplace' | 'stairs' | 'curtain' | 'window' | 'pillar' | 'post'
   label TEXT,
   x REAL NOT NULL DEFAULT 100,
   y REAL NOT NULL DEFAULT 100,
   size REAL NOT NULL DEFAULT 60,
   x2 REAL,
   y2 REAL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  rotation REAL,        -- degrees; fireplace/stairs facing (NULL = face away from / toward the nearest wall)
+  color TEXT            -- '#rrggbb' main colour (NULL = the item's natural finish)
 );
 
 -- Generic global settings store — currently just the guest seating-reveal

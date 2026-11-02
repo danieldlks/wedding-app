@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DRenderer, CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { SEAT_LW, SEAT_LH, clamp, tableDims, triangleVertices, getSeatPositions } from "./seatingGeometry.js";
+import { SEAT_LW, SEAT_LH, clamp, tableDims, triangleVertices, getSeatPositions, featureDims, featureAngle, DEFAULT_CHAIR_COLOR } from "./seatingGeometry.js";
 
 // A furnished "dollhouse" of the reception room, built from the same
 // seating_tables / floor_objects data the 2D SeatingCanvas draws (issue #4).
@@ -151,9 +151,13 @@ function makeFp3dLabelObject(text, meta) {
   el.style.cssText = `
     font: 700 13px 'Work Sans', sans-serif; color: ${FP3D_LABEL_TEXT};
     background: ${FP3D_LABEL_CHIP}; padding: 3px 9px; border-radius: 4px;
-    white-space: nowrap; pointer-events: none; user-select: none;
+    white-space: nowrap; pointer-events: none; user-select: none; text-align: center;
     box-shadow: 0 1px 3px rgba(32,43,34,.25); transition: opacity .15s;
   `;
+  // A table label also has a short form — just its number ("Table 22" -> "22") —
+  // shown as a round badge when the room is too crowded for full names.
+  const num = meta.kind === "table" && /(\d+)\s*$/.exec(text);
+  if (num) { el.dataset.full = text; el.dataset.short = num[1]; }
   const obj = new CSS2DObject(el);
   obj.userData = meta; // { kind: 'table'|'object', tableId? } — read by fp3dDeclutterLabels()
   return obj;
@@ -168,6 +172,16 @@ function makeFp3dLabelObject(text, meta) {
 // tables, then landmarks; ties prefer whatever is already showing (so labels
 // don't flicker while orbiting), then whichever is nearer the camera.
 const _fp3dLabelPos = new THREE.Vector3();
+// Switches a table label between its full name and a compact number badge.
+function fp3dLabelForm(el, form) {
+  el.dataset.form = form;
+  const short = form === "short";
+  el.textContent = short ? el.dataset.short : el.dataset.full;
+  Object.assign(el.style, short
+    ? { minWidth: "20px", padding: "2px 5px", borderRadius: "10px", fontSize: "11.5px" }
+    : { minWidth: "", padding: "3px 9px", borderRadius: "4px", fontSize: "13px" });
+}
+
 function fp3dDeclutterLabels(s) {
   const { camera, labels, size, activeTableId, hoveredTableId } = s;
   const pad = 3;
@@ -175,7 +189,13 @@ function fp3dDeclutterLabels(s) {
   for (const obj of labels) {
     const el = obj.element;
     if (el.style.display === "none") continue; // already culled by CSS2DRenderer (off-screen/behind camera)
-    if (!obj.userData.w) { obj.userData.w = el.offsetWidth; obj.userData.h = el.offsetHeight; } // text never changes after build, so measure once
+    if (!obj.userData.w) { // text never changes after build, so measure once (both forms for tables)
+      if (el.dataset.short) {
+        fp3dLabelForm(el, "short"); obj.userData.ws = el.offsetWidth; obj.userData.hs = el.offsetHeight;
+        fp3dLabelForm(el, "full");
+      }
+      obj.userData.w = el.offsetWidth; obj.userData.h = el.offsetHeight;
+    }
     _fp3dLabelPos.setFromMatrixPosition(obj.matrixWorld);
     const dist = _fp3dLabelPos.distanceToSquared(camera.position);
     _fp3dLabelPos.project(camera);
@@ -188,10 +208,38 @@ function fp3dDeclutterLabels(s) {
     const rank = obj.userData.kind === "seat" ? 0
       : id != null && (id === activeTableId || id === hoveredTableId) ? 1
       : obj.userData.kind === "table" ? 2 : 3;
-    entries.push({ el, rank, dist, shown: el.style.opacity !== "0", x0: cx - hw, x1: cx + hw, y0: cy - hh, y1: cy + hh });
+    const hs = obj.userData.ws ? obj.userData.ws / 2 + 1 : null, vs = obj.userData.ws ? obj.userData.hs / 2 + 1 : null;
+    entries.push({ el, rank, dist, shown: el.style.opacity !== "0", cx, cy, hs, vs, x0: cx - hw, x1: cx + hw, y0: cy - hh, y1: cy + hh });
   }
+  // Overlay buttons (Walk around, zoom) and the view's edges count as taken space.
+  const blockers = [];
+  const canvas = s.renderer?.domElement, host = canvas?.closest(".fp3d-wrap")?.parentElement;
+  if (canvas && host) {
+    const cr = canvas.getBoundingClientRect();
+    host.querySelectorAll(".fp3d-mode button, .zoom-controls button").forEach(b => {
+      const r = b.getBoundingClientRect();
+      if (r.width) blockers.push({ x0: r.left - cr.left, x1: r.right - cr.left, y0: r.top - cr.top, y1: r.bottom - cr.top });
+    });
+  }
+  const offView = e => e.x0 < 0 || e.y0 < 0 || e.x1 > size.w || e.y1 > size.h;
   entries.sort((a, b) => a.rank - b.rank || b.shown - a.shown || a.dist - b.dist);
-  const placed = [];
+  const fullX = entries.map(e => [e.x0, e.x1, e.y0, e.y1]);
+  // Lay labels out with full names; if any numbered table's full name won't fit
+  // (another label, a button or the view's edge is in the way), lay them all out
+  // again as number badges, so the view reads consistently. The guest's own /
+  // the selected table (rank 1) keeps its full name.
+  let result = layoutFp3dLabels(entries, blockers, offView, false);
+  if (result.crowded) { entries.forEach((e, i) => { [e.x0, e.x1, e.y0, e.y1] = fullX[i]; }); result = layoutFp3dLabels(entries, blockers, offView, true); }
+  for (const { e, show, form } of result.out) {
+    if (e.el.dataset.short && e.el.dataset.form !== form) fp3dLabelForm(e.el, form);
+    const opacity = show ? "1" : "0";
+    if (e.el.style.opacity !== opacity) e.el.style.opacity = opacity;
+  }
+}
+
+function layoutFp3dLabels(entries, blockers, offView, allShort) {
+  const placed = [], out = [];
+  let crowded = false;
   for (const e of entries) {
     // A household's own seat labels are always shown, so instead of hiding one
     // that would cover another (neighbouring chairs), stack it just above.
@@ -205,11 +253,21 @@ function fp3dDeclutterLabels(s) {
       if (e.el.style.marginTop !== mt) e.el.style.marginTop = mt;
     }
     const overlaps = p => e.x0 < p.x1 && e.x1 > p.x0 && e.y0 < p.y1 && e.y1 > p.y0;
-    const show = e.rank === 0 || (e.rank === 1 ? !placed.some(p => p.rank === 0 && overlaps(p)) : !placed.some(overlaps));
+    const blocked = () => (e.rank > 0 && (offView(e) || blockers.some(overlaps))) || (e.rank === 1 ? placed.some(p => p.rank === 0 && overlaps(p)) : e.rank > 1 && placed.some(overlaps));
+    let form = "full";
+    const toShort = () => { e.x0 = e.cx - e.hs; e.x1 = e.cx + e.hs; e.y0 = e.cy - e.vs; e.y1 = e.cy + e.vs; };
+    if (allShort && e.hs && e.rank > 1) { toShort(); form = "short"; }
+    let show = e.rank === 0 || !blocked();
+    // Any numbered table that can't show its full name switches the whole view to numbers.
+    if (!allShort && e.hs && e.rank > 1 && !show) crowded = true;
+    if (!show && e.hs && form === "full") { // try the number-only badge before hiding
+      const full = [e.x0, e.x1, e.y0, e.y1]; toShort();
+      if (!blocked()) { show = true; form = "short"; } else { [e.x0, e.x1, e.y0, e.y1] = full; }
+    }
     if (show) placed.push(e);
-    const opacity = show ? "1" : "0";
-    if (e.el.style.opacity !== opacity) e.el.style.opacity = opacity;
+    out.push({ e, show, form });
   }
+  return { out, crowded };
 }
 
 /* ---------------- furniture ---------------- */
@@ -284,7 +342,7 @@ function buildTable(t, mats) {
   const { w, h, round } = tableDims(t);
   const [ww, wh] = fp3dLogicalToWorld(w, h);
   const [px, pz] = fp3dLogicalToWorld(t.x, t.y);
-  const cloth = new THREE.MeshStandardMaterial({ color: FP3D_LINEN, roughness: 0.92 });
+  const cloth = new THREE.MeshStandardMaterial({ color: t.color || FP3D_LINEN, roughness: 0.92 });
   let geo;
   if (round) {
     // Slight flare towards the floor reads as fabric rather than a solid drum.
@@ -295,7 +353,7 @@ function buildTable(t, mats) {
   const mesh = new THREE.Mesh(geo, cloth);
   mesh.position.set(px, FP3D_TABLE_H / 2, pz);
   mesh.castShadow = true; mesh.receiveShadow = true;
-  mesh.userData = { tableId: t.id };
+  mesh.userData = { tableId: t.id, baseColor: t.color || FP3D_LINEN };
   // Centrepiece: a glass vase with a posy of greenery and two candles.
   const vase = new THREE.Mesh(mats.vaseGeo, mats.glass); vase.position.set(0, FP3D_TABLE_H / 2 + 0.11, 0);
   const posy = new THREE.Mesh(mats.posyGeo, mats.greenery); posy.position.set(0, FP3D_TABLE_H / 2 + 0.3, 0); posy.castShadow = true;
@@ -304,7 +362,7 @@ function buildTable(t, mats) {
     const candle = new THREE.Mesh(mats.candleGeo, mats.candle); candle.position.set(dx, FP3D_TABLE_H / 2 + 0.07, 0.05);
     mesh.add(candle);
   }
-  mesh.add(makeFp3dLabelObject(t.label, { kind: "table", tableId: t.id }).translateY(FP3D_TABLE_H / 2 + 0.95));
+  mesh.add(makeFp3dLabelObject(t.label, { kind: "table", tableId: t.id }).translateY(FP3D_TABLE_H / 2 + 0.42));
   return mesh;
 }
 
@@ -331,7 +389,174 @@ function footprintGeometry(o, height) {
   shape.closePath();
   return new THREE.ExtrudeGeometry(shape, { depth: height, bevelEnabled: false }).rotateX(-Math.PI / 2);
 }
+// Dry-stone texture for the fireplace and column bases.
+function stoneTexture() {
+  const c = document.createElement("canvas"); c.width = c.height = 256;
+  const g = c.getContext("2d");
+  g.fillStyle = "#B9AF9F"; g.fillRect(0, 0, 256, 256);
+  let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let row = 0, y = 0; y < 256; row++) {
+    const h = 26 + rnd() * 16;
+    for (let x = -rnd() * 40; x < 256;) {
+      const w = 36 + rnd() * 40, l = 196 + rnd() * 34;
+      g.fillStyle = `rgb(${l},${l - 8},${l - 20})`;
+      g.beginPath(); g.roundRect(x + 2, y + 2, w - 4, h - 4, 6); g.fill();
+      x += w;
+    }
+    y += h;
+  }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+let FP3D_STONE = null;
+
+// Fireplace, stairs and curtain models. Fireplace/stairs are built in a local
+// frame (width on x, depth on z, front / climb direction = +z), then turned to
+// featureAngle(); curtains run between the item's two end points like a wall.
+function buildFeature(o, mats) {
+  const group = new THREE.Group();
+  if (o.type === "curtain") {
+    const dx = o.x2 - o.x, dy = o.y2 - o.y;
+    const [lx, ly] = fp3dLogicalToWorld(dx, dy);
+    const L = Math.max(0.2, Math.hypot(lx, ly)), H = FP3D_WALL_H - 0.35;
+    const segX = Math.ceil(L / 0.05), geo = new THREE.PlaneGeometry(L, H, segX, 12);
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), y = pos.getY(i), drop = 0.65 + 0.35 * (0.5 - y / H); // folds flare toward the floor
+      pos.setZ(i, Math.sin((x / 0.34) * Math.PI * 2) * 0.1 * drop);
+    }
+    // Bake light/shadow into the folds so they read from any angle.
+    const col = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) { const k = 0.8 + 0.2 * Math.cos((pos.getX(i) / 0.34) * Math.PI * 2 - 0.6); col.set([k, k, k], i * 3); }
+    geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    geo.computeVertexNormals();
+    const fabric = new THREE.MeshStandardMaterial({ color: o.color || "#F6EEE2", roughness: 0.9, side: THREE.DoubleSide, vertexColors: true, emissive: "#3A3128", emissiveIntensity: 0.15 });
+    const drape = new THREE.Mesh(geo, fabric);
+    drape.position.y = H / 2 + 0.02; drape.castShadow = drape.receiveShadow = true;
+    const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, L + 0.2, 10).rotateZ(Math.PI / 2), mats.timberDark);
+    rail.position.y = H + 0.08;
+    const inner = new THREE.Group(); inner.add(drape, rail);
+    const [mx, mz] = fp3dLogicalToWorld((o.x + o.x2) / 2, (o.y + o.y2) / 2);
+    inner.position.set(mx, 0, mz); inner.rotation.y = -Math.atan2(dy, dx);
+    group.add(inner);
+    if (o.label) group.add(makeFp3dLabelObject(o.label, { kind: "object" }).translateX(mx).translateZ(mz).translateY(H + 0.4));
+    return group;
+  }
+  const { w, d } = featureDims(o);
+  const [W, D] = fp3dLogicalToWorld(w, d);
+  const inner = new THREE.Group();
+  const box = (sx, sy, sz, mat, x, y, z) => { const m = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat); m.position.set(x, y, z); m.castShadow = m.receiveShadow = true; inner.add(m); return m; };
+  let labelY = 1.0;
+  if (o.type === "fireplace") {
+    if (!FP3D_STONE) FP3D_STONE = stoneTexture();
+    if (!mats.stone) {
+      const tex = FP3D_STONE.clone(); tex.repeat.set(W / 1.4, FP3D_WALL_H / 1.4); tex.needsUpdate = true;
+      mats.stone = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95, emissive: "#EFE7DA", emissiveIntensity: 0.12 });
+      mats.soot = new THREE.MeshStandardMaterial({ color: "#221C18", roughness: 1 });
+      mats.flame = new THREE.MeshStandardMaterial({ color: "#FFB15C", emissive: "#FF8A2A", emissiveIntensity: 2.2, transparent: true, opacity: 0.9 });
+    }
+    const back = -D / 2, sd = D * 0.55;                             // surround depth from the wall
+    box(W * 0.86, FP3D_WALL_H, D * 0.42, mats.stone, 0, FP3D_WALL_H / 2, back + D * 0.21); // chimney breast to the ceiling
+    box(W * 0.22, 1.2, sd, mats.stone, -W / 2 + W * 0.11, 0.6, back + sd / 2);           // piers
+    box(W * 0.22, 1.2, sd, mats.stone, W / 2 - W * 0.11, 0.6, back + sd / 2);
+    box(W, 0.34, sd, mats.stone, 0, 1.03, back + sd / 2);                                // lintel
+    box(W * 0.56, 0.86, 0.06, mats.soot, 0, 0.43, back + D * 0.43);                      // firebox back
+    box(W * 0.56, 0.02, sd - D * 0.43, mats.soot, 0, 0.01, back + D * 0.43 + (sd - D * 0.43) / 2);
+    box(W * 1.06, 0.08, sd + 0.12, mats.timberDark, 0, 1.24, back + sd / 2 + 0.06);    // mantel shelf
+    box(W * 0.8, 0.07, D - sd, mats.stone, 0, 0.035, back + sd + (D - sd) / 2);        // hearth
+    // logs + flames + warm glow
+    for (const [x, r] of [[-0.12, 0.35], [0.12, -0.35]]) { const log = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, W * 0.4, 8), mats.timberDark); log.rotation.set(0, r, Math.PI / 2); log.position.set(x * 0.3, 0.09, back + D * 0.5); inner.add(log); }
+    [[0, 0.34, 0.12], [-0.17, 0.24, 0.09], [0.16, 0.26, 0.09]].forEach(([x, h, r]) => { const f = new THREE.Mesh(new THREE.ConeGeometry(r, h, 10), mats.flame); f.position.set(x, 0.12 + h / 2, back + D * 0.5); inner.add(f); });
+    const glow = new THREE.PointLight("#FFB066", 3, 5, 1.6); glow.position.set(0, 0.45, back + D * 0.75); inner.add(glow);
+    [-0.32, 0, 0.3].forEach((x, i) => { const c = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.16 + i % 2 * 0.1, 10), mats.candle); c.position.set(x * W, 1.36 + (i % 2) * 0.05, back + sd / 2 + 0.06); inner.add(c); });
+    labelY = FP3D_WALL_H * 0.62;
+  } else {
+    const n = 9, H = 2.2, rise = H / n, run = D / n;
+    for (let i = 0; i < n; i++) {
+      box(W, rise * (i + 1), run, mats.timber, 0, (rise * (i + 1)) / 2, -D / 2 + run * (i + 0.5));
+      box(W + 0.02, 0.03, run * 0.25, mats.timberDark, 0, rise * (i + 1) + 0.005, -D / 2 + run * (i + 0.12)); // nosing
+    }
+    const side = W / 2 + 0.03, railH = 0.95;
+    for (const z of [-D / 2 + run * 0.5, D / 2 - run * 0.5]) { const t = (z + D / 2) / D; box(0.06, railH, 0.06, mats.timberDark, side, rise * Math.ceil(t * n) + railH / 2, z); }
+    const len = Math.hypot(D - run, H - rise), rail = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, len, 8), mats.timberDark);
+    rail.position.set(side, (rise + H) / 2 + railH, 0); rail.rotation.x = Math.atan2(D - run, H - rise); inner.add(rail);
+    labelY = H + 0.6;
+  }
+  const a = featureAngle(o);
+  const [px, pz] = fp3dLogicalToWorld(o.x, o.y);
+  inner.position.set(px, 0, pz); inner.rotation.y = Math.PI / 2 - a;
+  group.add(inner);
+  if (o.label) group.add(makeFp3dLabelObject(o.label, { kind: "object" }).translateX(px).translateZ(pz).translateY(labelY));
+  return group;
+}
+
+// A round column from floor to ceiling, with a stone base and capital.
+function buildPillar(o, mats) {
+  const group = new THREE.Group();
+  if (!FP3D_STONE) FP3D_STONE = stoneTexture();
+  if (!mats.column) {
+    mats.column = new THREE.MeshStandardMaterial({ color: "#EFE9DF", roughness: 0.85, emissive: "#EFE7DA", emissiveIntensity: 0.15 });
+    const tex = FP3D_STONE.clone(); tex.repeat.set(1, 0.4); tex.needsUpdate = true;
+    mats.columnBase = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95 });
+  }
+  const [r] = fp3dLogicalToWorld(o.size / 2, 0);
+  const [px, pz] = fp3dLogicalToWorld(o.x, o.y);
+  const add = (geo, mat, y) => { const m = new THREE.Mesh(geo, mat); m.position.set(px, y, pz); m.castShadow = m.receiveShadow = true; group.add(m); };
+  const shaftH = FP3D_WALL_H - 0.5;
+  add(new THREE.BoxGeometry(r * 2.5, 0.12, r * 2.5), mats.columnBase, 0.06);             // plinth
+  add(new THREE.CylinderGeometry(r * 1.12, r * 1.18, 0.14, 32), mats.columnBase, 0.19);  // base torus-ish step
+  const shaftMat = o.color ? new THREE.MeshStandardMaterial({ color: o.color, roughness: 0.85 }) : mats.column;
+  add(new THREE.CylinderGeometry(r * 0.94, r, shaftH, 32), shaftMat, 0.26 + shaftH / 2); // slightly tapered shaft
+  add(new THREE.CylinderGeometry(r * 1.2, r * 0.96, 0.16, 32), mats.columnBase, FP3D_WALL_H - 0.16); // capital
+  add(new THREE.BoxGeometry(r * 2.6, 0.08, r * 2.6), mats.columnBase, FP3D_WALL_H - 0.04);           // abacus under the ceiling
+  if (o.label) group.add(makeFp3dLabelObject(o.label, { kind: "object" }).translateX(px).translateZ(pz).translateY(2.2));
+  return group;
+}
+
+// A square timber post from floor to ceiling, with knee braces up to a short beam (barn-style).
+function buildPost(o, mats) {
+  const group = new THREE.Group();
+  const mat = o.color ? new THREE.MeshStandardMaterial({ color: o.color, roughness: 0.7 }) : mats.timberDark;
+  const [half] = fp3dLogicalToWorld(o.size / 2, 0);
+  const [px, pz] = fp3dLogicalToWorld(o.x, o.y);
+  const s = Math.min(0.32, Math.max(0.14, half * 2)), H = FP3D_WALL_H;
+  const box = (sx, sy, sz, x, y, z, rx = 0, rz = 0) => { const m = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat); m.position.set(px + x, y, pz + z); m.rotation.set(rx, 0, rz); m.castShadow = m.receiveShadow = true; group.add(m); };
+  box(s, H, s, 0, H / 2, 0);                                   // post
+  box(s * 1.6, 0.06, s * 1.6, 0, 0.03, 0);                      // foot plate
+  box(1.2, s * 0.8, s * 0.8, 0, H - s * 0.4, 0);                // short beam (bolster) under the ceiling
+  for (const dir of [-1, 1]) box(s * 0.55, 0.7, s * 0.55, dir * 0.27, H - 0.42, 0, 0, dir * Math.PI / 4); // knee braces
+  if (o.label) group.add(makeFp3dLabelObject(o.label, { kind: "object" }).translateX(px).translateZ(pz).translateY(2.2));
+  return group;
+}
+
+// A window on a wall line: a framed, glazed opening with glazing bars and a sill.
+function buildWindow(o, mats) {
+  const group = new THREE.Group();
+  const dx = o.x2 - o.x, dy = o.y2 - o.y;
+  const [lx, ly] = fp3dLogicalToWorld(dx, dy);
+  const L = Math.max(0.3, Math.hypot(lx, ly)), bottom = 0.85, top = FP3D_WALL_H - 0.55, H = top - bottom;
+  const frameMat = o.color ? new THREE.MeshStandardMaterial({ color: o.color, roughness: 0.6 }) : mats.timberDark;
+  if (!mats.daylight) mats.daylight = new THREE.MeshStandardMaterial({ color: "#DCE9EC", emissive: "#EAF3F5", emissiveIntensity: 0.55, roughness: 0.15, transparent: true, opacity: 0.85 });
+  const inner = new THREE.Group();
+  const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); inner.add(m); return m; };
+  add(new THREE.BoxGeometry(L, H, 0.02), mats.daylight, 0, bottom + H / 2, 0);            // glass (bright daylight)
+  const bar = 0.06, panes = Math.max(2, Math.round(L / 0.7));
+  for (const y of [bottom, top]) add(new THREE.BoxGeometry(L + bar, bar, 0.1), frameMat, 0, y, 0.02);
+  for (let k = 0; k <= panes; k++) add(new THREE.BoxGeometry(bar, H, 0.1), frameMat, -L / 2 + (L * k) / panes, bottom + H / 2, 0.02);
+  add(new THREE.BoxGeometry(L + bar, bar * 0.7, 0.08), frameMat, 0, bottom + H * 0.62, 0.02);   // transom
+  add(new THREE.BoxGeometry(L + 0.2, 0.05, 0.2), frameMat, 0, bottom - 0.03, 0.08);              // sill
+  const [mx, mz] = fp3dLogicalToWorld((o.x + o.x2) / 2, (o.y + o.y2) / 2);
+  inner.position.set(mx, 0, mz); inner.rotation.y = -Math.atan2(dy, dx);
+  group.add(inner);
+  if (o.label) group.add(makeFp3dLabelObject(o.label, { kind: "object" }).translateX(mx).translateZ(mz).translateY(top + 0.3));
+  return group;
+}
+
 function buildLandmark(o, mats) {
+  if (o.type === "pillar") return buildPillar(o, mats);
+  if (o.type === "post") return buildPost(o, mats);
+  if (o.type === "window") return buildWindow(o, mats);
+  if (o.type === "fireplace" || o.type === "stairs" || o.type === "curtain") return buildFeature(o, mats);
   const group = new THREE.Group();
   const kind = landmarkKind(o);
   let labelY = 1.0;
@@ -370,6 +595,8 @@ function buildLandmark(o, mats) {
   } else {
     mesh = new THREE.Mesh(footprintGeometry(o, 0.4), mats.timber); labelY = 0.9;
   }
+  // A chosen colour replaces the item's natural finish (texture) with a plain coloured one.
+  if (o.color) mesh.material = new THREE.MeshStandardMaterial({ color: o.color, roughness: kind === "dance" ? 0.4 : 0.75 });
   mesh.position.set(px, 0, pz);
   mesh.castShadow = kind !== "dance"; mesh.receiveShadow = true;
   group.add(mesh);
@@ -456,7 +683,7 @@ function makeMaterials(roomW, roomD) {
     barTop: new THREE.MeshStandardMaterial({ color: "#3B2A1C", roughness: 0.35 }),
     linen: new THREE.MeshStandardMaterial({ color: FP3D_LINEN, roughness: 0.92 }),
     mat: new THREE.MeshStandardMaterial({ color: "#9A8A6E", roughness: 1 }),
-    chairFrame: new THREE.MeshStandardMaterial({ color: "#B88A55", roughness: 0.55 }),
+    chairFrame: new THREE.MeshStandardMaterial({ color: "#FFFFFF", roughness: 0.55 }), // tinted per chair (instance colour)
     cushion: new THREE.MeshStandardMaterial({ color: "#F4EFE4", roughness: 0.95 }),
     glass: new THREE.MeshStandardMaterial({ color: "#D9E6E0", roughness: 0.1, metalness: 0, transparent: true, opacity: 0.55 }),
     greenery: new THREE.MeshStandardMaterial({ color: "#6E7F63", roughness: 0.9, flatShading: true }),
@@ -625,7 +852,7 @@ function fp3dExitWalk(s) {
 function applyTableHighlight(tableMeshes, activeId, focusColor) {
   tableMeshes.forEach((mesh, id) => {
     const isActive = id === activeId;
-    mesh.material.color.set(FP3D_LINEN);
+    mesh.material.color.set(mesh.userData.baseColor || FP3D_LINEN);
     if (isActive) mesh.material.color.lerp(new THREE.Color(focusColor), 0.38);
     mesh.material.emissive.set(isActive ? focusColor : "#000000");
     mesh.material.emissiveIntensity = isActive ? 0.12 : 0;
@@ -634,7 +861,7 @@ function applyTableHighlight(tableMeshes, activeId, focusColor) {
 
 // seatMarkers (optional, guest view): [{ tableId, seatIndex, label, color }] —
 // the guest's own seats get a coloured cushion and a named pin.
-const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTableId, focusColor = "#A9814C", onSelectTable, seatMarkers }, ref) {
+const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, chairColor = null, focusTableId, focusColor = "#A9814C", onSelectTable, seatMarkers }, ref) {
   const mountRef = useRef(null);
   const sceneRef = useRef(null);
   const tableMeshesRef = useRef(new Map());
@@ -682,7 +909,9 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
     const [roomW, roomD] = fp3dLogicalToWorld(SEAT_LW, SEAT_LH);
     const camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 200);
     const center = new THREE.Vector3(roomW / 2, 0, roomD / 2);
-    camera.position.set(center.x, Math.max(roomW, roomD) * 0.62, center.z + Math.max(roomW, roomD) * 0.75);
+    // Look more steeply down on a busy room so the back rows aren't squashed together.
+    const busy = (tables || []).length > 15;
+    camera.position.set(center.x, Math.max(roomW, roomD) * (busy ? 0.9 : 0.62), center.z + Math.max(roomW, roomD) * (busy ? 0.45 : 0.75));
 
     const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias });
     renderer.setPixelRatio(quality.pixelRatio);
@@ -909,6 +1138,10 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
     const markers = JSON.parse(markersKey);
     const white = new THREE.Color("#FFFFFF");
     chairs.forEach((c, i) => cushions.setColorAt(i, white));
+    // Chair frames: the table's own chair colour, else the venue's, else natural timber.
+    const chairColorOf = Object.fromEntries((tables || []).map(t => [t.id, new THREE.Color(t.chairColor || chairColor || DEFAULT_CHAIR_COLOR)]));
+    chairs.forEach((c, i) => frames.setColorAt(i, chairColorOf[c.tableId]));
+    if (frames.instanceColor) frames.instanceColor.needsUpdate = true;
     markers.forEach(mk => {
       const i = chairs.findIndex(c => c.tableId === mk.tableId && c.seatIndex === mk.seatIndex);
       if (i < 0) return;
@@ -935,7 +1168,7 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, focusTabl
     // don't move the camera (the venue display re-polls the plan every few seconds).
     applyTableHighlight(tableMeshesRef.current, s.activeTableId, s.focusColor || focusColor);
     s.invalidate();
-  }, [tables, objects, markersKey]);
+  }, [tables, objects, markersKey, chairColor]);
 
   // Recolor for the externally-driven (guest search) or locally-clicked
   // selection, and fly the camera to whichever table is focused.

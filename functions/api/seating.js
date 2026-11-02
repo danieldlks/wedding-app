@@ -1,4 +1,4 @@
-import { rowToTable, rowToFloorObject, getSeatingRevealSetting, isSeatingRevealed } from "../_lib/db.js";
+import { rowToTable, rowToFloorObject, getSeatingRevealSetting, isSeatingRevealed, getChairColor } from "../_lib/db.js";
 
 // Guest-facing: returns the full floor plan (every table + every landmark)
 // so a guest can see the whole room, but WHO's sitting where stays scoped —
@@ -38,5 +38,5 @@ export async function onRequestGet({ request, env }) {
     .filter(r => memberNameById[r.member_id])
     .map(r => ({ memberId: r.member_id, memberName: memberNameById[r.member_id], tableId: r.table_id, seatIndex: r.seat_index }));
 
-  return Response.json({ tables: tableRows.map(rowToTable), mySeats, objects: objectRows.map(rowToFloorObject) });
+  return Response.json({ tables: tableRows.map(rowToTable), mySeats, objects: objectRows.map(rowToFloorObject), chairColor: await getChairColor(env.DB) });
 }

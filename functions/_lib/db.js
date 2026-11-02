@@ -47,7 +47,9 @@ export function rowToTable(row) {
     size: row.size,
     size2: row.size2,
     rotation: row.rotation,
-    capacity: row.capacity
+    capacity: row.capacity,
+    color: row.color || null,
+    chairColor: row.chair_color || null
   };
 }
 
@@ -60,7 +62,9 @@ export function rowToFloorObject(row) {
     y: row.y,
     size: row.size,
     x2: row.x2,
-    y2: row.y2
+    y2: row.y2,
+    rotation: row.rotation ?? null,
+    color: row.color || null
   };
 }
 
@@ -73,9 +77,17 @@ export async function listSeating(db) {
   const reveal = await getSeatingRevealSetting(db);
   return {
     tables: tableRows.map(rowToTable), assignments, objects: objectRows.map(rowToFloorObject),
-    revealMode: reveal.mode, revealAt: reveal.revealAt
+    revealMode: reveal.mode, revealAt: reveal.revealAt, chairColor: await getChairColor(db)
   };
 }
+
+// The venue's chair colour (app_settings chair_color); a table's own chair_color overrides it.
+export async function getChairColor(db) {
+  const row = await db.prepare("SELECT value FROM app_settings WHERE key = 'chair_color'").first();
+  return isHexColor(row?.value) ? row.value : null;
+}
+
+export function isHexColor(v) { return typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v); }
 
 export async function getSeatingRevealSetting(db) {
   const { results } = await db.prepare(

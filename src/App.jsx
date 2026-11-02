@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, lazy, Suspense } from "react";
-import { SEAT_LW, SEAT_LH, clamp, tableDims, triangleVertices, getSeatPositions } from "./seatingGeometry.js";
+import { SEAT_LW, SEAT_LH, clamp, tableDims, triangleVertices, getSeatPositions, featureDims, featureAngle, isLineObject, textColorOn } from "./seatingGeometry.js";
 // The 3D venue view (and three.js) is split into its own file and only
 // downloaded the first time someone switches to 3D.
 const FloorPlan3D = lazy(() => import("./FloorPlan3D.jsx"));
@@ -989,7 +989,7 @@ function GuestSeating({ state, actions }) {
           </div>
           {view === "map" ? (
             <div className="seating-canvas-wrap">
-              <SeatingCanvas tables={seating.tables} objects={seating.objects} highlightColors={highlightColors} highlightSeatIndices={highlightSeatIndices} dimOthers viewTransform={transform} onViewTransformChange={setTransform} />
+              <SeatingCanvas tables={seating.tables} objects={seating.objects} chairColor={seating.chairColor} highlightColors={highlightColors} highlightSeatIndices={highlightSeatIndices} dimOthers viewTransform={transform} onViewTransformChange={setTransform} />
               <div className="zoom-controls">
                 <button onClick={() => setTransform(t => zoomSeatTransform(t, 1.25))} aria-label="Zoom in">+</button>
                 <button onClick={() => setTransform(t => zoomSeatTransform(t, 1 / 1.25))} aria-label="Zoom out">−</button>
@@ -1003,6 +1003,7 @@ function GuestSeating({ state, actions }) {
                   ref={floorPlan3DRef}
                   tables={seating.tables}
                   objects={seating.objects}
+                  chairColor={seating.chairColor}
                   focusTableId={sortedTableIds[0] || null}
                   focusColor={highlightColors[sortedTableIds[0]]}
                   seatMarkers={seatMarkers}
@@ -1667,16 +1668,27 @@ function pointToSegmentDistance(px, py, x1, y1, x2, y2) {
   t = clamp(t, 0, 1);
   return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
 }
+const FLOOR_ITEM_NAMES = {
+  circle: "circle", rect: "square", triangle: "triangle", line: "wall / barrier", fireplace: "fireplace",
+  stairs: "stairs", curtain: "curtains", window: "window", pillar: "pillar", post: "timber post"
+};
+
 // Returns null (no hit), "body" (move the whole shape), or for lines "p1"/"p2"
 // (drag just that endpoint) so a wall/barrier can be stretched, not just moved.
 function hitTestObject(o, x, y) {
-  if (o.type === "line") {
+  if (isLineObject(o)) {
     if (Math.hypot(x - o.x, y - o.y) <= 10) return "p1";
     if (Math.hypot(x - o.x2, y - o.y2) <= 10) return "p2";
     return pointToSegmentDistance(x, y, o.x, o.y, o.x2, o.y2) <= 8 ? "body" : null;
   }
   const dx = x - o.x, dy = y - o.y;
-  if (o.type === "circle") return dx * dx + dy * dy <= (o.size / 2) * (o.size / 2) ? "body" : null;
+  if (o.type === "fireplace" || o.type === "stairs") {
+    // Rotate the point into the item's own frame, then test its w×d footprint.
+    const { w, d } = featureDims(o), a = featureAngle(o) - Math.PI / 2;
+    const lx = dx * Math.cos(-a) - dy * Math.sin(-a), ly = dx * Math.sin(-a) + dy * Math.cos(-a);
+    return Math.abs(lx) <= w / 2 && Math.abs(ly) <= d / 2 ? "body" : null;
+  }
+  if (o.type === "circle" || o.type === "pillar") return dx * dx + dy * dy <= (o.size / 2) * (o.size / 2) ? "body" : null;
   if (o.type === "triangle") return pointInTriangle(x, y, triangleVertices(o)) ? "body" : null;
   return Math.abs(dx) <= o.size / 2 && Math.abs(dy) <= o.size / 2 ? "body" : null; // rect
 }
@@ -1715,7 +1727,7 @@ function zoomSeatTransform(t, factor) {
 function drawFloorPlan(ctx, opts) {
   const {
     tables, objects, editable, selectedTableId, selectedObjectId,
-    occupancy, occupiedSeats, highlightColors, highlightSeatIndices, zoom = 1, showGrid = true, dimOthers = false
+    occupancy, occupiedSeats, highlightColors, highlightSeatIndices, zoom = 1, showGrid = true, dimOthers = false, chairColor = null
   } = opts;
 
   if (showGrid) {
@@ -1738,7 +1750,83 @@ function drawFloorPlan(ctx, opts) {
   objects.forEach(o => {
     const isSelected = editable && selectedObjectId === o.id;
     ctx.save();
-    if (o.type === "line") {
+    if (o.type === "window") {
+      // Architect's window symbol: a framed strip with the glazing line down the middle.
+      const dx = o.x2 - o.x, dy = o.y2 - o.y, L = Math.hypot(dx, dy) || 1;
+      ctx.translate(o.x, o.y); ctx.rotate(Math.atan2(dy, dx));
+      ctx.fillStyle = "#EEF3F1"; ctx.strokeStyle = isSelected ? "#6E7F63" : (o.color || "#3A3F37"); ctx.lineWidth = isSelected ? 2.5 : 1.5;
+      ctx.fillRect(0, -5, L, 10); ctx.strokeRect(0, -5, L, 10);
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(L, 0); ctx.lineWidth = 1; ctx.stroke();
+      for (let k = 1; k < Math.max(2, Math.round(L / 45)); k++) { const x = (L * k) / Math.max(2, Math.round(L / 45)); ctx.beginPath(); ctx.moveTo(x, -5); ctx.lineTo(x, 5); ctx.stroke(); }
+      if (isSelected) [[0, 0], [L, 0]].forEach(([px, py]) => { ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI * 2); ctx.fillStyle = "#6E7F63"; ctx.fill(); });
+      if (o.label) {
+        ctx.rotate(-Math.atan2(dy, dx));
+        ctx.fillStyle = "#202B22"; ctx.font = "600 12px 'Work Sans', sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(o.label, dx / 2 - (dy / L) * 18, dy / 2 + (dx / L) * 18);
+      }
+    } else if (o.type === "post") {
+      // A square timber post seen from above.
+      const h = o.size / 2;
+      ctx.translate(o.x, o.y);
+      ctx.fillStyle = o.color || "#8A6A48"; ctx.strokeStyle = isSelected ? "#6E7F63" : "rgba(43,32,20,.7)"; ctx.lineWidth = isSelected ? 3 : 1.5;
+      ctx.fillRect(-h, -h, h * 2, h * 2); ctx.strokeRect(-h, -h, h * 2, h * 2);
+      ctx.strokeStyle = "rgba(255,255,255,.25)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(-h, -h); ctx.lineTo(h, h); ctx.moveTo(h, -h); ctx.lineTo(-h, h); ctx.stroke();
+      if (o.label) { ctx.fillStyle = "#202B22"; ctx.font = "600 12px 'Work Sans', sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillText(o.label, 0, h + 5); }
+    } else if (o.type === "curtain") {
+      // A soft wavy drape line on its rail.
+      const dx = o.x2 - o.x, dy = o.y2 - o.y, L = Math.hypot(dx, dy) || 1, nx = -dy / L, ny = dx / L;
+      ctx.strokeStyle = isSelected ? "#6E7F63" : (o.color || "#B9776E"); ctx.lineWidth = 3; ctx.lineCap = "round"; ctx.lineJoin = "round";
+      ctx.beginPath();
+      for (let i = 0; i <= Math.ceil(L / 2); i++) {
+        const t = Math.min(1, (i * 2) / L), w = Math.sin(t * L / 14 * Math.PI * 2) * 4;
+        const px = o.x + dx * t + nx * w, py = o.y + dy * t + ny * w;
+        i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+      }
+      ctx.stroke();
+      ctx.strokeStyle = "#6B4A2E"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(o.x - nx * 6, o.y - ny * 6); ctx.lineTo(o.x2 - nx * 6, o.y2 - ny * 6); ctx.stroke();
+      if (o.label) {
+        ctx.fillStyle = "#202B22"; ctx.font = "600 12px 'Work Sans', sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(o.label, (o.x + o.x2) / 2 + nx * 18, (o.y + o.y2) / 2 + ny * 18);
+      }
+    } else if (o.type === "pillar") {
+      // A round column seen from above: its base ring with the shaft inside.
+      const r = o.size / 2;
+      ctx.translate(o.x, o.y);
+      ctx.fillStyle = "#CFC6B6"; ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = isSelected ? "#6E7F63" : "#8F8576"; ctx.lineWidth = isSelected ? 3 : 1.5; ctx.stroke();
+      ctx.fillStyle = o.color || "#E4DDD0"; ctx.beginPath(); ctx.arc(0, 0, r * 0.68, 0, Math.PI * 2); ctx.fill(); ctx.lineWidth = 1; ctx.stroke();
+      if (o.label) {
+        ctx.fillStyle = "#202B22"; ctx.font = "600 12px 'Work Sans', sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.fillText(o.label, 0, r + 5);
+      }
+    } else if (o.type === "fireplace" || o.type === "stairs") {
+      // Rotated footprint drawings (see featureDims/featureAngle).
+      const { w, d } = featureDims(o), a = featureAngle(o);
+      ctx.translate(o.x, o.y); ctx.rotate(a - Math.PI / 2);
+      if (o.type === "fireplace") {
+        ctx.fillStyle = "#E4DDD0"; ctx.strokeStyle = isSelected ? "#6E7F63" : "#8F8576"; ctx.lineWidth = isSelected ? 3 : 1.5;
+        roundRectPath(ctx, -w / 2, -d / 2, w, d * 0.62, 3); ctx.fill(); ctx.stroke();              // chimney breast + surround
+        ctx.fillStyle = "#CFC6B6"; roundRectPath(ctx, -w * 0.4, d * 0.12, w * 0.8, d * 0.38, 2); ctx.fill(); ctx.stroke(); // hearth
+        ctx.fillStyle = "#3A2E26"; ctx.fillRect(-w * 0.26, -d * 0.12, w * 0.52, d * 0.24);          // firebox, open to the hearth
+        ctx.fillStyle = "#E8893A"; ctx.beginPath();                                                  // flame
+        ctx.moveTo(0, d * 0.02); ctx.bezierCurveTo(d * 0.14, d * 0.12, d * 0.08, d * 0.2, 0, d * 0.2); ctx.bezierCurveTo(-d * 0.08, d * 0.2, -d * 0.14, d * 0.12, 0, d * 0.02); ctx.fill();
+      } else {
+        const n = 8;
+        ctx.fillStyle = "rgba(216,200,165,.35)"; ctx.strokeStyle = isSelected ? "#6E7F63" : "rgba(74,81,72,.6)"; ctx.lineWidth = isSelected ? 3 : 1.5;
+        roundRectPath(ctx, -w / 2, -d / 2, w, d, 2); ctx.fill(); ctx.stroke();
+        ctx.lineWidth = 1; ctx.strokeStyle = "rgba(74,81,72,.45)";
+        for (let i = 1; i < n; i++) { const y = -d / 2 + (d * i) / n; ctx.beginPath(); ctx.moveTo(-w / 2, y); ctx.lineTo(w / 2, y); ctx.stroke(); }
+        ctx.strokeStyle = "#202B22"; ctx.fillStyle = "#202B22"; ctx.lineWidth = 2;                  // "up" arrow
+        ctx.beginPath(); ctx.moveTo(0, -d * 0.36); ctx.lineTo(0, d * 0.34); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, d * 0.42); ctx.lineTo(-6, d * 0.3); ctx.lineTo(6, d * 0.3); ctx.closePath(); ctx.fill();
+      }
+      if (o.label) {
+        ctx.setTransform(ctx.getTransform().rotateSelf(0, 0, -(a - Math.PI / 2) * 180 / Math.PI));
+        ctx.fillStyle = "#202B22"; ctx.font = "600 12px 'Work Sans', sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        const off = (o.type === "fireplace" ? d / 2 + 12 : -d / 2 - 12);
+        ctx.fillText(o.label, Math.cos(a) * off, Math.sin(a) * off);
+      }
+    } else if (o.type === "line") {
       ctx.strokeStyle = isSelected ? "#6E7F63" : "#3A3F37";
       ctx.lineWidth = isSelected ? 7 : 5;
       ctx.lineCap = "round";
@@ -1757,7 +1845,7 @@ function drawFloorPlan(ctx, opts) {
       }
     } else {
       ctx.translate(o.x, o.y);
-      ctx.fillStyle = "rgba(216,200,165,.4)";
+      ctx.fillStyle = o.color ? hexWithAlpha(o.color, 0.75) : "rgba(216,200,165,.4)";
       ctx.strokeStyle = isSelected ? "#6E7F63" : "rgba(74,81,72,.5)";
       ctx.lineWidth = isSelected ? 3 : 1.5;
       if (o.type === "circle") {
@@ -1771,7 +1859,7 @@ function drawFloorPlan(ctx, opts) {
         roundRectPath(ctx, -o.size / 2, -o.size / 2, o.size, o.size, 4); ctx.fill(); ctx.stroke();
       }
       if (o.label) {
-        ctx.fillStyle = "#202B22";
+        ctx.fillStyle = o.color ? textColorOn(o.color) : "#202B22";
         ctx.font = "600 12px 'Work Sans', sans-serif";
         ctx.textAlign = "center"; ctx.textBaseline = "middle";
         ctx.fillText(o.label, 0, 0);
@@ -1793,7 +1881,7 @@ function drawFloorPlan(ctx, opts) {
     ctx.translate(t.x, t.y);
     ctx.lineWidth = hlColor ? 4 : (isSelected ? 3 : 1.5);
     ctx.strokeStyle = hlColor || (isSelected ? "#6E7F63" : dim ? "rgba(216,200,165,.55)" : "#D8C8A5");
-    ctx.fillStyle = hlColor ? hexWithAlpha(hlColor, 0.2) : dim ? "rgba(216,200,165,.25)" : "#ffffff";
+    ctx.fillStyle = hlColor ? hexWithAlpha(hlColor, 0.2) : dim ? "rgba(216,200,165,.25)" : (t.color || "#ffffff");
     if (hlColor) { ctx.shadowColor = hlColor; ctx.shadowBlur = 18; }
 
     const dims = tableDims(t);
@@ -1817,14 +1905,15 @@ function drawFloorPlan(ctx, opts) {
         ctx.fillStyle = "rgba(74,81,72,.6)"; ctx.fill();
       } else {
         ctx.fillStyle = "#FBF7EF"; ctx.fill();
-        ctx.lineWidth = 1.2; ctx.strokeStyle = "rgba(74,81,72,.35)"; ctx.stroke();
+        const chair = t.chairColor || chairColor;
+        ctx.lineWidth = chair ? 1.8 : 1.2; ctx.strokeStyle = chair ? hexWithAlpha(chair, 0.85) : "rgba(74,81,72,.35)"; ctx.stroke();
       }
     });
 
     // With a seat counter, the name moves up a little and the counter sits
     // inside the table beneath it — below the table it collided with the
     // bottom chair (chairs are drawn 12 units outside the edge).
-    ctx.fillStyle = "#202B22";
+    ctx.fillStyle = t.color && !hlColor && !dim ? textColorOn(t.color) : "#202B22";
     ctx.font = "600 15px 'Work Sans', sans-serif";
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText(t.label, 0, occupancy ? -7 : 0);
@@ -1832,7 +1921,7 @@ function drawFloorPlan(ctx, opts) {
     if (occupancy) {
       const count = occupancy[t.id] || 0;
       ctx.font = "600 11px 'Work Sans', sans-serif";
-      ctx.fillStyle = count > t.capacity ? "#B6503F" : "#57654E";
+      ctx.fillStyle = count > t.capacity ? "#B6503F" : t.color && textColorOn(t.color) !== "#202B22" ? "#E4EBDF" : "#57654E";
       ctx.fillText(`${count}/${t.capacity}`, 0, 10);
     }
     ctx.restore();
@@ -1843,7 +1932,7 @@ function drawFloorPlan(ctx, opts) {
 // something the couple can hand to a venue or caterer, so it deliberately
 // shows table capacity/occupancy (useful for a headcount) but not the grid
 // (a snap aid, not something a venue needs to see) or any selection state.
-function exportFloorPlanPNG(tables, objects, occupancy, title) {
+function exportFloorPlanPNG(tables, objects, occupancy, title, chairColor = null) {
   const scale = 1.6, margin = 40, titleH = 70;
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(SEAT_LW * scale + margin * 2);
@@ -1860,7 +1949,7 @@ function exportFloorPlanPNG(tables, objects, occupancy, title) {
   ctx.save();
   ctx.translate(margin, titleH + margin / 2);
   ctx.scale(scale, scale);
-  drawFloorPlan(ctx, { tables, objects, occupancy, zoom: scale, showGrid: false });
+  drawFloorPlan(ctx, { tables, objects, occupancy, zoom: scale, showGrid: false, chairColor });
   ctx.restore();
 
   const a = document.createElement("a");
@@ -1873,7 +1962,7 @@ function exportFloorPlanPNG(tables, objects, occupancy, title) {
 
 function SeatingCanvas({
   tables, objects, editable, selectedTableId, onSelectTable, onDragTableEnd, occupancy,
-  occupiedSeats, highlightColors, highlightSeatIndices, dimOthers,
+  occupiedSeats, highlightColors, highlightSeatIndices, dimOthers, chairColor,
   selectedObjectId, onSelectObject, onObjectDragEnd,
   viewTransform, onViewTransformChange
 }) {
@@ -1931,10 +2020,10 @@ function SeatingCanvas({
     ctx.scale(zoom, zoom);
     drawFloorPlan(ctx, {
       tables: effectiveTables, objects: effectiveObjects, editable, selectedTableId, selectedObjectId,
-      occupancy: editable ? occupancy : null, occupiedSeats, highlightColors, highlightSeatIndices, zoom, dimOthers
+      occupancy: editable ? occupancy : null, occupiedSeats, highlightColors, highlightSeatIndices, zoom, dimOthers, chairColor
     });
     ctx.restore();
-  }, [effectiveTables, effectiveObjects, editable, selectedTableId, selectedObjectId, occupancy, occupiedSeats, highlightColors, highlightSeatIndices, dimOthers, viewTransform]);
+  }, [effectiveTables, effectiveObjects, editable, selectedTableId, selectedObjectId, occupancy, occupiedSeats, highlightColors, highlightSeatIndices, dimOthers, viewTransform, chairColor]);
 
   function handlePointerDown(e) {
     const canvas = canvasRef.current;
@@ -2170,6 +2259,7 @@ function AdminSeating({ state, actions }) {
             <SeatingCanvas
               tables={state.seatingTables}
               objects={state.seatingObjects}
+              chairColor={state.seatingChairColor}
               editable
               selectedTableId={state.selectedTableId}
               onSelectTable={actions.selectTable}
@@ -2245,13 +2335,13 @@ function AdminSeating({ state, actions }) {
           )}
           {selectedObject && state.objectDraft && (
             <div className="table-editor-panel">
-              <h4>Edit {selectedObject.type === "line" ? "wall / barrier" : selectedObject.type}</h4>
+              <h4>Edit {FLOOR_ITEM_NAMES[selectedObject.type] || selectedObject.type}</h4>
               <div className="table-editor-row">
                 <div className="field" style={{ flex: 2 }}><label>Label</label>
                   <input type="text" placeholder="e.g. Bar, Entrance, Dance floor" value={state.objectDraft.label}
                     onChange={e => actions.updateObjectDraftField("label", e.target.value)} />
                 </div>
-                {selectedObject.type !== "line" && (
+                {!isLineObject(selectedObject) && (
                   <div className="field"><label>Size</label>
                     <input type="number" min="10" value={state.objectDraft.size}
                       onChange={e => actions.updateObjectDraftField("size", Number(e.target.value))} />
@@ -2401,6 +2491,7 @@ function VenueDisplay({ state, actions }) {
                 <SeatingCanvas
                   tables={state.seatingTables}
                   objects={state.seatingObjects}
+                  chairColor={state.seatingChairColor}
                   highlightColors={highlightColors}
                   highlightSeatIndices={highlightSeatIndices}
                   viewTransform={transform}
@@ -2419,6 +2510,7 @@ function VenueDisplay({ state, actions }) {
                     ref={floorPlan3DRef}
                     tables={state.seatingTables}
                     objects={state.seatingObjects}
+                    chairColor={state.seatingChairColor}
                     focusTableId={selected?.tableId || null}
                     onSelectTable={selectTable}
                   />
@@ -2948,6 +3040,7 @@ export default function App() {
     seatingTables: [],
     seatingAssignments: {},
     seatingObjects: [],
+    seatingChairColor: null, // the venue's chair colour (each table may override it)
     seatingRevealMode: "locked",
     seatingRevealAt: null,
     seatingLoaded: false,
@@ -2973,7 +3066,7 @@ export default function App() {
     const mySeq = ++seatingSeqRef.current;
     const data = await apiAdmin(state.adminPassword, action, payload);
     if (seatingSeqRef.current !== mySeq) return null; // superseded by a newer request; drop it
-    patch({ seatingTables: data.tables, seatingAssignments: data.assignments, seatingObjects: data.objects, seatingRevealMode: data.revealMode, seatingRevealAt: data.revealAt });
+    patch({ seatingTables: data.tables, seatingAssignments: data.assignments, seatingObjects: data.objects, seatingRevealMode: data.revealMode, seatingRevealAt: data.revealAt, seatingChairColor: data.chairColor || null });
     return data;
   }
   async function saveSeatingReveal(mode, revealAt) {
@@ -3320,7 +3413,7 @@ export default function App() {
   function downloadFloorPlan() {
     const occupancy = {};
     Object.values(state.seatingAssignments).forEach(a => { occupancy[a.tableId] = (occupancy[a.tableId] || 0) + 1; });
-    exportFloorPlanPNG(state.seatingTables, state.seatingObjects, occupancy, `${CONFIG.coupleNames} — Reception Floor Plan`);
+    exportFloorPlanPNG(state.seatingTables, state.seatingObjects, occupancy, `${CONFIG.coupleNames} — Reception Floor Plan`, state.seatingChairColor);
   }
   function armGuest(memberId, inviteCode) {
     patch({ armedGuest: state.armedGuest?.memberId === memberId ? null : { memberId, inviteCode } });
