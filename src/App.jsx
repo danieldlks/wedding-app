@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, lazy, Suspense } from "react";
-import { SEAT_LW, SEAT_LH, clamp, tableDims, triangleVertices, getSeatPositions } from "./seatingGeometry.js";
+import { SEAT_LW, SEAT_LH, clamp, tableDims, triangleVertices, getSeatPositionsLocal, tableAngle, featureDims, featureAngle, isLineObject, textColorOn, FLOOR_COLORS, CHAIR_COLORS, DEFAULT_CHAIR_COLOR } from "./seatingGeometry.js";
 // The 3D venue view (and three.js) is split into its own file and only
 // downloaded the first time someone switches to 3D.
 const FloorPlan3D = lazy(() => import("./FloorPlan3D.jsx"));
@@ -479,6 +479,50 @@ const CSS = `
 .view-toggle button.active{background:var(--sage);color:var(--paper);}
 .seating-canvas-wrap.dragover{outline:3px solid var(--sage);outline-offset:-3px;}
 .table-editor-panel{background:#fff;border:1px solid var(--gold-soft);padding:16px 18px;margin-top:14px;}
+/* Seating: Add to room menu (dropdown on wide screens, bottom sheet on phones) */
+.room-menu{position:relative;}
+.room-menu-scrim{position:fixed;inset:0;background:rgba(32,43,34,.35);z-index:40;touch-action:none;}
+
+/* Phones: a bottom sheet sized to the visible screen (dvh — Safari's toolbars excluded), with a
+   fixed header (✕ and swipe-down handle) and its own scroll area that doesn't drag the page. */
+.room-menu-sheet{position:fixed;left:0;right:0;bottom:0;z-index:41;background:#fff;border-radius:18px 18px 0 0;max-height:80vh;max-height:85dvh;display:flex;flex-direction:column;box-shadow:0 -10px 30px rgba(0,0,0,.18);transition:transform .2s ease;}
+.room-menu-head{flex:none;padding:8px 8px 6px 16px;touch-action:none;cursor:grab;}
+.room-menu-grab{width:40px;height:5px;border-radius:3px;background:#D9D3C6;margin:0 auto 6px;}
+.room-menu-title{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.room-menu-title h3{font-family:var(--display);font-size:24px;font-weight:600;margin:0;}
+.room-menu-close{flex:none;width:44px;height:44px;border-radius:50%;border:none;background:var(--paper-2);color:var(--ink);font-size:17px;line-height:1;}
+.room-menu-body{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y;padding:0 16px calc(22px + env(safe-area-inset-bottom, 0px));}
+.room-menu-sec{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold);font-weight:600;margin:14px 0 8px;}
+.room-menu-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;}
+.room-menu-tile{border:1px solid #EAE2D2;background:var(--paper);border-radius:12px;padding:10px 4px 8px;font-size:12px;font-weight:500;color:var(--ink);display:flex;flex-direction:column;align-items:center;gap:5px;min-height:76px;text-align:center;touch-action:manipulation;}
+.room-menu-tile:hover,.room-menu-tile:focus-visible{border-color:var(--sage);background:#EEF2EA;outline:none;}
+.room-menu-tile svg{width:30px;height:30px;fill:none;stroke:var(--ink);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+@media(prefers-reduced-motion:reduce){.room-menu-sheet{transition:none;}}
+@media(min-width:700px){
+  .room-menu-scrim{background:transparent;touch-action:auto;}
+  .room-menu > .btn{position:relative;z-index:42;} /* desktop: the toggle stays above the (invisible) scrim, so it closes the menu too */
+  .room-menu-sheet{position:absolute;left:0;right:auto;bottom:auto;top:calc(100% + 8px);width:540px;border-radius:14px;border:1px solid var(--gold-soft);max-height:none;box-shadow:0 18px 40px -12px rgba(32,43,34,.35);}
+  .room-menu-head{padding:12px 12px 4px 18px;cursor:default;touch-action:auto;}
+  .room-menu-grab{display:none;}
+  .room-menu-body{overflow:visible;padding:0 18px 20px;}
+  .room-menu-grid{grid-template-columns:repeat(6,minmax(0,1fr));}
+}
+/* Seating: colour swatches, rotation and the venue chair row */
+.swatches{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+.swatch{width:30px;height:30px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px var(--gold-soft);padding:0;cursor:pointer;position:relative;flex:none;}
+.swatch.on{box-shadow:0 0 0 2px var(--ink);}
+.swatch-none{width:auto;min-width:30px;border-radius:15px;padding:0 10px;background:var(--paper);font-size:12px;font-weight:600;color:var(--ink-soft);}
+.swatch-custom{display:inline-flex;align-items:center;justify-content:center;background:conic-gradient(#e6b8b0,#e6d5b5,#a9b89c,#7e9483,#2b3550,#c99a93,#e6b8b0);color:#fff;font-weight:700;overflow:hidden;}
+.swatch-custom input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;}
+.swatch-custom span{text-shadow:0 1px 2px rgba(0,0,0,.4);font-size:16px;line-height:1;}
+.style-field{margin:0 0 14px;}
+.style-field > label{display:block;margin-bottom:8px;}
+.rotate-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+.chip-btn{border:1px solid var(--gold-soft);background:#fff;border-radius:18px;min-height:36px;padding:0 13px;font-size:13px;font-weight:600;color:var(--ink);}
+.rotate-value{min-width:42px;text-align:center;font-weight:600;font-size:14px;}
+.apply-all{margin-top:8px;font-size:13px;}
+.room-style{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin:0 0 12px;}
+.room-style-label{font-size:12px;letter-spacing:.08em;text-transform:uppercase;font-weight:600;color:var(--ink-soft);}
 .table-editor-panel h4{margin:0 0 14px;font-family:var(--display);font-size:18px;}
 .table-editor-row{display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;}
 .table-editor-row .field{flex:1;min-width:120px;margin-bottom:0;}
@@ -1001,7 +1045,7 @@ function GuestSeating({ state, actions }) {
           </div>
           {view === "map" ? (
             <div className="seating-canvas-wrap">
-              <SeatingCanvas tables={seating.tables} objects={seating.objects} highlightColors={highlightColors} highlightSeatIndices={highlightSeatIndices} dimOthers viewTransform={transform} onViewTransformChange={setTransform} />
+              <SeatingCanvas tables={seating.tables} objects={seating.objects} chairColor={seating.chairColor} highlightColors={highlightColors} highlightSeatIndices={highlightSeatIndices} dimOthers viewTransform={transform} onViewTransformChange={setTransform} />
               <div className="zoom-controls">
                 <button onClick={() => setTransform(t => zoomSeatTransform(t, 1.25))} aria-label="Zoom in">+</button>
                 <button onClick={() => setTransform(t => zoomSeatTransform(t, 1 / 1.25))} aria-label="Zoom out">−</button>
@@ -1015,6 +1059,7 @@ function GuestSeating({ state, actions }) {
                   ref={floorPlan3DRef}
                   tables={seating.tables}
                   objects={seating.objects}
+                  chairColor={seating.chairColor}
                   focusTableId={sortedTableIds[0] || null}
                   focusColor={highlightColors[sortedTableIds[0]]}
                   seatMarkers={seatMarkers}
@@ -1656,7 +1701,9 @@ function seatToLogical(e, canvas) {
 function hitTestTable(tables, x, y) {
   for (let i = tables.length - 1; i >= 0; i--) {
     const t = tables[i];
-    const dx = x - t.x, dy = y - t.y;
+    // Into the table's own frame, so rotated tables hit-test on their real outline.
+    const a = -tableAngle(t), rx = x - t.x, ry = y - t.y;
+    const dx = rx * Math.cos(a) - ry * Math.sin(a), dy = rx * Math.sin(a) + ry * Math.cos(a);
     const { w, h, round } = tableDims(t);
     if (round) {
       if ((dx * dx) / ((w / 2) * (w / 2)) + (dy * dy) / ((h / 2) * (h / 2)) <= 1) return t;
@@ -1679,16 +1726,27 @@ function pointToSegmentDistance(px, py, x1, y1, x2, y2) {
   t = clamp(t, 0, 1);
   return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
 }
+const FLOOR_ITEM_NAMES = {
+  circle: "circle", rect: "square", triangle: "triangle", line: "wall / barrier", fireplace: "fireplace",
+  stairs: "stairs", curtain: "curtains", window: "window", pillar: "pillar", post: "timber post"
+};
+
 // Returns null (no hit), "body" (move the whole shape), or for lines "p1"/"p2"
 // (drag just that endpoint) so a wall/barrier can be stretched, not just moved.
 function hitTestObject(o, x, y) {
-  if (o.type === "line") {
+  if (isLineObject(o)) {
     if (Math.hypot(x - o.x, y - o.y) <= 10) return "p1";
     if (Math.hypot(x - o.x2, y - o.y2) <= 10) return "p2";
     return pointToSegmentDistance(x, y, o.x, o.y, o.x2, o.y2) <= 8 ? "body" : null;
   }
   const dx = x - o.x, dy = y - o.y;
-  if (o.type === "circle") return dx * dx + dy * dy <= (o.size / 2) * (o.size / 2) ? "body" : null;
+  if (o.type === "fireplace" || o.type === "stairs") {
+    // Rotate the point into the item's own frame, then test its w×d footprint.
+    const { w, d } = featureDims(o), a = featureAngle(o) - Math.PI / 2;
+    const lx = dx * Math.cos(-a) - dy * Math.sin(-a), ly = dx * Math.sin(-a) + dy * Math.cos(-a);
+    return Math.abs(lx) <= w / 2 && Math.abs(ly) <= d / 2 ? "body" : null;
+  }
+  if (o.type === "circle" || o.type === "pillar") return dx * dx + dy * dy <= (o.size / 2) * (o.size / 2) ? "body" : null;
   if (o.type === "triangle") return pointInTriangle(x, y, triangleVertices(o)) ? "body" : null;
   return Math.abs(dx) <= o.size / 2 && Math.abs(dy) <= o.size / 2 ? "body" : null; // rect
 }
@@ -1727,7 +1785,7 @@ function zoomSeatTransform(t, factor) {
 function drawFloorPlan(ctx, opts) {
   const {
     tables, objects, editable, selectedTableId, selectedObjectId,
-    occupancy, occupiedSeats, highlightColors, highlightSeatIndices, zoom = 1, showGrid = true, dimOthers = false
+    occupancy, occupiedSeats, highlightColors, highlightSeatIndices, zoom = 1, showGrid = true, dimOthers = false, chairColor = null
   } = opts;
 
   if (showGrid) {
@@ -1750,7 +1808,83 @@ function drawFloorPlan(ctx, opts) {
   objects.forEach(o => {
     const isSelected = editable && selectedObjectId === o.id;
     ctx.save();
-    if (o.type === "line") {
+    if (o.type === "window") {
+      // Architect's window symbol: a framed strip with the glazing line down the middle.
+      const dx = o.x2 - o.x, dy = o.y2 - o.y, L = Math.hypot(dx, dy) || 1;
+      ctx.translate(o.x, o.y); ctx.rotate(Math.atan2(dy, dx));
+      ctx.fillStyle = "#EEF3F1"; ctx.strokeStyle = isSelected ? "#6E7F63" : (o.color || "#3A3F37"); ctx.lineWidth = isSelected ? 2.5 : 1.5;
+      ctx.fillRect(0, -5, L, 10); ctx.strokeRect(0, -5, L, 10);
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(L, 0); ctx.lineWidth = 1; ctx.stroke();
+      for (let k = 1; k < Math.max(2, Math.round(L / 45)); k++) { const x = (L * k) / Math.max(2, Math.round(L / 45)); ctx.beginPath(); ctx.moveTo(x, -5); ctx.lineTo(x, 5); ctx.stroke(); }
+      if (isSelected) [[0, 0], [L, 0]].forEach(([px, py]) => { ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI * 2); ctx.fillStyle = "#6E7F63"; ctx.fill(); });
+      if (o.label) {
+        ctx.rotate(-Math.atan2(dy, dx));
+        ctx.fillStyle = "#202B22"; ctx.font = "600 12px 'Work Sans', sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(o.label, dx / 2 - (dy / L) * 18, dy / 2 + (dx / L) * 18);
+      }
+    } else if (o.type === "post") {
+      // A square timber post seen from above.
+      const h = o.size / 2;
+      ctx.translate(o.x, o.y);
+      ctx.fillStyle = o.color || "#8A6A48"; ctx.strokeStyle = isSelected ? "#6E7F63" : "rgba(43,32,20,.7)"; ctx.lineWidth = isSelected ? 3 : 1.5;
+      ctx.fillRect(-h, -h, h * 2, h * 2); ctx.strokeRect(-h, -h, h * 2, h * 2);
+      ctx.strokeStyle = "rgba(255,255,255,.25)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(-h, -h); ctx.lineTo(h, h); ctx.moveTo(h, -h); ctx.lineTo(-h, h); ctx.stroke();
+      if (o.label) { ctx.fillStyle = "#202B22"; ctx.font = "600 12px 'Work Sans', sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillText(o.label, 0, h + 5); }
+    } else if (o.type === "curtain") {
+      // A soft wavy drape line on its rail.
+      const dx = o.x2 - o.x, dy = o.y2 - o.y, L = Math.hypot(dx, dy) || 1, nx = -dy / L, ny = dx / L;
+      ctx.strokeStyle = isSelected ? "#6E7F63" : (o.color || "#B9776E"); ctx.lineWidth = 3; ctx.lineCap = "round"; ctx.lineJoin = "round";
+      ctx.beginPath();
+      for (let i = 0; i <= Math.ceil(L / 2); i++) {
+        const t = Math.min(1, (i * 2) / L), w = Math.sin(t * L / 14 * Math.PI * 2) * 4;
+        const px = o.x + dx * t + nx * w, py = o.y + dy * t + ny * w;
+        i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+      }
+      ctx.stroke();
+      ctx.strokeStyle = "#6B4A2E"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(o.x - nx * 6, o.y - ny * 6); ctx.lineTo(o.x2 - nx * 6, o.y2 - ny * 6); ctx.stroke();
+      if (o.label) {
+        ctx.fillStyle = "#202B22"; ctx.font = "600 12px 'Work Sans', sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(o.label, (o.x + o.x2) / 2 + nx * 18, (o.y + o.y2) / 2 + ny * 18);
+      }
+    } else if (o.type === "pillar") {
+      // A round column seen from above: its base ring with the shaft inside.
+      const r = o.size / 2;
+      ctx.translate(o.x, o.y);
+      ctx.fillStyle = "#CFC6B6"; ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = isSelected ? "#6E7F63" : "#8F8576"; ctx.lineWidth = isSelected ? 3 : 1.5; ctx.stroke();
+      ctx.fillStyle = o.color || "#E4DDD0"; ctx.beginPath(); ctx.arc(0, 0, r * 0.68, 0, Math.PI * 2); ctx.fill(); ctx.lineWidth = 1; ctx.stroke();
+      if (o.label) {
+        ctx.fillStyle = "#202B22"; ctx.font = "600 12px 'Work Sans', sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.fillText(o.label, 0, r + 5);
+      }
+    } else if (o.type === "fireplace" || o.type === "stairs") {
+      // Rotated footprint drawings (see featureDims/featureAngle).
+      const { w, d } = featureDims(o), a = featureAngle(o);
+      ctx.translate(o.x, o.y); ctx.rotate(a - Math.PI / 2);
+      if (o.type === "fireplace") {
+        ctx.fillStyle = "#E4DDD0"; ctx.strokeStyle = isSelected ? "#6E7F63" : "#8F8576"; ctx.lineWidth = isSelected ? 3 : 1.5;
+        roundRectPath(ctx, -w / 2, -d / 2, w, d * 0.62, 3); ctx.fill(); ctx.stroke();              // chimney breast + surround
+        ctx.fillStyle = "#CFC6B6"; roundRectPath(ctx, -w * 0.4, d * 0.12, w * 0.8, d * 0.38, 2); ctx.fill(); ctx.stroke(); // hearth
+        ctx.fillStyle = "#3A2E26"; ctx.fillRect(-w * 0.26, -d * 0.12, w * 0.52, d * 0.24);          // firebox, open to the hearth
+        ctx.fillStyle = "#E8893A"; ctx.beginPath();                                                  // flame
+        ctx.moveTo(0, d * 0.02); ctx.bezierCurveTo(d * 0.14, d * 0.12, d * 0.08, d * 0.2, 0, d * 0.2); ctx.bezierCurveTo(-d * 0.08, d * 0.2, -d * 0.14, d * 0.12, 0, d * 0.02); ctx.fill();
+      } else {
+        const n = 8;
+        ctx.fillStyle = "rgba(216,200,165,.35)"; ctx.strokeStyle = isSelected ? "#6E7F63" : "rgba(74,81,72,.6)"; ctx.lineWidth = isSelected ? 3 : 1.5;
+        roundRectPath(ctx, -w / 2, -d / 2, w, d, 2); ctx.fill(); ctx.stroke();
+        ctx.lineWidth = 1; ctx.strokeStyle = "rgba(74,81,72,.45)";
+        for (let i = 1; i < n; i++) { const y = -d / 2 + (d * i) / n; ctx.beginPath(); ctx.moveTo(-w / 2, y); ctx.lineTo(w / 2, y); ctx.stroke(); }
+        ctx.strokeStyle = "#202B22"; ctx.fillStyle = "#202B22"; ctx.lineWidth = 2;                  // "up" arrow
+        ctx.beginPath(); ctx.moveTo(0, -d * 0.36); ctx.lineTo(0, d * 0.34); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, d * 0.42); ctx.lineTo(-6, d * 0.3); ctx.lineTo(6, d * 0.3); ctx.closePath(); ctx.fill();
+      }
+      if (o.label) {
+        ctx.setTransform(ctx.getTransform().rotateSelf(0, 0, -(a - Math.PI / 2) * 180 / Math.PI));
+        ctx.fillStyle = "#202B22"; ctx.font = "600 12px 'Work Sans', sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        const off = (o.type === "fireplace" ? d / 2 + 12 : -d / 2 - 12);
+        ctx.fillText(o.label, Math.cos(a) * off, Math.sin(a) * off);
+      }
+    } else if (o.type === "line") {
       ctx.strokeStyle = isSelected ? "#6E7F63" : "#3A3F37";
       ctx.lineWidth = isSelected ? 7 : 5;
       ctx.lineCap = "round";
@@ -1769,7 +1903,7 @@ function drawFloorPlan(ctx, opts) {
       }
     } else {
       ctx.translate(o.x, o.y);
-      ctx.fillStyle = "rgba(216,200,165,.4)";
+      ctx.fillStyle = o.color ? hexWithAlpha(o.color, 0.75) : "rgba(216,200,165,.4)";
       ctx.strokeStyle = isSelected ? "#6E7F63" : "rgba(74,81,72,.5)";
       ctx.lineWidth = isSelected ? 3 : 1.5;
       if (o.type === "circle") {
@@ -1783,7 +1917,7 @@ function drawFloorPlan(ctx, opts) {
         roundRectPath(ctx, -o.size / 2, -o.size / 2, o.size, o.size, 4); ctx.fill(); ctx.stroke();
       }
       if (o.label) {
-        ctx.fillStyle = "#202B22";
+        ctx.fillStyle = o.color ? textColorOn(o.color) : "#202B22";
         ctx.font = "600 12px 'Work Sans', sans-serif";
         ctx.textAlign = "center"; ctx.textBaseline = "middle";
         ctx.fillText(o.label, 0, 0);
@@ -1803,9 +1937,10 @@ function drawFloorPlan(ctx, opts) {
     const dim = dimOthers && !hlColor;
     ctx.save();
     ctx.translate(t.x, t.y);
+    ctx.rotate(tableAngle(t)); // body and chairs turn with the table; the name below stays upright
     ctx.lineWidth = hlColor ? 4 : (isSelected ? 3 : 1.5);
     ctx.strokeStyle = hlColor || (isSelected ? "#6E7F63" : dim ? "rgba(216,200,165,.55)" : "#D8C8A5");
-    ctx.fillStyle = hlColor ? hexWithAlpha(hlColor, 0.2) : dim ? "rgba(216,200,165,.25)" : "#ffffff";
+    ctx.fillStyle = hlColor ? hexWithAlpha(hlColor, 0.2) : dim ? "rgba(216,200,165,.25)" : (t.color || "#ffffff");
     if (hlColor) { ctx.shadowColor = hlColor; ctx.shadowBlur = 18; }
 
     const dims = tableDims(t);
@@ -1818,7 +1953,7 @@ function drawFloorPlan(ctx, opts) {
 
     const occSet = occupiedSeats ? occupiedSeats[t.id] : null;
     const hlSet = highlightSeatIndices ? highlightSeatIndices[t.id] : null;
-    getSeatPositions(t).forEach((pos, i) => {
+    getSeatPositionsLocal(t).forEach((pos, i) => {
       const isFilled = occSet && occSet.has(i);
       const isHlSeat = hlSet && hlSet.has(i);
       const seatR = isHlSeat ? 8 : 4;
@@ -1829,14 +1964,16 @@ function drawFloorPlan(ctx, opts) {
         ctx.fillStyle = "rgba(74,81,72,.6)"; ctx.fill();
       } else {
         ctx.fillStyle = "#FBF7EF"; ctx.fill();
-        ctx.lineWidth = 1.2; ctx.strokeStyle = "rgba(74,81,72,.35)"; ctx.stroke();
+        const chair = t.chairColor || chairColor;
+        ctx.lineWidth = chair ? 1.8 : 1.2; ctx.strokeStyle = chair ? hexWithAlpha(chair, 0.85) : "rgba(74,81,72,.35)"; ctx.stroke();
       }
     });
 
+    ctx.rotate(-tableAngle(t));
     // With a seat counter, the name moves up a little and the counter sits
     // inside the table beneath it — below the table it collided with the
     // bottom chair (chairs are drawn 12 units outside the edge).
-    ctx.fillStyle = "#202B22";
+    ctx.fillStyle = t.color && !hlColor && !dim ? textColorOn(t.color) : "#202B22";
     ctx.font = "600 15px 'Work Sans', sans-serif";
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText(t.label, 0, occupancy ? -7 : 0);
@@ -1844,7 +1981,7 @@ function drawFloorPlan(ctx, opts) {
     if (occupancy) {
       const count = occupancy[t.id] || 0;
       ctx.font = "600 11px 'Work Sans', sans-serif";
-      ctx.fillStyle = count > t.capacity ? "#B6503F" : "#57654E";
+      ctx.fillStyle = count > t.capacity ? "#B6503F" : t.color && textColorOn(t.color) !== "#202B22" ? "#E4EBDF" : "#57654E";
       ctx.fillText(`${count}/${t.capacity}`, 0, 10);
     }
     ctx.restore();
@@ -1855,7 +1992,7 @@ function drawFloorPlan(ctx, opts) {
 // something the couple can hand to a venue or caterer, so it deliberately
 // shows table capacity/occupancy (useful for a headcount) but not the grid
 // (a snap aid, not something a venue needs to see) or any selection state.
-function exportFloorPlanPNG(tables, objects, occupancy, title) {
+function exportFloorPlanPNG(tables, objects, occupancy, title, chairColor = null) {
   const scale = 1.6, margin = 40, titleH = 70;
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(SEAT_LW * scale + margin * 2);
@@ -1872,7 +2009,7 @@ function exportFloorPlanPNG(tables, objects, occupancy, title) {
   ctx.save();
   ctx.translate(margin, titleH + margin / 2);
   ctx.scale(scale, scale);
-  drawFloorPlan(ctx, { tables, objects, occupancy, zoom: scale, showGrid: false });
+  drawFloorPlan(ctx, { tables, objects, occupancy, zoom: scale, showGrid: false, chairColor });
   ctx.restore();
 
   const a = document.createElement("a");
@@ -1885,7 +2022,7 @@ function exportFloorPlanPNG(tables, objects, occupancy, title) {
 
 function SeatingCanvas({
   tables, objects, editable, selectedTableId, onSelectTable, onDragTableEnd, occupancy,
-  occupiedSeats, highlightColors, highlightSeatIndices, dimOthers,
+  occupiedSeats, highlightColors, highlightSeatIndices, dimOthers, chairColor,
   selectedObjectId, onSelectObject, onObjectDragEnd,
   viewTransform, onViewTransformChange
 }) {
@@ -1943,10 +2080,10 @@ function SeatingCanvas({
     ctx.scale(zoom, zoom);
     drawFloorPlan(ctx, {
       tables: effectiveTables, objects: effectiveObjects, editable, selectedTableId, selectedObjectId,
-      occupancy: editable ? occupancy : null, occupiedSeats, highlightColors, highlightSeatIndices, zoom, dimOthers
+      occupancy: editable ? occupancy : null, occupiedSeats, highlightColors, highlightSeatIndices, zoom, dimOthers, chairColor
     });
     ctx.restore();
-  }, [effectiveTables, effectiveObjects, editable, selectedTableId, selectedObjectId, occupancy, occupiedSeats, highlightColors, highlightSeatIndices, dimOthers, viewTransform]);
+  }, [effectiveTables, effectiveObjects, editable, selectedTableId, selectedObjectId, occupancy, occupiedSeats, highlightColors, highlightSeatIndices, dimOthers, viewTransform, chairColor]);
 
   function handlePointerDown(e) {
     const canvas = canvasRef.current;
@@ -2096,6 +2233,120 @@ function SeatingRevealPanel({ state, actions, selectStyle }) {
   );
 }
 
+/* ---------- Add to room: the catalogue of floor items ----------
+   Each entry makes a new floor object around (x, y). Stations are labelled
+   shapes: the 3D view styles them by their label (see landmarkKind in
+   FloorPlan3D.jsx), so the label is what makes a "Bar" look like a bar. */
+const ROOM_ITEM_GROUPS = [
+  ["Room features", [
+    ["fireplace", "Fireplace", "M5 27V9h22v18M3 9h26M10 27v-9h12v9M16 26c-3 0-3.5-3-1.5-5 .3 1.5 1.5 1.5 1.5 0 2 1 3 5 0 5z", (x, y) => ({ type: "fireplace", label: "Fireplace", x, y, size: 130 })],
+    ["curtains", "Curtains", "M3 5h26M6 5c0 8 1 15-1 22h6c-2-7-1-14-1-22M26 5c0 8-1 15 1 22h-6c2-7 1-14 1-22", (x, y) => ({ type: "curtain", label: "", x: x - 120, y, x2: x + 120, y2: y, size: 10, color: "#F3EBDD" })],
+    ["stairs", "Stairs", "M4 27h6v-5h6v-5h6v-5h6V7", (x, y) => ({ type: "stairs", label: "Stairs", x, y, size: 140 })],
+    ["window", "Window", "M6 5h20v22H6zM16 5v22M6 16h20", (x, y) => ({ type: "window", label: "", x: x - 70, y, x2: x + 70, y2: y, size: 10 })],
+    ["pillar", "Pillar", "M9 5h14M11 5v22M21 5v22M9 27h14", (x, y) => ({ type: "pillar", label: "", x, y, size: 30 })],
+    ["post", "Timber post", "M13 27V5h6v22M8 9l5 4M24 9l-5 4M7 5h18", (x, y) => ({ type: "post", label: "", x, y, size: 12 })],
+    ["entrance", "Entrance", "M8 28V6h16v22M5 28h22M20 17v.5", (x, y) => ({ type: "rect", label: "Entrance", x, y, size: 60 })],
+  ]],
+  ["Stations", [
+    ["bar", "Bar", "M4 12h24v4H4zM7 16v11M25 16v11M10 12V7l3-2 3 2v5", (x, y) => ({ type: "rect", label: "Bar", x, y, size: 80 })],
+    ["dance", "Dance floor", "M5 5h22v22H5zM5 16h22M16 5v22", (x, y) => ({ type: "rect", label: "Dance Floor", x, y, size: 140 })],
+    ["stage", "Stage / DJ", "M3 20h26v6H3zM11 20v-8M8 9a3 3 0 1 0 6 0 3 3 0 1 0-6 0M21 20V8l5-2", (x, y) => ({ type: "rect", label: "Stage / DJ", x, y, size: 110 })],
+    ["cake", "Cake table", "M8 27h16M10 27V20h12v7M12 20v-5h8v5M16 15v-4", (x, y) => ({ type: "circle", label: "Cake", x, y, size: 50 })],
+    ["gift", "Gift table", "M6 13h20v14H6zM4 9h24v4H4zM16 9v18M16 9c-3-5-8-3-5 0M16 9c3-5 8-3 5 0", (x, y) => ({ type: "rect", label: "Gifts", x, y, size: 55 })],
+    ["photo", "Photo booth", "M4 9h24v16H4zM11 17a5 5 0 1 0 10 0 5 5 0 1 0-10 0M11 9l2-3h6l2 3", (x, y) => ({ type: "rect", label: "Photo booth", x, y, size: 70 })],
+    ["buffet", "Buffet", "M3 22h26M7 22a9 9 0 0 1 18 0M16 11V9", (x, y) => ({ type: "rect", label: "Buffet", x, y, size: 90 })],
+  ]],
+  ["Basic shapes", [
+    ["circle", "Circle", "M6 16a10 10 0 1 0 20 0 10 10 0 1 0-20 0", (x, y) => ({ type: "circle", label: "", x, y, size: 60 })],
+    ["square", "Square", "M6 6h20v20H6z", (x, y) => ({ type: "rect", label: "", x, y, size: 60 })],
+    ["triangle", "Triangle", "M16 5l11 20H5z", (x, y) => ({ type: "triangle", label: "", x, y, size: 60 })],
+    ["wall", "Wall", "M5 26L27 6", (x, y) => ({ type: "line", label: "", x: x - 60, y, x2: x + 60, y2: y, size: 10 })],
+  ]],
+];
+
+function AddToRoomMenu({ onAdd, disabled }) {
+  const [open, setOpen] = useState(false);
+  const [dragY, setDragY] = useState(0); // how far the phone sheet is being swiped down
+  const swipeRef = useRef(null);
+  const close = () => { setOpen(false); setDragY(0); };
+  useEffect(() => {
+    if (!open) return;
+    // Close on Esc. A tap/click outside lands on the scrim (it covers the page, transparent on
+    // desktop), which closes the menu and swallows that tap, so nothing underneath gets pressed.
+    const onKey = e => { if (e.key === "Escape") close(); };
+    document.addEventListener("keydown", onKey);
+    // Phones: the page behind mustn't scroll while the sheet is up.
+    const html = document.documentElement, prev = html.style.overflow;
+    if (window.matchMedia("(max-width: 699px)").matches) html.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", onKey); html.style.overflow = prev; };
+  }, [open]);
+  // Swipe the sheet down by its header to dismiss it (phones).
+  const swipe = {
+    onPointerDown: e => { if (e.pointerType !== "mouse") swipeRef.current = e.clientY; },
+    onPointerMove: e => { if (swipeRef.current != null) setDragY(Math.max(0, e.clientY - swipeRef.current)); },
+    onPointerUp: () => { if (swipeRef.current == null) return; swipeRef.current = null; dragY > 70 ? close() : setDragY(0); },
+    onPointerCancel: () => { swipeRef.current = null; setDragY(0); },
+  };
+  return (
+    <div className="room-menu">
+      <button className={`btn ${open ? "btn-primary" : "btn-ghost"}`} style={{ flex: "none" }} aria-expanded={open} aria-haspopup="dialog"
+        onClick={() => (open ? close() : setOpen(true))} disabled={disabled}>+ Add to room ▾</button>
+      {open && (
+        <>
+          <div className="room-menu-scrim" aria-hidden="true" onClick={close} />
+          <div className="room-menu-sheet" role="dialog" aria-label="Add to the room"
+            style={dragY ? { transform: `translateY(${dragY}px)`, transition: "none" } : undefined}>
+            <div className="room-menu-head" {...swipe}>
+              <div className="room-menu-grab" aria-hidden="true" />
+              <div className="room-menu-title">
+                <h3>Add to the room</h3>
+                <button type="button" className="room-menu-close" aria-label="Close" onClick={close}>✕</button>
+              </div>
+            </div>
+            <div className="room-menu-body">
+              <p className="helptext" style={{ margin: "0 0 4px" }}>Tap an item to drop it in the middle of the plan, then drag it into place.</p>
+              {ROOM_ITEM_GROUPS.map(([group, items]) => (
+                <div key={group}>
+                  <div className="room-menu-sec">{group}</div>
+                  <div className="room-menu-grid">
+                    {items.map(([key, name, icon, make]) => (
+                      <button key={key} type="button" className="room-menu-tile" onClick={() => { close(); onAdd(make); }}>
+                        <svg viewBox="0 0 32 32" aria-hidden="true"><path d={icon} /></svg>{name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// A row of colour swatches (+ an optional "none/default" swatch and a custom colour picker).
+function ColorSwatches({ value, onChange, options = FLOOR_COLORS, noneLabel, label }) {
+  const custom = value && !options.some(([, hex]) => hex.toLowerCase() === value.toLowerCase());
+  return (
+    <div className="swatches" role="radiogroup" aria-label={label}>
+      {noneLabel && (
+        <button type="button" role="radio" aria-checked={!value} className={`swatch swatch-none ${!value ? "on" : ""}`} onClick={() => onChange(null)} title={noneLabel}>
+          <span>{noneLabel}</span>
+        </button>
+      )}
+      {options.map(([name, hex]) => (
+        <button key={hex} type="button" role="radio" aria-checked={value === hex} aria-label={name} title={name}
+          className={`swatch ${value === hex ? "on" : ""}`} style={{ background: hex }} onClick={() => onChange(hex)} />
+      ))}
+      <label className={`swatch swatch-custom ${custom ? "on" : ""}`} title="Custom colour" style={custom ? { background: value } : undefined}>
+        <input type="color" aria-label="Custom colour" value={value || "#ffffff"} onChange={e => onChange(e.target.value)} />
+        {!custom && <span aria-hidden="true">+</span>}
+      </label>
+    </div>
+  );
+}
+
 function AdminSeating({ state, actions }) {
   useEffect(() => { if (!state.seatingLoaded && !state.seatingLoading) actions.loadSeating(); }, [state.seatingLoaded, state.seatingLoading]);
 
@@ -2123,6 +2374,9 @@ function AdminSeating({ state, actions }) {
   });
 
   const selectedTable = state.seatingTables.find(t => t.id === state.selectedTableId);
+  // Unsaved edits (rotation, colours, size…) show on the plan straight away; Save keeps them.
+  const previewTables = state.tableDraft ? state.seatingTables.map(t => (t.id === state.tableDraft.id ? { ...t, ...state.tableDraft, capacity: Math.max(1, Number(state.tableDraft.capacity) || 1) } : t)) : state.seatingTables;
+  const previewObjects = state.objectDraft ? state.seatingObjects.map(o => (o.id === state.objectDraft.id ? { ...o, ...state.objectDraft } : o)) : state.seatingObjects;
   const selectedObject = state.seatingObjects.find(o => o.id === state.selectedObjectId);
   const seats = selectedTable
     ? Array.from({ length: selectedTable.capacity }, (_, i) => {
@@ -2150,14 +2404,15 @@ function AdminSeating({ state, actions }) {
       </p>
       <div className="seating-toolbar">
         <button className="btn btn-primary" style={{ flex: "none" }} onClick={actions.addTable} disabled={state.loading}>+ Add table</button>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button className="btn btn-ghost" style={{ flex: "none" }} onClick={() => actions.addObject("circle")} disabled={state.loading}>+ Circle</button>
-          <button className="btn btn-ghost" style={{ flex: "none" }} onClick={() => actions.addObject("rect")} disabled={state.loading}>+ Square</button>
-          <button className="btn btn-ghost" style={{ flex: "none" }} onClick={() => actions.addObject("triangle")} disabled={state.loading}>+ Triangle</button>
-          <button className="btn btn-ghost" style={{ flex: "none" }} onClick={() => actions.addObject("line")} disabled={state.loading}>+ Wall / barrier</button>
+        <AddToRoomMenu onAdd={actions.addObject} disabled={state.loading} />
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
           <button className="btn btn-ghost" style={{ flex: "none" }} onClick={actions.downloadFloorPlan}>⬇ Download floor plan</button>
           <button className="btn btn-ghost" style={{ flex: "none" }} onClick={() => actions.patch({ view: "venue-display" })}>🖥 Open venue display</button>
         </div>
+      </div>
+      <div className="room-style">
+        <span className="room-style-label">Chairs (whole venue)</span>
+        <ColorSwatches label="Venue chair colour" options={CHAIR_COLORS} value={state.seatingChairColor || DEFAULT_CHAIR_COLOR} onChange={c => actions.saveChairColor(c)} />
       </div>
       <div className="seating-layout">
         <div className="seating-sidebar">
@@ -2180,8 +2435,9 @@ function AdminSeating({ state, actions }) {
         <div className="seating-main">
           <div className="seating-canvas-wrap">
             <SeatingCanvas
-              tables={state.seatingTables}
-              objects={state.seatingObjects}
+              tables={previewTables}
+              objects={previewObjects}
+              chairColor={state.seatingChairColor}
               editable
               selectedTableId={state.selectedTableId}
               onSelectTable={actions.selectTable}
@@ -2229,6 +2485,23 @@ function AdminSeating({ state, actions }) {
                   <input type="number" min="1" value={state.tableDraft.capacity} onChange={e => actions.updateTableDraftField("capacity", e.target.value)} />
                 </div>
               </div>
+              <div className="field style-field"><label>Rotation</label>
+                <div className="rotate-row">
+                  <button type="button" className="chip-btn" aria-label="Turn 15° anticlockwise" onClick={() => actions.updateTableDraftField("rotation", ((Number(state.tableDraft.rotation) || 0) + 345) % 360)}>↺ 15°</button>
+                  <span className="rotate-value">{Number(state.tableDraft.rotation) || 0}°</span>
+                  <button type="button" className="chip-btn" aria-label="Turn 15° clockwise" onClick={() => actions.updateTableDraftField("rotation", ((Number(state.tableDraft.rotation) || 0) + 15) % 360)}>↻ 15°</button>
+                  {(Number(state.tableDraft.rotation) || 0) !== 0 && <button type="button" className="chip-btn" onClick={() => actions.updateTableDraftField("rotation", 0)}>Straighten</button>}
+                </div>
+              </div>
+              <div className="field style-field"><label>Tablecloth</label>
+                <ColorSwatches label="Tablecloth colour" value={state.tableDraft.color} noneLabel="Linen" onChange={c => actions.updateTableDraftField("color", c)} />
+                <button type="button" className="btn-link apply-all" disabled={state.loading}
+                  onClick={() => actions.styleAllTables({ color: state.tableDraft.color || null })}>Use this tablecloth on every table</button>
+              </div>
+              <div className="field style-field"><label>Chairs at this table</label>
+                <ColorSwatches label="Chair colour for this table" options={CHAIR_COLORS} value={state.tableDraft.chairColor} noneLabel="Venue" onChange={c => actions.updateTableDraftField("chairColor", c)} />
+                <div className="helptext">"Venue" uses the chairs set for the whole room (above the plan).</div>
+              </div>
               <div className="btn-row" style={{ marginTop: 0, marginBottom: 18 }}>
                 <button className="btn btn-ghost" onClick={actions.deselectTable}>Close</button>
                 <button className="btn btn-ghost" style={{ color: "var(--error)", borderColor: "var(--error)" }} onClick={actions.deleteTable}>Delete table</button>
@@ -2257,19 +2530,32 @@ function AdminSeating({ state, actions }) {
           )}
           {selectedObject && state.objectDraft && (
             <div className="table-editor-panel">
-              <h4>Edit {selectedObject.type === "line" ? "wall / barrier" : selectedObject.type}</h4>
+              <h4>Edit {FLOOR_ITEM_NAMES[selectedObject.type] || selectedObject.type}</h4>
               <div className="table-editor-row">
                 <div className="field" style={{ flex: 2 }}><label>Label</label>
                   <input type="text" placeholder="e.g. Bar, Entrance, Dance floor" value={state.objectDraft.label}
                     onChange={e => actions.updateObjectDraftField("label", e.target.value)} />
                 </div>
-                {selectedObject.type !== "line" && (
+                {!isLineObject(selectedObject) && (
                   <div className="field"><label>Size</label>
                     <input type="number" min="10" value={state.objectDraft.size}
                       onChange={e => actions.updateObjectDraftField("size", Number(e.target.value))} />
                   </div>
                 )}
               </div>
+              {(selectedObject.type === "fireplace" || selectedObject.type === "stairs") && (
+                <div className="field style-field"><label>{selectedObject.type === "stairs" ? "Direction (climbs toward)" : "Facing"}</label>
+                  <div className="rotate-row">
+                    <button type="button" className="chip-btn" onClick={() => actions.updateObjectDraftField("rotation", Math.round(featureAngle(state.objectDraft) * 180 / Math.PI + 90 + 360) % 360)}>↻ Rotate 90°</button>
+                    {state.objectDraft.rotation != null && <button type="button" className="chip-btn" onClick={() => actions.updateObjectDraftField("rotation", null)}>Auto (nearest wall)</button>}
+                  </div>
+                </div>
+              )}
+              {selectedObject.type !== "fireplace" && selectedObject.type !== "stairs" && (
+                <div className="field style-field"><label>Colour</label>
+                  <ColorSwatches label="Colour" options={selectedObject.type === "post" ? CHAIR_COLORS : FLOOR_COLORS} value={state.objectDraft.color} noneLabel="Natural" onChange={c => actions.updateObjectDraftField("color", c)} />
+                </div>
+              )}
               <div className="btn-row" style={{ marginTop: 0 }}>
                 <button className="btn btn-ghost" onClick={actions.deselectObject}>Close</button>
                 <button className="btn btn-ghost" style={{ color: "var(--error)", borderColor: "var(--error)" }} onClick={actions.deleteObject}>Delete</button>
@@ -2413,6 +2699,7 @@ function VenueDisplay({ state, actions }) {
                 <SeatingCanvas
                   tables={state.seatingTables}
                   objects={state.seatingObjects}
+                  chairColor={state.seatingChairColor}
                   highlightColors={highlightColors}
                   highlightSeatIndices={highlightSeatIndices}
                   viewTransform={transform}
@@ -2431,6 +2718,7 @@ function VenueDisplay({ state, actions }) {
                     ref={floorPlan3DRef}
                     tables={state.seatingTables}
                     objects={state.seatingObjects}
+                    chairColor={state.seatingChairColor}
                     focusTableId={selected?.tableId || null}
                     onSelectTable={selectTable}
                   />
@@ -2960,6 +3248,7 @@ export default function App() {
     seatingTables: [],
     seatingAssignments: {},
     seatingObjects: [],
+    seatingChairColor: null, // the venue's chair colour (each table may override it)
     seatingRevealMode: "locked",
     seatingRevealAt: null,
     seatingLoaded: false,
@@ -2985,7 +3274,7 @@ export default function App() {
     const mySeq = ++seatingSeqRef.current;
     const data = await apiAdmin(state.adminPassword, action, payload);
     if (seatingSeqRef.current !== mySeq) return null; // superseded by a newer request; drop it
-    patch({ seatingTables: data.tables, seatingAssignments: data.assignments, seatingObjects: data.objects, seatingRevealMode: data.revealMode, seatingRevealAt: data.revealAt });
+    patch({ seatingTables: data.tables, seatingAssignments: data.assignments, seatingObjects: data.objects, seatingRevealMode: data.revealMode, seatingRevealAt: data.revealAt, seatingChairColor: data.chairColor || null });
     return data;
   }
   async function saveSeatingReveal(mode, revealAt) {
@@ -3278,12 +3567,11 @@ export default function App() {
   function deselectObject() { patch({ selectedObjectId: null, objectDraft: null }); }
   function updateObjectDraftField(field, value) { patch({ objectDraft: { ...state.objectDraft, [field]: value } }); }
 
-  async function addObject(type) {
-    const n = state.seatingObjects.length + 1;
-    const baseX = 150 + ((n * 83) % 700), baseY = 150 + ((n * 47) % 400);
-    const obj = type === "line"
-      ? { id: genId(), type, label: "", x: baseX, y: baseY, size: 10, x2: baseX + 120, y2: baseY }
-      : { id: genId(), type, label: "", x: baseX, y: baseY, size: 60, x2: null, y2: null };
+  // `make(x, y)` comes from ROOM_ITEM_GROUPS; new items land near the middle, nudged so repeats don't stack.
+  async function addObject(make) {
+    const n = state.seatingObjects.length;
+    const baseX = SEAT_LW / 2 + ((n * 37) % 120) - 60, baseY = SEAT_LH / 2 + ((n * 23) % 80) - 40;
+    const obj = { id: genId(), x2: null, y2: null, rotation: null, color: null, ...make(Math.round(baseX), Math.round(baseY)) };
     patch({ loading: true });
     try {
       const data = await seatingMutate("save-object", obj);
@@ -3329,10 +3617,27 @@ export default function App() {
       showToast("Couldn't save that shape's position.");
     }
   }
+  async function saveChairColor(color) {
+    patch({ seatingChairColor: color });
+    try { await seatingMutate("save-chair-color", { color }); }
+    catch (e) { showToast("Couldn't save the chair colour."); }
+  }
+  // One tablecloth for every table (the open table's other unsaved edits are kept).
+  async function styleAllTables({ color }) {
+    patch({ loading: true });
+    try {
+      const data = await seatingMutate("style-all-tables", { color });
+      patch({ loading: false, ...(state.tableDraft && { tableDraft: { ...state.tableDraft, color } }) });
+      if (data) showToast("Tablecloth applied to every table.");
+    } catch (e) {
+      patch({ loading: false });
+      showToast("Couldn't update the tables.");
+    }
+  }
   function downloadFloorPlan() {
     const occupancy = {};
     Object.values(state.seatingAssignments).forEach(a => { occupancy[a.tableId] = (occupancy[a.tableId] || 0) + 1; });
-    exportFloorPlanPNG(state.seatingTables, state.seatingObjects, occupancy, `${CONFIG.coupleNames} — Reception Floor Plan`);
+    exportFloorPlanPNG(state.seatingTables, state.seatingObjects, occupancy, `${CONFIG.coupleNames} — Reception Floor Plan`, state.seatingChairColor);
   }
   function armGuest(memberId, inviteCode) {
     patch({ armedGuest: state.armedGuest?.memberId === memberId ? null : { memberId, inviteCode } });
@@ -3453,7 +3758,7 @@ export default function App() {
     previewInvite, exitPreview, toggleRow, copyLink, exportCSV,
     loadSeating, selectTable, deselectTable, updateTableDraftField, addTable, saveTableDraft, deleteTable, moveTable, armGuest, assignSeat,
     selectObject, deselectObject, updateObjectDraftField, addObject, saveObjectDraft, deleteObject, moveObject,
-    setTableShape, downloadFloorPlan, saveSeatingReveal,
+    setTableShape, downloadFloorPlan, saveSeatingReveal, saveChairColor, styleAllTables,
     saveSettings
   };
 

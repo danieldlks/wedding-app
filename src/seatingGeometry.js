@@ -27,9 +27,18 @@ export function triangleVertices(o) {
   });
 }
 
+// A table's rotation in radians (clockwise on the plan, as degrees are stored).
+export function tableAngle(t) { return ((Number(t.rotation) || 0) * Math.PI) / 180; }
+
 // Seat layout, shared by drawing and by the admin seat-picker panel so seat
 // N always means the same physical chair everywhere it's referenced.
+// Offsets from the table's centre, in the plan's frame (rotation applied).
 export function getSeatPositions(t) {
+  const a = tableAngle(t), c = Math.cos(a), s = Math.sin(a);
+  return getSeatPositionsLocal(t).map(p => ({ x: p.x * c - p.y * s, y: p.x * s + p.y * c }));
+}
+// The same seats in the table's own (unrotated) frame.
+export function getSeatPositionsLocal(t) {
   const n = Math.max(1, t.capacity | 0);
   const positions = [];
   const { w, h, round } = tableDims(t);
@@ -49,4 +58,42 @@ export function getSeatPositions(t) {
     }
   }
   return positions;
+}
+
+// ---- Room features & colours ----
+// Line-like floor items are drawn between two end points (x,y)-(x2,y2) and can be
+// stretched by dragging either end, like a wall.
+export const LINE_TYPES = ["line", "curtain", "window"];
+export function isLineObject(o) { return LINE_TYPES.includes(o.type); }
+
+// Fireplace/stairs have a w×d footprint and a facing direction. Local frame:
+// width along local x, depth along local y, "forward" = local +y (the
+// fireplace's front / the direction the stairs climb). featureAngle() is that
+// forward direction in canvas radians.
+export function featureDims(o) {
+  return o.type === "fireplace" ? { w: o.size, d: o.size * 0.38 } : { w: o.size * 0.55, d: o.size };
+}
+export function featureAngle(o) {
+  if (o.rotation != null && Number.isFinite(Number(o.rotation))) return (Number(o.rotation) * Math.PI) / 180;
+  // Not set: face away from (fireplace) or climb toward (stairs) the nearest wall.
+  const walls = [[o.x, Math.PI], [SEAT_LW - o.x, 0], [o.y, -Math.PI / 2], [SEAT_LH - o.y, Math.PI / 2]];
+  const [, toWall] = walls.reduce((a, b) => (b[0] < a[0] ? b : a));
+  return o.type === "fireplace" ? toWall + Math.PI : toWall;
+}
+
+// Curated colours for tablecloths, chairs and floor items (plus a custom colour).
+export const FLOOR_COLORS = [
+  ["White", "#FBFAF5"], ["Ivory", "#F3EBDD"], ["Champagne", "#E6D5B5"], ["Blush", "#EBCFC8"],
+  ["Dusty rose", "#C99A93"], ["Sage", "#A9B89C"], ["Eucalyptus", "#7E9483"], ["Dark green", "#2F3B30"],
+  ["Navy", "#2B3550"], ["Charcoal", "#3C3C3A"]
+];
+export const CHAIR_COLORS = [
+  ["Natural timber", "#B88A55"], ["Gold", "#C9A25C"], ["Dark timber", "#6B4A2E"], ["White", "#ECE8E0"], ["Black", "#2B2A28"]
+];
+export const DEFAULT_CHAIR_COLOR = "#B88A55";
+// Dark or light text, whichever reads better on a fill colour.
+export function textColorOn(hex) {
+  const n = parseInt(String(hex || "#ffffff").slice(1), 16);
+  const lum = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+  return lum < 0.55 ? "#FBF7EF" : "#202B22";
 }

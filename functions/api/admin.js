@@ -1,4 +1,4 @@
-import { rowToRecord, genId, genInviteCode, listAllRecords, listSeating, getSiteSettings, putSetting, isValidDate, resolveEvents } from "../_lib/db.js";
+import { rowToRecord, genId, genInviteCode, listAllRecords, listSeating, getSiteSettings, putSetting, isValidDate, resolveEvents, isHexColor } from "../_lib/db.js";
 import { isValidTimeZone } from "../_lib/time.js";
 import { sendEmail, getEmailQuota } from "../_lib/email.js";
 import { renderUpdateEmail, renderReminderEmail, recipientFor } from "../_lib/templates.js";
@@ -168,6 +168,22 @@ export async function onRequestPost({ request, env }) {
       return Response.json(await listSeating(env.DB));
     }
 
+    case "style-all-tables": {
+      // One tablecloth colour for every table (null = plain linen).
+      const c = payload?.color;
+      if (c != null && c !== "" && !isHexColor(c)) return new Response("Invalid colour", { status: 400 });
+      await env.DB.prepare("UPDATE seating_tables SET color = ?").bind(c || null).run();
+      return Response.json(await listSeating(env.DB));
+    }
+
+    case "save-chair-color": {
+      // The venue's chair colour (each table can override it with its own chairColor).
+      const c = payload?.color;
+      if (c != null && c !== "" && !isHexColor(c)) return new Response("Invalid colour", { status: 400 });
+      await putSetting(env.DB, "chair_color", c || "");
+      return Response.json(await listSeating(env.DB));
+    }
+
     case "save-object":
       return Response.json(await saveFloorObject(env.DB, payload || {}));
 
@@ -269,41 +285,50 @@ async function saveTable(db, p) {
   const size2 = p.size2 != null && Number.isFinite(Number(p.size2)) ? Math.max(30, Number(p.size2)) : null;
   const rotation = Number(p.rotation) || 0;
   const capacity = Math.max(1, Number(p.capacity) || 8);
+  const color = isHexColor(p.color) ? p.color : null;
+  const chairColor = isHexColor(p.chairColor) ? p.chairColor : null;
 
   const existing = await db.prepare("SELECT created_at FROM seating_tables WHERE id = ?").bind(id).first();
   const createdAt = existing?.created_at || new Date().toISOString();
 
   await db.prepare(`
-    INSERT INTO seating_tables (id, label, shape, x, y, size, size2, rotation, capacity, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO seating_tables (id, label, shape, x, y, size, size2, rotation, capacity, created_at, color, chair_color)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       label = excluded.label, shape = excluded.shape, x = excluded.x, y = excluded.y,
-      size = excluded.size, size2 = excluded.size2, rotation = excluded.rotation, capacity = excluded.capacity
-  `).bind(id, label, shape, x, y, size, size2, rotation, capacity, createdAt).run();
+      size = excluded.size, size2 = excluded.size2, rotation = excluded.rotation, capacity = excluded.capacity,
+      color = excluded.color, chair_color = excluded.chair_color
+  `).bind(id, label, shape, x, y, size, size2, rotation, capacity, createdAt, color, chairColor).run();
 
   return listSeating(db);
 }
 
+// Basic shapes, walls, and the room features with their own 2D drawing / 3D model.
+// Line-like types (wall, curtain, window) use x/y -> x2/y2; the rest x/y/size.
+const FLOOR_OBJECT_TYPES = ["circle", "rect", "triangle", "line", "fireplace", "stairs", "curtain", "window", "pillar", "post"];
+
 async function saveFloorObject(db, p) {
   const id = String(p.id || "").trim() || genId();
-  const type = ["circle", "rect", "triangle", "line"].includes(p.type) ? p.type : "rect";
+  const type = FLOOR_OBJECT_TYPES.includes(p.type) ? p.type : "rect";
   const label = String(p.label || "").trim();
   const x = Number.isFinite(Number(p.x)) ? Number(p.x) : 100;
   const y = Number.isFinite(Number(p.y)) ? Number(p.y) : 100;
   const size = Math.max(10, Number(p.size) || 60);
   const x2 = p.x2 != null && Number.isFinite(Number(p.x2)) ? Number(p.x2) : null;
   const y2 = p.y2 != null && Number.isFinite(Number(p.y2)) ? Number(p.y2) : null;
+  const rotation = p.rotation != null && Number.isFinite(Number(p.rotation)) ? ((Number(p.rotation) % 360) + 360) % 360 : null;
+  const color = isHexColor(p.color) ? p.color : null;
 
   const existing = await db.prepare("SELECT created_at FROM floor_objects WHERE id = ?").bind(id).first();
   const createdAt = existing?.created_at || new Date().toISOString();
 
   await db.prepare(`
-    INSERT INTO floor_objects (id, type, label, x, y, size, x2, y2, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO floor_objects (id, type, label, x, y, size, x2, y2, created_at, rotation, color)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       type = excluded.type, label = excluded.label, x = excluded.x, y = excluded.y,
-      size = excluded.size, x2 = excluded.x2, y2 = excluded.y2
-  `).bind(id, type, label, x, y, size, x2, y2, createdAt).run();
+      size = excluded.size, x2 = excluded.x2, y2 = excluded.y2, rotation = excluded.rotation, color = excluded.color
+  `).bind(id, type, label, x, y, size, x2, y2, createdAt, rotation, color).run();
 
   return listSeating(db);
 }

@@ -4,6 +4,52 @@ Notable changes to the RSVP app, newest first. See `plan.md`/`design.md` for the
 broader feature history (v1 → v3); this file tracks discrete fixes and changes
 made along the way.
 
+## 2026-11-02 — Floor plan: room features, colours, rotating tables, clearer 3D labels
+
+**Feature:**
+
+**"+ Add to room" menu:** replaces the four shape buttons. It's a grouped picker: a dropdown on desktop, a bottom sheet on phones.
+- **Room features:** fireplace, curtains, stairs, window, pillar (round column), timber post, entrance.
+- **Stations:** bar, dance floor, stage/DJ, cake, gift, photo booth, buffet. These are labelled shapes, so they pick up the 3D styles that already exist.
+- **Basic shapes:** circle, square, triangle, wall.
+
+**New items:** each has its own 2D drawing and 3D model.
+- **Line items** (curtains, window, wall) are drawn between two end points and stretched by dragging either end.
+- **Fireplace and stairs** face away from (or climb toward) the nearest wall. "Rotate 90°" overrides that.
+- **Solid items:** the fireplace, stairs, pillars and posts block walking in the 3D walk-through.
+
+**Colours:**
+- **Tablecloths** are set per table, with a "Use this tablecloth on every table" shortcut.
+- **Chairs** have one colour for the whole venue (above the plan), with an optional per-table override.
+- **Floor items** have a main colour.
+- **Picker:** a curated palette plus a custom colour.
+- **Live preview:** unsaved edits (rotation, colours) show on the plan straight away.
+
+**Rotating tables:** turn in 15° steps, with "Straighten" to reset. Chairs and seat numbers turn with the table in 2D and 3D, and the table name stays upright.
+
+**3D labels:**
+- **Position:** labels sit just above their table.
+- **Crowded view:** if any table's full name won't fit (because of a neighbour, a button or the edge of the view), every table shows a compact number badge instead.
+- **Own table:** the guest's own table (or the selected table) keeps its full name.
+- **Busy rooms:** with more than 15 tables, the overview looks down more steeply.
+
+**Deploy:** four `ALTER TABLE` commands, run one at a time (see the DEPLOY NOTE in `schema.sql`):
+- `seating_tables.color`
+- `seating_tables.chair_color`
+- `floor_objects.rotation`
+- `floor_objects.color`
+
+The venue chair colour is stored in `app_settings` as `chair_color`.
+
+**Files:**
+- `src/App.jsx`
+- `src/FloorPlan3D.jsx`
+- `src/seatingGeometry.js`
+- `functions/_lib/db.js`
+- `functions/api/admin.js`
+- `functions/api/seating.js`
+- `schema.sql`
+
 ## 2026-10-28 — Redesigned emails, RSVP alert switch & emails-left-today
 
 **Emails:** all four emails now match the site, built with tables and inline
