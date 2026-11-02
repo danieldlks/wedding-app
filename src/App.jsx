@@ -469,19 +469,30 @@ const CSS = `
 .table-editor-panel{background:#fff;border:1px solid var(--gold-soft);padding:16px 18px;margin-top:14px;}
 /* Seating: Add to room menu (dropdown on wide screens, bottom sheet on phones) */
 .room-menu{position:relative;}
-.room-menu-scrim{position:fixed;inset:0;background:rgba(32,43,34,.35);z-index:40;}
-.room-menu-sheet{position:fixed;left:0;right:0;bottom:0;z-index:41;background:#fff;border-radius:18px 18px 0 0;padding:10px 16px calc(22px + var(--sab, 0px));max-height:80vh;overflow:auto;box-shadow:0 -10px 30px rgba(0,0,0,.18);}
-.room-menu-sheet h3{font-family:var(--display);font-size:24px;font-weight:600;margin:2px 0 4px;}
-.room-menu-grab{width:40px;height:5px;border-radius:3px;background:#D9D3C6;margin:0 auto 10px;}
+.room-menu-scrim{position:fixed;inset:0;background:rgba(32,43,34,.35);z-index:40;touch-action:none;}
+
+/* Phones: a bottom sheet sized to the visible screen (dvh — Safari's toolbars excluded), with a
+   fixed header (✕ and swipe-down handle) and its own scroll area that doesn't drag the page. */
+.room-menu-sheet{position:fixed;left:0;right:0;bottom:0;z-index:41;background:#fff;border-radius:18px 18px 0 0;max-height:80vh;max-height:85dvh;display:flex;flex-direction:column;box-shadow:0 -10px 30px rgba(0,0,0,.18);transition:transform .2s ease;}
+.room-menu-head{flex:none;padding:8px 8px 6px 16px;touch-action:none;cursor:grab;}
+.room-menu-grab{width:40px;height:5px;border-radius:3px;background:#D9D3C6;margin:0 auto 6px;}
+.room-menu-title{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.room-menu-title h3{font-family:var(--display);font-size:24px;font-weight:600;margin:0;}
+.room-menu-close{flex:none;width:44px;height:44px;border-radius:50%;border:none;background:var(--paper-2);color:var(--ink);font-size:17px;line-height:1;}
+.room-menu-body{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y;padding:0 16px calc(22px + env(safe-area-inset-bottom, 0px));}
 .room-menu-sec{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold);font-weight:600;margin:14px 0 8px;}
 .room-menu-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;}
-.room-menu-tile{border:1px solid #EAE2D2;background:var(--paper);border-radius:12px;padding:10px 4px 8px;font-size:12px;font-weight:500;color:var(--ink);display:flex;flex-direction:column;align-items:center;gap:5px;min-height:76px;text-align:center;}
+.room-menu-tile{border:1px solid #EAE2D2;background:var(--paper);border-radius:12px;padding:10px 4px 8px;font-size:12px;font-weight:500;color:var(--ink);display:flex;flex-direction:column;align-items:center;gap:5px;min-height:76px;text-align:center;touch-action:manipulation;}
 .room-menu-tile:hover,.room-menu-tile:focus-visible{border-color:var(--sage);background:#EEF2EA;outline:none;}
 .room-menu-tile svg{width:30px;height:30px;fill:none;stroke:var(--ink);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+@media(prefers-reduced-motion:reduce){.room-menu-sheet{transition:none;}}
 @media(min-width:700px){
-  .room-menu-scrim{background:transparent;}
-  .room-menu-sheet{position:absolute;left:0;right:auto;bottom:auto;top:calc(100% + 8px);width:540px;border-radius:14px;border:1px solid var(--gold-soft);max-height:none;padding:16px 18px 20px;box-shadow:0 18px 40px -12px rgba(32,43,34,.35);}
+  .room-menu-scrim{background:transparent;touch-action:auto;}
+  .room-menu > .btn{position:relative;z-index:42;} /* desktop: the toggle stays above the (invisible) scrim, so it closes the menu too */
+  .room-menu-sheet{position:absolute;left:0;right:auto;bottom:auto;top:calc(100% + 8px);width:540px;border-radius:14px;border:1px solid var(--gold-soft);max-height:none;box-shadow:0 18px 40px -12px rgba(32,43,34,.35);}
+  .room-menu-head{padding:12px 12px 4px 18px;cursor:default;touch-action:auto;}
   .room-menu-grab{display:none;}
+  .room-menu-body{overflow:visible;padding:0 18px 20px;}
   .room-menu-grid{grid-template-columns:repeat(6,minmax(0,1fr));}
 }
 /* Seating: colour swatches, rotation and the venue chair row */
@@ -2243,36 +2254,58 @@ const ROOM_ITEM_GROUPS = [
 
 function AddToRoomMenu({ onAdd, disabled }) {
   const [open, setOpen] = useState(false);
-  const wrapRef = useRef(null);
+  const [dragY, setDragY] = useState(0); // how far the phone sheet is being swiped down
+  const swipeRef = useRef(null);
+  const close = () => { setOpen(false); setDragY(0); };
   useEffect(() => {
     if (!open) return;
-    const close = e => { if (e.type === "keydown" ? e.key === "Escape" : !wrapRef.current?.contains(e.target)) setOpen(false); };
-    document.addEventListener("pointerdown", close); document.addEventListener("keydown", close);
-    return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", close); };
+    // Close on Esc. A tap/click outside lands on the scrim (it covers the page, transparent on
+    // desktop), which closes the menu and swallows that tap, so nothing underneath gets pressed.
+    const onKey = e => { if (e.key === "Escape") close(); };
+    document.addEventListener("keydown", onKey);
+    // Phones: the page behind mustn't scroll while the sheet is up.
+    const html = document.documentElement, prev = html.style.overflow;
+    if (window.matchMedia("(max-width: 699px)").matches) html.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", onKey); html.style.overflow = prev; };
   }, [open]);
+  // Swipe the sheet down by its header to dismiss it (phones).
+  const swipe = {
+    onPointerDown: e => { if (e.pointerType !== "mouse") swipeRef.current = e.clientY; },
+    onPointerMove: e => { if (swipeRef.current != null) setDragY(Math.max(0, e.clientY - swipeRef.current)); },
+    onPointerUp: () => { if (swipeRef.current == null) return; swipeRef.current = null; dragY > 70 ? close() : setDragY(0); },
+    onPointerCancel: () => { swipeRef.current = null; setDragY(0); },
+  };
   return (
-    <div className="room-menu" ref={wrapRef}>
+    <div className="room-menu">
       <button className={`btn ${open ? "btn-primary" : "btn-ghost"}`} style={{ flex: "none" }} aria-expanded={open} aria-haspopup="dialog"
-        onClick={() => setOpen(o => !o)} disabled={disabled}>+ Add to room ▾</button>
+        onClick={() => (open ? close() : setOpen(true))} disabled={disabled}>+ Add to room ▾</button>
       {open && (
         <>
-          <div className="room-menu-scrim" aria-hidden="true" />
-          <div className="room-menu-sheet" role="dialog" aria-label="Add to the room">
-            <div className="room-menu-grab" aria-hidden="true" />
-            <h3>Add to the room</h3>
-            <p className="helptext" style={{ margin: "0 0 4px" }}>Tap an item to drop it in the middle of the plan, then drag it into place.</p>
-            {ROOM_ITEM_GROUPS.map(([group, items]) => (
-              <div key={group}>
-                <div className="room-menu-sec">{group}</div>
-                <div className="room-menu-grid">
-                  {items.map(([key, name, icon, make]) => (
-                    <button key={key} type="button" className="room-menu-tile" onClick={() => { setOpen(false); onAdd(make); }}>
-                      <svg viewBox="0 0 32 32" aria-hidden="true"><path d={icon} /></svg>{name}
-                    </button>
-                  ))}
-                </div>
+          <div className="room-menu-scrim" aria-hidden="true" onClick={close} />
+          <div className="room-menu-sheet" role="dialog" aria-label="Add to the room"
+            style={dragY ? { transform: `translateY(${dragY}px)`, transition: "none" } : undefined}>
+            <div className="room-menu-head" {...swipe}>
+              <div className="room-menu-grab" aria-hidden="true" />
+              <div className="room-menu-title">
+                <h3>Add to the room</h3>
+                <button type="button" className="room-menu-close" aria-label="Close" onClick={close}>✕</button>
               </div>
-            ))}
+            </div>
+            <div className="room-menu-body">
+              <p className="helptext" style={{ margin: "0 0 4px" }}>Tap an item to drop it in the middle of the plan, then drag it into place.</p>
+              {ROOM_ITEM_GROUPS.map(([group, items]) => (
+                <div key={group}>
+                  <div className="room-menu-sec">{group}</div>
+                  <div className="room-menu-grid">
+                    {items.map(([key, name, icon, make]) => (
+                      <button key={key} type="button" className="room-menu-tile" onClick={() => { close(); onAdd(make); }}>
+                        <svg viewBox="0 0 32 32" aria-hidden="true"><path d={icon} /></svg>{name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </>
       )}
