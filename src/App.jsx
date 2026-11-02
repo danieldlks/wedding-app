@@ -300,12 +300,24 @@ const CSS = `
 .rsvp-root *{box-sizing:border-box;}
 /* overflow-x:clip stops any stray wide element from making the whole page scroll sideways
    (unlike overflow:hidden it doesn't create a scroll container, so position:sticky still works). */
-.rsvp-root{font-family:var(--body);color:var(--ink);background:var(--paper);min-height:100vh;min-height:100dvh;overflow-x:clip;}
+/* Safe areas: on the iPhone Home Screen app (viewport-fit=cover + black-translucent status
+   bar, see index.html) the page runs under the clock/Dynamic Island and the home bar. The
+   root pads itself clear of them, and a fixed dark green strip sits behind the status bar so
+   its white text always has a dark background. Each screen pads its own content clear of the
+   side insets (iPhone in landscape), so its background still reaches the edges. Every inset
+   is 0 in a normal browser tab, so nothing changes there. --full-h is a full screen's height
+   below the top inset. */
+.rsvp-root{--sat:env(safe-area-inset-top,0px);--sab:env(safe-area-inset-bottom,0px);--sal:env(safe-area-inset-left,0px);--sar:env(safe-area-inset-right,0px);--full-h:calc(100dvh - var(--sat));
+  box-sizing:border-box;padding-top:var(--sat);font-family:var(--body);color:var(--ink);background:var(--paper);min-height:100vh;min-height:100dvh;overflow-x:clip;}
+.rsvp-root::before{content:"";position:fixed;top:0;left:0;right:0;height:var(--sat);background:var(--ink);z-index:100;pointer-events:none;}
 .rsvp-root button{font-family:inherit;cursor:pointer;}
 .rsvp-root input,.rsvp-root textarea{font-family:inherit;}
 .eyebrow{font-size:11px;letter-spacing:.22em;text-transform:uppercase;font-weight:600;}
-.hero{min-height:100vh;min-height:100dvh;background:radial-gradient(ellipse at 50% -10%,rgba(169,129,76,.18),transparent 60%),var(--ink);color:var(--paper);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:32px 20px;position:relative;overflow:hidden;}
-.hero::before{content:"";position:absolute;inset:18px;border:1px solid rgba(216,200,165,.35);pointer-events:none;}
+.hero{min-height:100vh;min-height:100dvh;background:radial-gradient(ellipse at 50% -10%,rgba(169,129,76,.18),transparent 60%),var(--ink);color:var(--paper);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:calc(32px + var(--sat)) calc(20px + var(--sar)) 32px calc(20px + var(--sal));margin-top:calc(-1 * var(--sat));position:relative;overflow:hidden;}
+/* The full-screen dark hero runs up behind the clock and Dynamic Island itself (no strip, so
+   its gold glow has no seam); its inner frame starts below them. */
+.rsvp-root:has(> .hero)::before{display:none;}
+.hero::before{content:"";position:absolute;inset:calc(18px + var(--sat)) 18px 18px;border:1px solid rgba(216,200,165,.35);pointer-events:none;}
 .hero .eyebrow{color:var(--gold-soft);margin-bottom:18px;}
 .hero h1{font-family:var(--display);font-weight:500;font-size:clamp(36px,8vw,68px);line-height:1.05;margin:0 0 10px;}
 .hero .sub{font-family:var(--display);font-style:italic;font-size:clamp(15px,3vw,19px);color:var(--gold-soft);margin:0 0 30px;}
@@ -313,7 +325,7 @@ const CSS = `
 .seal{width:108px;height:108px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#C79A5E,var(--gold) 55%,#8A6636 100%);border:none;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-size:32px;color:var(--ink);box-shadow:0 10px 30px -8px rgba(0,0,0,.55),inset 0 2px 4px rgba(255,255,255,.35);transition:transform .3s cubic-bezier(.34,1.56,.64,1);}
 .seal:hover{transform:scale(1.06) rotate(-3deg);}
 .seal-caption{margin-top:16px;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold-soft);font-weight:500;}
-.stage{min-height:100vh;min-height:100dvh;background:linear-gradient(180deg,var(--ink) 0,var(--ink) 120px,var(--paper) 120px);display:flex;justify-content:center;padding:36px 16px 80px;}
+.stage{min-height:100vh;min-height:var(--full-h);background:linear-gradient(180deg,var(--ink) 0,var(--ink) 120px,var(--paper) 120px);display:flex;justify-content:center;padding:36px calc(16px + var(--sar)) 80px calc(16px + var(--sal));}
 .card{width:100%;max-width:620px;background:var(--paper);border:1px solid var(--gold-soft);box-shadow:var(--shadow);position:relative;}
 .card::before{content:"";position:absolute;inset:8px;border:1px solid rgba(169,129,76,.35);pointer-events:none;}
 .card-inner{padding:38px 26px 32px;}
@@ -379,7 +391,7 @@ const CSS = `
 .summary .srow{padding:8px 0;font-size:13.5px;border-bottom:1px solid rgba(169,129,76,.25);}
 .summary .srow:last-child{border-bottom:none;}
 .summary .slabel{color:var(--ink-soft);}
-.login-stage{min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:40px 16px;position:relative;overflow:hidden;background:radial-gradient(ellipse at 50% 0%,rgba(110,127,99,.18),transparent 60%),radial-gradient(ellipse at 50% 100%,rgba(169,129,76,.14),transparent 55%),var(--paper);}
+.login-stage{min-height:100vh;min-height:var(--full-h);display:flex;align-items:center;justify-content:center;padding:40px calc(16px + var(--sar)) 40px calc(16px + var(--sal));position:relative;overflow:hidden;background:radial-gradient(ellipse at 50% 0%,rgba(110,127,99,.18),transparent 60%),radial-gradient(ellipse at 50% 100%,rgba(169,129,76,.14),transparent 55%),var(--paper);}
 .login-stage::before,.login-stage::after{content:"";position:absolute;left:50%;top:58%;border-radius:50%;border:1px solid rgba(169,129,76,.22);transform:translate(-50%,-50%);pointer-events:none;}
 .login-stage::before{width:min(1100px,170vw);height:min(1100px,170vw);}
 .login-stage::after{width:min(1400px,220vw);height:min(1400px,220vw);border-color:rgba(169,129,76,.12);}
@@ -402,16 +414,16 @@ const CSS = `
 .login-submit:disabled{opacity:.6;cursor:not-allowed;}
 .login-back{margin-top:16px;background:none;border:none;color:var(--ink-soft);font-size:13.5px;cursor:pointer;padding:6px;}
 .login-back:hover{color:var(--ink);text-decoration:underline;}
-.footer-link{position:fixed;bottom:10px;right:12px;font-size:11px;color:rgba(75,81,72,.4);background:none;border:none;text-decoration:underline;z-index:5;}
-.preview-banner{position:sticky;top:0;background:var(--gold);color:var(--ink);padding:10px 16px;text-align:center;font-size:13px;font-weight:600;z-index:20;}
+.footer-link{position:fixed;bottom:calc(10px + var(--sab));right:calc(12px + var(--sar));font-size:11px;color:rgba(75,81,72,.4);background:none;border:none;text-decoration:underline;z-index:5;}
+.preview-banner{position:sticky;top:var(--sat);background:var(--gold);color:var(--ink);padding:10px 16px;text-align:center;font-size:13px;font-weight:600;z-index:20;}
 .preview-banner button{margin-left:10px;background:var(--ink);color:#fff;border:none;padding:5px 12px;border-radius:14px;font-size:12px;}
 
 /* admin */
-.admin-shell{min-height:100vh;min-height:100dvh;background:var(--paper-2);padding:0 0 60px;}
-.admin-topbar{background:var(--ink);color:var(--paper);padding:18px 22px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;position:sticky;top:0;z-index:10;}
+.admin-shell{min-height:100vh;min-height:var(--full-h);background:var(--paper-2);padding:0 0 60px;}
+.admin-topbar{background:var(--ink);color:var(--paper);padding:18px calc(22px + var(--sar)) 18px calc(22px + var(--sal));display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;position:sticky;top:var(--sat);z-index:10;}
 .admin-topbar h2{font-family:var(--display);font-weight:500;font-size:20px;margin:0;}
 .admin-topbar .btn-link{color:var(--gold-soft);}
-.admin-wrap{max-width:1020px;margin:0 auto;padding:26px 18px;}
+.admin-wrap{max-width:1020px;margin:0 auto;padding:26px calc(18px + var(--sar)) 26px calc(18px + var(--sal));}
 .tabs{display:flex;gap:8px;margin-bottom:22px;}
 .tab-btn{padding:9px 18px;border:1px solid var(--gold-soft);background:#fff;color:var(--ink-soft);font-size:13px;font-weight:600;border-radius:18px;}
 .tab-btn.active{background:var(--ink);color:var(--paper);border-color:var(--ink);}
@@ -443,7 +455,7 @@ const CSS = `
 .link-box{background:var(--paper-2);border:1px solid var(--gold-soft);padding:9px 11px;font-size:12px;word-break:break-all;margin:14px 0;text-align:left;}
 .spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;display:inline-block;animation:spin .7s linear infinite;vertical-align:-3px;margin-right:6px;}
 @keyframes spin{to{transform:rotate(360deg);}}
-.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:12px 20px;border-radius:4px;font-size:13.5px;box-shadow:var(--shadow);z-index:60;}
+.toast{position:fixed;bottom:calc(20px + var(--sab));left:50%;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:12px 20px;border-radius:4px;font-size:13.5px;box-shadow:var(--shadow);z-index:60;}
 @media(prefers-reduced-motion:reduce){.seal{transition:none;}}
 
 /* seat map */
@@ -488,7 +500,7 @@ const CSS = `
 @media(max-width:720px){.seating-sidebar{width:100%;max-height:220px;}}
 
 /* venue display */
-.venue-display{min-height:100vh;min-height:100dvh;background:var(--paper);}
+.venue-display{min-height:100vh;min-height:var(--full-h);background:var(--paper);}
 .venue-header{background:radial-gradient(ellipse at 50% -20%,rgba(169,129,76,.22),transparent 60%),var(--ink);color:var(--paper);text-align:center;padding:48px 40px 34px;position:relative;overflow:hidden;}
 .venue-header::before{content:"";position:absolute;inset:14px;border:1px solid rgba(216,200,165,.32);pointer-events:none;}
 .venue-header .eyebrow{font-size:12px;letter-spacing:.26em;text-transform:uppercase;font-weight:600;color:var(--gold-soft);margin:0 0 14px;}
@@ -652,7 +664,7 @@ textarea.settings-input{min-height:96px;resize:vertical;line-height:1.5;}
 .headcount-bar > div.over{background:var(--error);}
 .settings-actions{padding:12px 0 4px;}
 /* Only pinned to the bottom of the screen while there are unsaved changes, so it never covers content otherwise. */
-.settings-actions.dirty{position:sticky;bottom:0;background:linear-gradient(rgba(243,237,223,0),var(--paper-2) 35%);z-index:2;}
+.settings-actions.dirty{position:sticky;bottom:0;padding-bottom:calc(4px + var(--sab));background:linear-gradient(rgba(243,237,223,0),var(--paper-2) 35%);z-index:2;}
 .settings-actions .btn{width:100%;min-height:48px;border-radius:12px;}
 @media(min-width:600px){.settings-actions .btn{width:auto;min-width:220px;}}
 `;
@@ -718,7 +730,7 @@ function GuestLanding({ state, actions }) {
   return (
     <div className="hero">
       {state.previewMode && (
-        <div className="preview-banner" style={{ position: "absolute", top: 0, left: 0, right: 0 }}>
+        <div className="preview-banner" style={{ position: "absolute", top: "var(--sat)", left: 0, right: 0 }}>
           Previewing {rec.householdName}'s invite <button onClick={actions.exitPreview}>Exit preview</button>
         </div>
       )}
