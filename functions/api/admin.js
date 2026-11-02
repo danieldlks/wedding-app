@@ -168,6 +168,14 @@ export async function onRequestPost({ request, env }) {
       return Response.json(await listSeating(env.DB));
     }
 
+    case "style-all-tables": {
+      // One tablecloth colour for every table (null = plain linen).
+      const c = payload?.color;
+      if (c != null && c !== "" && !isHexColor(c)) return new Response("Invalid colour", { status: 400 });
+      await env.DB.prepare("UPDATE seating_tables SET color = ?").bind(c || null).run();
+      return Response.json(await listSeating(env.DB));
+    }
+
     case "save-chair-color": {
       // The venue's chair colour (each table can override it with its own chairColor).
       const c = payload?.color;

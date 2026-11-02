@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DRenderer, CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { SEAT_LW, SEAT_LH, clamp, tableDims, triangleVertices, getSeatPositions, featureDims, featureAngle, DEFAULT_CHAIR_COLOR } from "./seatingGeometry.js";
+import { SEAT_LW, SEAT_LH, clamp, tableDims, triangleVertices, getSeatPositionsLocal, tableAngle, featureDims, featureAngle, DEFAULT_CHAIR_COLOR } from "./seatingGeometry.js";
 
 // A furnished "dollhouse" of the reception room, built from the same
 // seating_tables / floor_objects data the 2D SeatingCanvas draws (issue #4).
@@ -296,7 +296,8 @@ function chairPlacements(t) {
   const { w, h, round } = tableDims(t);
   const [ww, wh] = fp3dLogicalToWorld(w, h);
   const [cx, cz] = fp3dLogicalToWorld(t.x, t.y);
-  return getSeatPositions(t).map((p, i) => {
+  const a = tableAngle(t), ca = Math.cos(a), sa = Math.sin(a);
+  return getSeatPositionsLocal(t).map((p, i) => {
     let x, z, yaw;
     if (round) {
       const ang = Math.atan2(p.y, p.x);
@@ -309,7 +310,8 @@ function chairPlacements(t) {
       z = sideSign * (wh / 2 + FP3D_CHAIR_GAP);
       yaw = sideSign > 0 ? Math.PI : 0;
     }
-    return { x: cx + x, z: cz + z, yaw, seatIndex: i };
+    // Turn with the table (plan rotation is clockwise; world yaw is counter-clockwise from above).
+    return { x: cx + x * ca - z * sa, z: cz + x * sa + z * ca, yaw: yaw - a, seatIndex: i };
   });
 }
 
@@ -352,6 +354,7 @@ function buildTable(t, mats) {
   }
   const mesh = new THREE.Mesh(geo, cloth);
   mesh.position.set(px, FP3D_TABLE_H / 2, pz);
+  mesh.rotation.y = -tableAngle(t);
   mesh.castShadow = true; mesh.receiveShadow = true;
   mesh.userData = { tableId: t.id, baseColor: t.color || FP3D_LINEN };
   // Centrepiece: a glass vase with a posy of greenery and two candles.
@@ -757,7 +760,7 @@ function fp3dPushOutOfTables(s, x, z) {
   const tables = [...(s.tableMeshes?.values() || [])].map(mesh => {
     const box = new THREE.Box3().setFromObject(mesh);
     return { cx: mesh.position.x, cz: mesh.position.z, clear: Math.max(box.max.x - box.min.x, box.max.z - box.min.z) / 2 + FP3D_CHAIR_GAP + 0.75 };
-  });
+  }).concat(s.obstacles || []);
   for (let pass = 0; pass < 6; pass++) {
     let moved = false;
     for (const t of tables) {
@@ -1108,10 +1111,23 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, chairColo
     s.tableMeshes = tableMeshesRef.current;
     const door = (objects || []).find(o => landmarkKind(o) === "door");
     s.entrance = door ? (([x, z]) => ({ x, z }))(fp3dLogicalToWorld(door.x, door.y)) : null;
+    // Shared materials live in s.mats; anything else (a chosen colour, curtain fabric) belongs to its mesh.
+    s.obstacles = [];
     (objects || []).forEach(o => {
       const g = buildLandmark(o, s.mats);
-      g.traverse(obj => { if (obj.isMesh) obj.userData.ownsGeometry = true; });
+      const shared = new Set(Object.values(s.mats)); // after building: some shared materials are made on first use
+      g.traverse(obj => {
+        if (!obj.isMesh) return;
+        obj.userData.ownsGeometry = true;
+        if (!shared.has(obj.material)) obj.userData.ownsMaterial = true;
+      });
       s.contentGroup.add(g);
+      // Solid room features block walking, like tables do.
+      if (["fireplace", "stairs", "pillar", "post"].includes(o.type)) {
+        const [cx, cz] = fp3dLogicalToWorld(o.x, o.y);
+        const { w, d } = o.type === "fireplace" || o.type === "stairs" ? featureDims(o) : { w: o.size, d: o.size };
+        s.obstacles.push({ cx, cz, clear: (Math.max(w, d) / 2) * FP3D_SCALE + 0.55 });
+      }
     });
     const chairs = [];
     const blobs = [];
@@ -1122,7 +1138,10 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, chairColo
       s.contentGroup.add(mesh);
       const { w, h } = tableDims(t);
       const [ww, wh] = fp3dLogicalToWorld(w, h);
-      blobs.push({ x: mesh.position.x, z: mesh.position.z, sx: ww * 1.25, sz: wh * 1.25 });
+      // Contact-shadow blobs are axis-aligned ellipses: a turned table gets a round one covering it.
+      const turned = Math.abs(Math.sin(tableAngle(t) * 2)) > 1e-3 || Math.abs(Math.cos(tableAngle(t))) < 1e-3;
+      const big = Math.max(ww, wh) * 1.25;
+      blobs.push({ x: mesh.position.x, z: mesh.position.z, sx: turned ? big : ww * 1.25, sz: turned ? big : wh * 1.25 });
       chairPlacements(t).forEach(c => { chairs.push({ ...c, tableId: t.id }); blobs.push({ x: c.x, z: c.z, sx: 0.65, sz: 0.65 }); });
     });
     // All chairs: two instanced meshes (frame + cushion) for the whole room.

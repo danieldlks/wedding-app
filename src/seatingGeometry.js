@@ -27,9 +27,18 @@ export function triangleVertices(o) {
   });
 }
 
+// A table's rotation in radians (clockwise on the plan, as degrees are stored).
+export function tableAngle(t) { return ((Number(t.rotation) || 0) * Math.PI) / 180; }
+
 // Seat layout, shared by drawing and by the admin seat-picker panel so seat
 // N always means the same physical chair everywhere it's referenced.
+// Offsets from the table's centre, in the plan's frame (rotation applied).
 export function getSeatPositions(t) {
+  const a = tableAngle(t), c = Math.cos(a), s = Math.sin(a);
+  return getSeatPositionsLocal(t).map(p => ({ x: p.x * c - p.y * s, y: p.x * s + p.y * c }));
+}
+// The same seats in the table's own (unrotated) frame.
+export function getSeatPositionsLocal(t) {
   const n = Math.max(1, t.capacity | 0);
   const positions = [];
   const { w, h, round } = tableDims(t);
