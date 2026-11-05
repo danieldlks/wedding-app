@@ -99,3 +99,31 @@ CREATE TABLE IF NOT EXISTS app_settings (
   key TEXT PRIMARY KEY,
   value TEXT
 );
+
+-- Gift registry (see functions/_lib/registry.js). Gifts the couple adds in
+-- admin, and the guests' reservations of them. One reservation per household
+-- per gift (it can cover several of a gift with quantity > 1).
+-- DEPLOY NOTE: both tables are new — run these two CREATE TABLE statements on
+-- an existing database (remote and local) before deploying the registry code.
+CREATE TABLE IF NOT EXISTS registry_items (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  shop TEXT,
+  url TEXT,                      -- the shop's product page
+  image_url TEXT,                -- photo, linked from the shop (not stored here)
+  price_cents INTEGER,           -- NULL = no price shown
+  category TEXT,
+  quantity INTEGER NOT NULL DEFAULT 1,
+  note TEXT,
+  most_wanted INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS registry_reservations (
+  id TEXT PRIMARY KEY,
+  item_id TEXT NOT NULL,
+  invite_code TEXT NOT NULL,
+  quantity INTEGER NOT NULL DEFAULT 1,
+  bought INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  UNIQUE (item_id, invite_code)
+);

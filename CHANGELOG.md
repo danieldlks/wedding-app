@@ -4,6 +4,50 @@ Notable changes to the RSVP app, newest first. See `plan.md`/`design.md` for the
 broader feature history (v1 → v3); this file tracks discrete fixes and changes
 made along the way.
 
+## 2026-11-05 — Gift registry
+
+**Feature: gift registry.** Guests reserve gifts from a list the couple keeps in admin, then buy them from the shop. There's no money handling and no chip-in: each guest picks a gift.
+
+**Admin › Registry (new tab):**
+- **Show registry to guests:** an on/off switch (off by default).
+- **Attach to:** Engagement, Wedding, or Both.
+- **Who can see it:** "Everyone who replied" (including guests who can't come) or "Attending only" (at least one person in the household is coming to that event).
+- **Reach:** a line showing how many households can see it now, and how many more will once they RSVP.
+- **Add a gift:** paste a product link, and the name, photo, price and shop are filled in from the page (JSON-LD, then Open Graph tags, then the page title). If a shop blocks this, the details are entered by hand.
+- **Gift details:** each gift has a quantity, category, a note for guests, and a "Most wanted" ribbon that also lists it first.
+- **Reservations:** each gift lists who reserved it and whether it's bought. The admin can remove a reservation to put the gift back on the list.
+
+**Who sees it:** the registry is attached to one event (or both). A household sees it only when:
+- the registry is on,
+- they're invited to that event (people invited to both events count), and
+- they've RSVP'd. With "Attending only", someone in the household must also be coming to that event.
+
+Before they reply, the RSVP card says the registry opens once they've replied. The rules live in `src/registryRules.js`, which both the guest pages and the server use. They're enforced in `functions/api/registry.js`, not only hidden in the page.
+
+**Guest side:**
+- **Registry page:** category filters and "Still available".
+- **Reserve:** a bottom sheet with a "how many" stepper, then a link to the shop.
+- **My gifts:** mark a gift as bought, or release it for someone else.
+- **RSVP confirmation:** guests who can see the registry get a "View our gift registry" button.
+- **Privacy:** guests only see how many of each gift are still needed, never who reserved what.
+- **No double-booking:** a reservation is only saved if enough of the gift are still needed, checked in the same database statement. Two guests going for the last one can't both get it, and the second sees "Someone else has just reserved this gift".
+- **Clean-up:** deleting a household or a gift removes its reservations.
+
+**Database:** two new tables, `registry_items` and `registry_reservations`. Settings are stored in `app_settings`: `registry_enabled`, `registry_event` and `registry_audience`.
+
+**DEPLOY NOTE:** before deploying, run the two `CREATE TABLE` statements at the end of `schema.sql` on the remote database. The rest of the site keeps working without them; only the registry needs them.
+
+**Files:**
+- `src/Registry.jsx` (new)
+- `src/registryRules.js` (new)
+- `functions/api/registry.js` (new)
+- `functions/_lib/registry.js` (new)
+- `functions/_lib/productLink.js` (new)
+- `functions/api/admin.js`
+- `functions/_lib/db.js`
+- `src/App.jsx`
+- `schema.sql`
+
 ## 2026-11-03 — Resizable room; fix dragged tables snapping back
 
 **Fix:**

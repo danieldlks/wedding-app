@@ -91,6 +91,14 @@ npm run pages:deploy
 This builds the frontend (`vite build` → `dist/`) and uploads it, along with
 `functions/`, via `wrangler pages deploy`.
 
+If a release adds database tables or columns, run those statements on the remote
+database first; each release's DEPLOY NOTE in `CHANGELOG.md` and `schema.sql`
+lists them. For example, the gift registry's two tables:
+
+```
+npx wrangler d1 execute wedding-rsvp --remote --file=<file holding the two registry CREATE TABLE statements>
+```
+
 ## Notes
 
 - Admin dashboard: the small "Admin" link bottom-right of the guest-facing pages.
@@ -101,3 +109,7 @@ This builds the frontend (`vite build` → `dist/`) and uploads it, along with
   quota is 100 emails/day on a personal Gmail account. Admin → Settings → Email
   notifications shows how many are left today and can switch off the
   notify-on-RSVP alert to save quota (guests still get their confirmation).
+- Gift registry: Admin → Registry. Switch it on, attach it to the engagement,
+  the wedding or both, and choose who sees it. Guests see it after they RSVP.
+  Gifts are added by pasting a shop link. Some shops (Amazon often) block the
+  automatic lookup, so their details are typed in by hand.

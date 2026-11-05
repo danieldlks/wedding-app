@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef, lazy, Suspense } from "react";
+import { registryAccess } from "./registryRules.js";
+import { REGISTRY_CSS, GuestRegistry, AdminRegistry } from "./Registry.jsx";
 import { DEFAULT_ROOM, roomOf, metres, layoutExtent, layoutBounds, snapUpHalfM, snapDownHalfM, UNITS_PER_M, ROOM_MIN, ROOM_MAX, clamp, tableDims, triangleVertices, getSeatPositionsLocal, tableAngle, featureDims, featureAngle, isLineObject, textColorOn, FLOOR_COLORS, CHAIR_COLORS, DEFAULT_CHAIR_COLOR } from "./seatingGeometry.js";
 // The 3D venue view (and three.js) is split into its own file and only
 // downloaded the first time someone switches to 3D.
@@ -227,7 +229,7 @@ async function apiAdmin(password, action, payload) {
     body: JSON.stringify({ password, action, payload })
   });
   if (res.status === 401) { const e = new Error("Unauthorized"); e.code = 401; throw e; }
-  if (!res.ok) { const e = new Error("admin request failed"); e.status = res.status; throw e; }
+  if (!res.ok) { const e = new Error("admin request failed"); e.status = res.status; e.detail = await res.text().catch(() => ""); throw e; }
   return await res.json();
 }
 
@@ -347,6 +349,7 @@ const CSS = `
 .choice-card .ic{width:42px;height:42px;border-radius:50%;background:var(--paper-2);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-size:20px;color:var(--gold);}
 .choice-card h3{margin:0 0 3px;font-family:var(--display);font-size:19px;font-weight:600;}
 .choice-card p{margin:0;font-size:13px;color:var(--ink-soft);}
+.choice-card p.choice-extra{margin-top:4px;color:var(--gold);}
 .steps{display:flex;justify-content:center;gap:10px;margin-bottom:28px;}
 .step-dot{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-size:13px;font-weight:600;border:1px solid var(--gold-soft);color:var(--ink-soft);background:transparent;}
 .step-dot.active{background:var(--sage);border-color:var(--sage);color:var(--paper);}
@@ -801,6 +804,8 @@ function GuestLanding({ state, actions }) {
 
 function GuestMenu({ state, actions }) {
   const rec = state.currentRecord;
+  const registry = registryAccess(rec, state.siteSettings.registry);
+  const registryEvents = (state.siteSettings.registry?.event === "both" ? rec.invitedEvents : [state.siteSettings.registry?.event]).filter(id => rec.invitedEvents.includes(id));
   return (
     <div className="stage"><div className="card"><div className="card-inner">
       <div className="card-eyebrow eyebrow" style={{ textAlign: "center" }}>{rec.householdName}</div>
@@ -812,7 +817,8 @@ function GuestMenu({ state, actions }) {
       <div className="choice-grid">
         <button className="choice-card" onClick={actions.startGuestForm}>
           <div className="ic">✎</div>
-          <div><h3>RSVP</h3><p>{rec.response ? "View or update your response." : "Let us know who's coming and any dietary needs."}</p></div>
+          <div><h3>RSVP</h3><p>{rec.response ? "View or update your response." : "Let us know who's coming and any dietary needs."}</p>
+            {registry === "needs-rsvp" && <p className="choice-extra">Our gift registry opens once you've replied.</p>}</div>
         </button>
         <button className="choice-card" onClick={() => actions.patch({ view: "guest-location" })}>
           <div className="ic">⚑</div>
@@ -822,6 +828,12 @@ function GuestMenu({ state, actions }) {
           <div className="ic">✦</div>
           <div><h3>Details</h3><p>Dates, times, dress code and other info.</p></div>
         </button>
+        {registry === "visible" && (
+          <button className="choice-card" onClick={() => actions.patch({ view: "guest-registry" })}>
+            <div className="ic">❦</div>
+            <div><h3>Gift Registry</h3><p>{registryEvents.length === 1 ? `For the ${eventById(registryEvents[0])?.name || "celebration"}. ` : ""}A few things we'd love, if you'd like to bring a gift.</p></div>
+          </button>
+        )}
         {invitedToSeatedEvent(rec) && (
           <button className="choice-card" onClick={() => actions.patch({ view: "guest-seating" })}>
             <div className="ic">◈</div>
@@ -1237,8 +1249,9 @@ function GuestFormStep3({ state, actions }) {
   );
 }
 
-function GuestConfirm({ state }) {
+function GuestConfirm({ state, actions }) {
   const rec = state.currentRecord;
+  const showRegistry = registryAccess(rec, state.siteSettings.registry) === "visible";
   const anyYes = rec.response.members.some(m => rec.invitedEvents.some(id => m.attending[id]));
   return (
     <div className="stage"><div className="card"><div className="card-inner confirm-wrap">
@@ -1255,6 +1268,11 @@ function GuestConfirm({ state }) {
           </div>
         ))}
       </div>
+      {showRegistry && (
+        <div className="btn-row" style={{ marginTop: 18 }}>
+          <button className="btn btn-primary" onClick={() => actions.patch({ view: "guest-registry" })}>View our gift registry</button>
+        </div>
+      )}
       <p className="helptext">You can reopen this same link anytime to update your response.</p>
     </div></div></div>
   );
@@ -3385,6 +3403,20 @@ function DeadlineSettings({ state, actions, open, onToggle }) {
   );
 }
 
+// How many households can see the registry right now / will once they RSVP (Admin › Registry).
+function registryReach(state) {
+  const settings = state.registry?.settings;
+  if (!settings) return null;
+  const on = { ...settings, enabled: true };
+  let visible = 0, waiting = 0;
+  for (const rec of Object.values(state.guestList || {})) {
+    const a = registryAccess(rec, on);
+    if (a === "visible") visible++;
+    else if (a === "needs-rsvp") waiting++;
+  }
+  return { visible, waiting };
+}
+
 function Admin({ state, actions }) {
   return (
     <div className="admin-shell">
@@ -3401,11 +3433,13 @@ function Admin({ state, actions }) {
           <button className={`tab-btn ${state.adminTab === "guestlist" ? "active" : ""}`} onClick={() => actions.patch({ adminTab: "guestlist" })}>Guest List</button>
           <button className={`tab-btn ${state.adminTab === "responses" ? "active" : ""}`} onClick={() => actions.patch({ adminTab: "responses" })}>Responses &amp; Stats</button>
           <button className={`tab-btn ${state.adminTab === "seating" ? "active" : ""}`} onClick={() => actions.patch({ adminTab: "seating" })}>Seating</button>
+          <button className={`tab-btn ${state.adminTab === "registry" ? "active" : ""}`} onClick={() => actions.patch({ adminTab: "registry" })}>Registry</button>
           <button className={`tab-btn ${state.adminTab === "settings" ? "active" : ""}`} onClick={() => actions.patch({ adminTab: "settings" })}>Settings</button>
         </div>
         {state.adminTab === "guestlist" && <AdminGuestList state={state} actions={actions} />}
         {state.adminTab === "responses" && <AdminResponses state={state} actions={actions} />}
         {state.adminTab === "seating" && <AdminSeating state={state} actions={actions} />}
+        {state.adminTab === "registry" && <AdminRegistry state={state} actions={actions} reach={registryReach(state)} />}
         {state.adminTab === "settings" && <AdminSettings state={state} actions={actions} />}
       </div>
     </div>
@@ -3418,7 +3452,7 @@ function Admin({ state, actions }) {
 export default function App() {
   const [state, setState] = useState({
     ready: false,
-    view: "no-invite", // no-invite | invalid-invite | guest-landing | guest-menu | guest-location | guest-details | guest-seating | guest-form | guest-confirm | admin-login | admin | venue-display
+    view: "no-invite", // no-invite | invalid-invite | guest-landing | guest-menu | guest-location | guest-details | guest-seating | guest-registry | guest-form | guest-confirm | admin-login | admin | venue-display
     inviteCode: null,
     currentRecord: null,
     previewMode: false,
@@ -3436,7 +3470,8 @@ export default function App() {
     adminPassword: "",
     adminError: "",
     adminAuthed: false,
-    adminTab: "guestlist", // guestlist | responses | seating | settings
+    adminTab: "guestlist", // guestlist | responses | seating | registry | settings
+    registry: null, // Admin › Registry: { settings, items } from "registry-list"
     adminSearch: "",
     openRows: {},
     qrModalCode: null,
@@ -3610,6 +3645,7 @@ export default function App() {
     try {
       const [all, settings] = await Promise.all([apiAdmin(state.adminPassword, "list"), apiAdmin(state.adminPassword, "get-settings")]);
       patch({ loading: false, guestList: all, siteSettings: settings });
+      if (state.adminTab === "registry") loadRegistry();
     } catch (e) {
       patch({ loading: false });
       showToast("Couldn't refresh — please sign in again.");
@@ -3973,6 +4009,33 @@ export default function App() {
   /* ---------- admin: email guests ---------- */
   // How many emails Gmail will still send today (asked of the Apps Script
   // relay) and where RSVP alerts go. Best-effort: a failure just hides the count.
+  /* ---------- admin: gift registry ---------- */
+  async function loadRegistry() {
+    try { applyRegistry(await apiAdmin(state.adminPassword, "registry-list")); }
+    catch (e) { showToast("Couldn't load the registry."); }
+  }
+  function applyRegistry(data) {
+    // The registry switch/event/audience also live in siteSettings, which the guest preview reads.
+    setState(s => ({ ...s, registry: data, siteSettings: { ...s.siteSettings, registry: data.settings } }));
+  }
+  async function registryAdmin(action, payload, okMsg) {
+    patch({ loading: true });
+    try {
+      applyRegistry(await apiAdmin(state.adminPassword, action, payload));
+      patch({ loading: false });
+      if (okMsg) showToast(okMsg);
+      return true;
+    } catch (e) {
+      patch({ loading: false });
+      showToast(e.status === 400 && e.detail ? e.detail : "Couldn't save that. Please try again.");
+      return false;
+    }
+  }
+  async function fetchProductLink(url) {
+    try { return await apiAdmin(state.adminPassword, "registry-fetch-link", { url }); }
+    catch { return { ok: false }; }
+  }
+
   async function loadEmailStatus() {
     try {
       patch({ emailStatus: await apiAdmin(state.adminPassword, "email-status") });
@@ -4060,7 +4123,7 @@ export default function App() {
     loadSeating, selectTable, deselectTable, updateTableDraftField, addTable, saveTableDraft, deleteTable, moveTable, armGuest, assignSeat,
     selectObject, deselectObject, updateObjectDraftField, addObject, saveObjectDraft, deleteObject, moveObject,
     setTableShape, downloadFloorPlan, saveSeatingReveal, saveChairColor, styleAllTables, saveRoom, undoRoomGrow,
-    saveSettings
+    saveSettings, loadRegistry, registryAdmin, fetchProductLink
   };
 
   /* ========================= MASTER RENDER ========================= */
@@ -4081,7 +4144,8 @@ export default function App() {
         : state.step === 2 ? <GuestFormStep2 state={state} actions={actions} />
         : <GuestFormStep3 state={state} actions={actions} />;
       break;
-    case "guest-confirm": body = <GuestConfirm state={state} />; break;
+    case "guest-confirm": body = <GuestConfirm state={state} actions={actions} />; break;
+    case "guest-registry": body = <GuestRegistry state={state} actions={actions} eventName={id => eventById(id)?.name || ""} />; break;
     case "admin-login": body = <AdminLogin state={state} actions={actions} />; break;
     case "admin": body = <Admin state={state} actions={actions} />; break;
     case "venue-display": body = <VenueDisplay state={state} actions={actions} />; break;
@@ -4090,7 +4154,7 @@ export default function App() {
 
   return (
     <div className="rsvp-root">
-      <style>{CSS}</style>
+      <style>{CSS + REGISTRY_CSS}</style>
       {body}
       {state.toast && <div className="toast">{state.toast}</div>}
       {state.view !== "admin" && state.view !== "admin-login" && state.view !== "venue-display" && (
