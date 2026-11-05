@@ -3,6 +3,8 @@ import { isValidTimeZone } from "../_lib/time.js";
 import { sendEmail, getEmailQuota } from "../_lib/email.js";
 import { renderUpdateEmail, renderReminderEmail, recipientFor } from "../_lib/templates.js";
 import { ADMIN_HOSTS, EVENTS } from "../_lib/config.js";
+import { adminRegistry, saveRegistrySettings, saveItem, deleteItem, adminRemoveReservation, RegistryError } from "../_lib/registry.js";
+import { fetchProductInfo } from "../_lib/productLink.js";
 
 export async function onRequestPost({ request, env }) {
   // Checked before the password so guesses sent via a *.pages.dev address
@@ -37,6 +39,7 @@ export async function onRequestPost({ request, env }) {
       const code = String(payload?.inviteCode || "").trim().toUpperCase();
       if (!code) return new Response("Missing inviteCode", { status: 400 });
       await env.DB.prepare("DELETE FROM seat_assignments WHERE invite_code = ?").bind(code).run();
+      await env.DB.prepare("DELETE FROM registry_reservations WHERE invite_code = ?").bind(code).run();
       await env.DB.prepare("DELETE FROM households WHERE invite_code = ?").bind(code).run();
       return Response.json(await listAllRecords(env.DB));
     }
@@ -128,6 +131,31 @@ export async function onRequestPost({ request, env }) {
       for (const [key, value] of writes) await putSetting(env.DB, key, value);
       return Response.json(await getSiteSettings(env.DB));
     }
+
+    // Gift registry (see functions/_lib/registry.js). Each change returns the
+    // whole registry, like the seating actions do.
+    case "registry-list":
+      return Response.json(await adminRegistry(env.DB));
+
+    case "registry-save-settings":
+    case "registry-save-item":
+    case "registry-delete-item":
+    case "registry-remove-reservation": {
+      const p = payload || {};
+      try {
+        if (action === "registry-save-settings") await saveRegistrySettings(env.DB, p);
+        else if (action === "registry-save-item") await saveItem(env.DB, p);
+        else if (action === "registry-delete-item") await deleteItem(env.DB, String(p.id || ""));
+        else await adminRemoveReservation(env.DB, String(p.id || ""));
+      } catch (e) {
+        if (e instanceof RegistryError) return new Response(e.message, { status: e.status });
+        throw e;
+      }
+      return Response.json(await adminRegistry(env.DB));
+    }
+
+    case "registry-fetch-link":
+      return Response.json(await fetchProductInfo(payload?.url));
 
     case "save-table":
       return Response.json(await saveTable(env.DB, payload || {}));

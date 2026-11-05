@@ -1,4 +1,5 @@
 import { EVENTS } from "./config.js";
+import { getRegistrySettings } from "./registry.js";
 
 export function rowToRecord(row) {
   return {
@@ -120,6 +121,7 @@ export function isSeatingRevealed(setting) {
 //                              that event's defaults in CONFIG.events (absent = use the defaults)
 //   guest_info_items         — JSON [{ title, body }], the Details page items (absent = CONFIG.details)
 //   admin_rsvp_alerts        — 'off' stops the "New RSVP" email to ADMIN_NOTIFY_EMAIL (absent = on)
+//   registry_*               — gift registry switch / event / audience (see functions/_lib/registry.js)
 // An absent row means "not set". See design.md §11.
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -139,7 +141,7 @@ export async function getSiteSettings(db) {
     if (key === "admin_rsvp_alerts") notifications.rsvpAlerts = value !== "off";
     if (key === "guest_info_items") { try { guestInfo = JSON.parse(value); } catch { /* ignore */ } }
   }
-  return { deadlines, capacities, announcement, events, guestInfo, notifications };
+  return { deadlines, capacities, announcement, events, guestInfo, notifications, registry: await getRegistrySettings(db) };
 }
 
 // Effective { id: { name, timeZone } } for emails: the admin's saved values over the code defaults.
@@ -149,8 +151,8 @@ export function resolveEvents(settings) {
 
 // The subset guests are allowed to see — capacities and notifications stay admin-only.
 export async function getGuestSiteSettings(db) {
-  const { deadlines, announcement, events, guestInfo } = await getSiteSettings(db);
-  return { deadlines, announcement, events, guestInfo };
+  const { deadlines, announcement, events, guestInfo, registry } = await getSiteSettings(db);
+  return { deadlines, announcement, events, guestInfo, registry };
 }
 
 export async function putSetting(db, key, value) {
