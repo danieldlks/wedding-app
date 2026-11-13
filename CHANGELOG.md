@@ -4,6 +4,43 @@ Notable changes to the RSVP app, newest first. See `plan.md`/`design.md` for the
 broader feature history (v1 → v3); this file tracks discrete fixes and changes
 made along the way.
 
+## 2026-11-13 — Seating plan: select several, move together, keyboard shortcuts
+
+**Feature (desktop, with a mouse):**
+- **Shift-click or ⌘/Ctrl-click** adds a table or item to the selection, or removes it.
+- **Drag a box** on the empty floor to select everything it touches, including any part of a wall, curtain or window. Shift-drag adds to the selection.
+- **Drag any selected table or item** to move the whole group in whole grid steps. A group dragged past an edge grows the room to fit, like a single item does.
+- **Walls, curtains and windows** move as a whole in a group. Their end handles only show when one is selected on its own.
+- **Group panel:** with several things selected, a panel shows what's selected, with Clear selection, Delete and Duplicate.
+- **Tips:** a line of shortcut tips above the plan, shown only on devices with a mouse.
+
+**Keyboard (on the Seating tab, never while typing in a field):**
+
+| Key | Action |
+|---|---|
+| ⌫ / Delete | Delete the selection |
+| ⌘C then ⌘V | Copy and paste. Each paste of the same copy lands another 1 m away. |
+| ⌘D | Duplicate |
+| Arrow keys | Nudge 0.5 m. Shift makes it 2 m. Nudges stop at the walls. |
+| ⌘A | Select everything |
+| Esc | Clear the selection |
+
+Ctrl replaces ⌘ on Windows.
+
+**Copies:** they keep shape, size, capacity, colours and rotation, but never the seated guests. A table numbered like "Table 7" gets the next free number.
+
+**Deleting:** deleting tables that have guests seated now asks first, e.g. "Delete 2 tables? 5 guests will be unseated." This applies to the Delete table button too. Empty tables and plain items delete without asking.
+
+**Phones:** a tap still selects one thing, as before. The table and item panels gain a Duplicate button.
+
+**Saving:**
+- New admin actions `save-items` and `delete-items` save or delete many tables and items in one D1 batch, so it all happens or none of it does. `save-items` can also resize and shift the room.
+- Arrow-key nudges save once the keys go quiet, and background refreshes wait until they've saved.
+
+**Files:**
+- `src/App.jsx`
+- `functions/api/admin.js`
+
 ## 2026-11-13 — Dress code for each event
 
 **Feature: a dress code per event.** Each event card in Settings → Event details has a new optional **Dress code** field, e.g. *Cocktail*. Once that's filled in, an optional **note** appears below it, e.g. *"The ceremony is on the lawn."* Both are saved with the event's other details (`event_details_<id>`), so no database change is needed. A note without a dress code is dropped. The limits are 80 characters for the dress code and 300 for the note.
