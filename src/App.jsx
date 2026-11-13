@@ -403,6 +403,8 @@ textarea.settings-input.settings-input-short{min-height:64px;}
 .ev-summary .srow{padding:18px 0;}
 .ev-summary .srow:first-child{padding-top:6px;}
 .ev-summary .srow:last-child{padding-bottom:6px;}
+.ev-summary .srow.no-note{padding-bottom:8px;}
+.ev-summary .srow.no-note .ev-dress{gap:0;}
 .summary .slabel{color:var(--ink-soft);}
 .login-stage{min-height:100vh;min-height:var(--full-h);display:flex;align-items:center;justify-content:center;padding:40px calc(16px + var(--sar)) 40px calc(16px + var(--sal));position:relative;overflow:hidden;background:radial-gradient(ellipse at 50% 0%,rgba(110,127,99,.18),transparent 60%),radial-gradient(ellipse at 50% 100%,rgba(169,129,76,.14),transparent 55%),var(--paper);}
 .login-stage::before,.login-stage::after{content:"";position:absolute;left:50%;top:58%;border-radius:50%;border:1px solid rgba(169,129,76,.22);transform:translate(-50%,-50%);pointer-events:none;}
@@ -960,7 +962,7 @@ function GuestDetails({ state, actions }) {
         {rec.invitedEvents.map(id => {
           const ev = eventById(id);
           return (
-            <div className="srow" key={id}>
+            <div className={`srow ${ev.dressCode && !ev.dressNote ? "no-note" : ""}`} key={id}>
               <div style={{ fontWeight: 600 }}>{ev.name}</div>
               <div className="slabel" style={{ fontSize: 12.5 }}>{eventDateText(ev)} · {eventTimeText(ev)}</div>
               <div className="slabel" style={{ fontSize: 12.5 }}>{ev.venue}</div>
