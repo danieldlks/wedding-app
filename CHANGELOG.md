@@ -4,6 +4,19 @@ Notable changes to the RSVP app, newest first. See `plan.md`/`design.md` for the
 broader feature history (v1 → v3); this file tracks discrete fixes and changes
 made along the way.
 
+## 2026-11-13 — 3D: nothing pokes through a loft; stairs open onto it
+
+**Fix:** in 3D, ground-floor items that ran up to the 3.4 m ceiling poked through a loft (2.5 m) when it was above them. That covered fireplace chimneys, pillars, timber posts, windows and curtains, plus the stairs' handrail posts. Under any part of a loft they now stop just below its floor, so pillars and posts look like they hold the loft up.
+
+**Feature: stairs that lead up to a loft.** In 2D, these are stairs whose top end is at, or inside, a loft's edge (within 75 cm). In 3D they now:
+- **Climb exactly** to the loft floor.
+- **From outside the loft:** arrive at a gap in the loft's railing.
+- **From under the loft:** come up through a stairwell cut in the loft floor. A guard rail runs round the stairwell on every side except the one you step off.
+
+Other stairs stay 2.2 m high and keep clear of any loft above.
+
+**Files:** `src/FloorPlan3D.jsx`
+
 ## 2026-11-13 — Lofts (upper levels) on the seating plan
 
 **Feature:** lofts. A loft is a raised area over part of the room, reached by stairs. You can have up to 5.
