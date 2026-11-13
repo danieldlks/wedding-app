@@ -117,7 +117,7 @@ export function isSeatingRevealed(setting) {
 //   event_capacity_<eventId> — integer headcount, informational only (never enforced)
 //   announcement_message     — free text shown to every guest on their menu page
 //   announcement_until       — optional 'YYYY-MM-DD'; the announcement hides after this date
-//   event_details_<eventId>  — JSON { name, date, time, timeZone, venue, address } overriding
+//   event_details_<eventId>  — JSON { name, date, time, timeZone, venue, address, dressCode, dressNote } overriding
 //                              that event's defaults in CONFIG.events (absent = use the defaults)
 //   guest_info_items         — JSON [{ title, body }], the Details page items (absent = CONFIG.details)
 //   admin_rsvp_alerts        — 'off' stops the "New RSVP" email to ADMIN_NOTIFY_EMAIL (absent = on)

@@ -4,6 +4,25 @@ Notable changes to the RSVP app, newest first. See `plan.md`/`design.md` for the
 broader feature history (v1 → v3); this file tracks discrete fixes and changes
 made along the way.
 
+## 2026-11-13 — Dress code for each event
+
+**Feature: a dress code per event.** Each event card in Settings → Event details has a new optional **Dress code** field, e.g. *Cocktail*. Once that's filled in, an optional **note** appears below it, e.g. *"The ceremony is on the lawn."* Both are saved with the event's other details (`event_details_<id>`), so no database change is needed. A note without a dress code is dropped. The limits are 80 characters for the dress code and 300 for the note.
+
+**Where it shows:**
+- **Guest Details page:** under each event the household is invited to, so engagement-only guests never see the wedding's dress code.
+- **"Guests see" preview:** under each event card in admin.
+- **RSVP confirmation email:** under each event someone in the household is attending.
+
+**Change: the registry stays a surprise.** The RSVP card no longer says "Our gift registry opens once you've replied". The registry card simply appears once you show it and the guest qualifies. A guest who opens the registry page directly before then sees "The gift registry isn't open right now."
+
+**Also:** Settings → Guest information shows a reminder while a separate "Dress Code" item is still there. Every guest sees that item, whichever events they're invited to.
+
+**Files:**
+- `src/App.jsx`
+- `functions/api/admin.js`
+- `functions/_lib/templates.js`
+- `functions/_lib/db.js`
+
 ## 2026-11-05 — Gift registry
 
 **Feature: gift registry.** Guests reserve gifts from a list the couple keeps in admin, then buy them from the shop. There's no money handling and no chip-in: each guest picks a gift.
