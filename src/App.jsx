@@ -350,7 +350,7 @@ const CSS = `
 .choice-card .ic{width:42px;height:42px;border-radius:50%;background:var(--paper-2);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-size:20px;color:var(--gold);}
 .choice-card h3{margin:0 0 3px;font-family:var(--display);font-size:19px;font-weight:600;}
 .choice-card p{margin:0;font-size:13px;color:var(--ink-soft);}
-.ev-dress{display:flex;flex-direction:column;gap:1px;margin-top:8px;padding-left:10px;border-left:2px solid var(--gold-soft);}
+.ev-dress{display:flex;flex-direction:column;gap:1px;margin-top:14px;padding-left:10px;border-left:2px solid var(--gold-soft);}
 .ev-dress-label{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;font-weight:600;color:var(--gold);}
 .ev-dress-code{font-family:var(--display);font-size:17px;font-weight:600;color:var(--ink);line-height:1.25;}
 .ev-dress-note{font-size:12.5px;color:var(--ink-soft);line-height:1.45;white-space:pre-line;}
@@ -399,6 +399,10 @@ textarea.settings-input.settings-input-short{min-height:64px;}
 .summary{background:var(--paper-2);border:1px solid var(--gold-soft);padding:16px 18px;text-align:left;margin:18px 0;}
 .summary .srow{padding:8px 0;font-size:13.5px;border-bottom:1px solid rgba(169,129,76,.25);}
 .summary .srow:last-child{border-bottom:none;}
+/* Details page: more room between events */
+.ev-summary .srow{padding:18px 0;}
+.ev-summary .srow:first-child{padding-top:6px;}
+.ev-summary .srow:last-child{padding-bottom:6px;}
 .summary .slabel{color:var(--ink-soft);}
 .login-stage{min-height:100vh;min-height:var(--full-h);display:flex;align-items:center;justify-content:center;padding:40px calc(16px + var(--sar)) 40px calc(16px + var(--sal));position:relative;overflow:hidden;background:radial-gradient(ellipse at 50% 0%,rgba(110,127,99,.18),transparent 60%),radial-gradient(ellipse at 50% 100%,rgba(169,129,76,.14),transparent 55%),var(--paper);}
 .login-stage::before,.login-stage::after{content:"";position:absolute;left:50%;top:58%;border-radius:50%;border:1px solid rgba(169,129,76,.22);transform:translate(-50%,-50%);pointer-events:none;}
@@ -952,7 +956,7 @@ function GuestDetails({ state, actions }) {
     <div className="stage"><div className="card"><div className="card-inner">
       <h2>Event Details</h2>
       <p className="lede">Everything you need to know.</p>
-      <div className="summary">
+      <div className="summary ev-summary">
         {rec.invitedEvents.map(id => {
           const ev = eventById(id);
           return (
