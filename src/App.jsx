@@ -350,7 +350,6 @@ const CSS = `
 .choice-card .ic{width:42px;height:42px;border-radius:50%;background:var(--paper-2);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-size:20px;color:var(--gold);}
 .choice-card h3{margin:0 0 3px;font-family:var(--display);font-size:19px;font-weight:600;}
 .choice-card p{margin:0;font-size:13px;color:var(--ink-soft);}
-.choice-card p.choice-extra{margin-top:4px;color:var(--gold);}
 .ev-dress{display:flex;flex-direction:column;gap:1px;margin-top:8px;padding-left:10px;border-left:2px solid var(--gold-soft);}
 .ev-dress-label{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;font-weight:600;color:var(--gold);}
 .ev-dress-code{font-family:var(--display);font-size:17px;font-weight:600;color:var(--ink);line-height:1.25;}
@@ -824,8 +823,7 @@ function GuestMenu({ state, actions }) {
       <div className="choice-grid">
         <button className="choice-card" onClick={actions.startGuestForm}>
           <div className="ic">✎</div>
-          <div><h3>RSVP</h3><p>{rec.response ? "View or update your response." : "Let us know who's coming and any dietary needs."}</p>
-            {registry === "needs-rsvp" && <p className="choice-extra">Our gift registry opens once you've replied.</p>}</div>
+          <div><h3>RSVP</h3><p>{rec.response ? "View or update your response." : "Let us know who's coming and any dietary needs."}</p></div>
         </button>
         <button className="choice-card" onClick={() => actions.patch({ view: "guest-location" })}>
           <div className="ic">⚑</div>

@@ -215,7 +215,7 @@ export function GuestRegistry({ state, actions, eventName }) {
       <div className="stage"><div className="card"><div className="card-inner">
         <h2>Gift Registry</h2>
         <div className="reg-empty"><div className="em-ic">❦</div>
-          {data.access === "needs-rsvp" ? "Our gift registry opens once you've RSVP'd." : "The gift registry isn't open right now."}
+          The gift registry isn't open right now.
         </div>
         <div className="reg-stack"><button className="btn btn-ghost" onClick={back}>Back</button></div>
       </div></div></div>

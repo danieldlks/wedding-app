@@ -13,6 +13,8 @@ made along the way.
 - **"Guests see" preview:** under each event card in admin.
 - **RSVP confirmation email:** under each event someone in the household is attending.
 
+**Change: the registry stays a surprise.** The RSVP card no longer says "Our gift registry opens once you've replied". The registry card simply appears once you show it and the guest qualifies. A guest who opens the registry page directly before then sees "The gift registry isn't open right now."
+
 **Also:** Settings → Guest information shows a reminder while a separate "Dress Code" item is still there. Every guest sees that item, whichever events they're invited to.
 
 **Files:**
