@@ -19,6 +19,7 @@ import { roomOf, clamp, tableDims, triangleVertices, getSeatPositionsLocal, tabl
 const FP3D_SCALE = 1 / 45; // logical floor-plan units -> three.js world units
 const FP3D_TABLE_H = 0.84;  // tabletop height
 const FP3D_WALL_H = 3.4;
+const FP3D_LOFT_Y = 2.5;    // a loft's floor height; its tables, chairs and items sit this much higher
 const FP3D_CHAIR_GAP = 0.3; // chair centre distance beyond the table edge
 const FP3D_LABEL_CHIP = "#FBF7EF";
 const FP3D_LABEL_TEXT = "#202B22";
@@ -319,7 +320,7 @@ function chairPlacements(t) {
 // is never decluttered away (see fp3dDeclutterLabels rank 0).
 function buildSeatMarker(chair, marker, mats) {
   const group = new THREE.Group();
-  group.position.set(chair.x, 0, chair.z);
+  group.position.set(chair.x, chair.y || 0, chair.z);
   const mat = new THREE.MeshStandardMaterial({ color: marker.color, emissive: marker.color, emissiveIntensity: 0.35, roughness: 0.4 });
   const head = new THREE.Mesh(mats.pinHeadGeo, mat); head.position.y = 1.55;
   const tip = new THREE.Mesh(mats.pinTipGeo, mat); tip.position.y = 1.32; tip.rotation.x = Math.PI;
@@ -757,7 +758,7 @@ function fp3dClampToRoom(s, x, z) {
 // Pushing out of one table can land inside a neighbour in a tight layout, so
 // repeat until clear of all of them; returns null if no clear spot was found.
 function fp3dPushOutOfTables(s, x, z) {
-  const tables = [...(s.tableMeshes?.values() || [])].map(mesh => {
+  const tables = [...(s.tableMeshes?.values() || [])].filter(mesh => mesh.position.y < 1).map(mesh => { // loft tables don't block the floor below
     const box = new THREE.Box3().setFromObject(mesh);
     return { cx: mesh.position.x, cz: mesh.position.z, clear: Math.max(box.max.x - box.min.x, box.max.z - box.min.z) / 2 + FP3D_CHAIR_GAP + 0.75 };
   }).concat(s.obstacles || []);
@@ -787,6 +788,7 @@ function fp3dWalkTo(s, x, z, faceDir) {
 }
 // Stand a comfortable distance back from a table, facing it.
 function fp3dWalkToTable(s, mesh) {
+  if (mesh.position.y > 1) return; // up on a loft: walking stays on the ground floor
   const box = new THREE.Box3().setFromObject(mesh);
   const r = Math.max(box.max.x - box.min.x, box.max.z - box.min.z) / 2 + FP3D_CHAIR_GAP + 1.1;
   const c = mesh.position;
@@ -864,7 +866,35 @@ function applyTableHighlight(tableMeshes, activeId, focusColor) {
 
 // seatMarkers (optional, guest view): [{ tableId, seatIndex, label, color }] —
 // the guest's own seats get a coloured cushion and a named pin.
-const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, room: roomProp, chairColor = null, focusTableId, focusColor = "#A9814C", onSelectTable, seatMarkers }, ref) {
+// A loft: its floor, a railing round the edge and a post at each corner (plan-unit rect in, world out).
+function buildLoft(l) {
+  const g = new THREE.Group();
+  const [x0, z0] = fp3dLogicalToWorld(l.x, l.y), [w, d] = fp3dLogicalToWorld(l.w, l.h);
+  const slabMat = new THREE.MeshStandardMaterial({ color: "#C8A774", roughness: 0.8 });
+  const timber = new THREE.MeshStandardMaterial({ color: "#6B4E31", roughness: 0.7 });
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(w, 0.16, d), slabMat);
+  slab.position.set(x0 + w / 2, FP3D_LOFT_Y - 0.08, z0 + d / 2); slab.castShadow = slab.receiveShadow = true;
+  g.add(slab);
+  const railH = 0.95, postGeo = new THREE.BoxGeometry(0.06, railH, 0.06);
+  const edges = [[x0, z0, x0 + w, z0], [x0 + w, z0, x0 + w, z0 + d], [x0 + w, z0 + d, x0, z0 + d], [x0, z0 + d, x0, z0]];
+  edges.forEach(([ax, az, bx, bz]) => {
+    const len = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.round(len / 1.2));
+    for (let i = 0; i < n; i++) {
+      const p = new THREE.Mesh(postGeo, timber);
+      p.position.set(ax + (bx - ax) * i / n, FP3D_LOFT_Y + railH / 2, az + (bz - az) * i / n); g.add(p);
+    }
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(len + 0.06, 0.07, 0.08), timber);
+    rail.position.set((ax + bx) / 2, FP3D_LOFT_Y + railH, (az + bz) / 2); rail.rotation.y = -Math.atan2(bz - az, bx - ax); g.add(rail);
+  });
+  const legGeo = new THREE.CylinderGeometry(0.11, 0.11, FP3D_LOFT_Y - 0.16, 16);
+  [[x0, z0], [x0 + w, z0], [x0 + w, z0 + d], [x0, z0 + d]].forEach(([x, z]) => {
+    const leg = new THREE.Mesh(legGeo, timber); leg.position.set(x, (FP3D_LOFT_Y - 0.16) / 2, z); leg.castShadow = true; g.add(leg);
+  });
+  g.traverse(o => { if (o.isMesh) { o.userData.ownsGeometry = true; o.userData.ownsMaterial = true; } });
+  return { group: g, legs: [[x0, z0], [x0 + w, z0], [x0 + w, z0 + d], [x0, z0 + d]] };
+}
+
+const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, levels = [], room: roomProp, chairColor = null, focusTableId, focusColor = "#A9814C", onSelectTable, seatMarkers }, ref) {
   const mountRef = useRef(null);
   const sceneRef = useRef(null);
   const tableMeshesRef = useRef(new Map());
@@ -872,6 +902,7 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, room: roo
   selectRef.current = onSelectTable;
   const [clickedTableId, setClickedTableId] = useState(null);
   const markersKey = JSON.stringify(seatMarkers || []); // rebuild only when the markers' content changes, not on every render
+  const levelsKey = JSON.stringify(levels || []); // likewise for the lofts
   const [mode, setMode] = useState("orbit"); // "orbit" (dollhouse overview) | "walk" (eye level)
   const [showHint, setShowHint] = useState(false);
   // The walk-mode hint fades after a few seconds so it doesn't cover a small screen.
@@ -1115,8 +1146,17 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, room: roo
     s.entrance = door ? (([x, z]) => ({ x, z }))(fp3dLogicalToWorld(door.x, door.y)) : null;
     // Shared materials live in s.mats; anything else (a chosen colour, curtain fabric) belongs to its mesh.
     s.obstacles = [];
+    // Lofts: things on one sit FP3D_LOFT_Y higher (a loft that no longer exists counts as ground).
+    const lofts = JSON.parse(levelsKey);
+    const liftOf = it => (it.level && lofts.some(l => l.id === it.level) ? FP3D_LOFT_Y : 0);
+    lofts.forEach(l => {
+      const { group, legs } = buildLoft(l);
+      s.contentGroup.add(group);
+      legs.forEach(([cx, cz]) => s.obstacles.push({ cx, cz, clear: 0.5 }));
+    });
     (objects || []).forEach(o => {
       const g = buildLandmark(o, s.mats, s.room);
+      g.position.y += liftOf(o);
       const shared = new Set(Object.values(s.mats)); // after building: some shared materials are made on first use
       g.traverse(obj => {
         if (!obj.isMesh) return;
@@ -1125,7 +1165,7 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, room: roo
       });
       s.contentGroup.add(g);
       // Solid room features block walking, like tables do.
-      if (["fireplace", "stairs", "pillar", "post"].includes(o.type)) {
+      if (["fireplace", "stairs", "pillar", "post"].includes(o.type) && !liftOf(o)) {
         const [cx, cz] = fp3dLogicalToWorld(o.x, o.y);
         const { w, d } = o.type === "fireplace" || o.type === "stairs" ? featureDims(o) : { w: o.size, d: objectDepth(o) };
         s.obstacles.push({ cx, cz, clear: (Math.max(w, d) / 2) * FP3D_SCALE + 0.55 });
@@ -1135,6 +1175,8 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, room: roo
     const blobs = [];
     (tables || []).forEach(t => {
       const mesh = buildTable(t, s.mats);
+      const lift = liftOf(t);
+      mesh.position.y += lift;
       mesh.userData.ownsGeometry = true; mesh.userData.ownsMaterial = true;
       tableMeshesRef.current.set(t.id, mesh);
       s.contentGroup.add(mesh);
@@ -1143,8 +1185,8 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, room: roo
       // Contact-shadow blobs are axis-aligned ellipses: a turned table gets a round one covering it.
       const turned = Math.abs(Math.sin(tableAngle(t) * 2)) > 1e-3 || Math.abs(Math.cos(tableAngle(t))) < 1e-3;
       const big = Math.max(ww, wh) * 1.25;
-      blobs.push({ x: mesh.position.x, z: mesh.position.z, sx: turned ? big : ww * 1.25, sz: turned ? big : wh * 1.25 });
-      chairPlacements(t).forEach(c => { chairs.push({ ...c, tableId: t.id }); blobs.push({ x: c.x, z: c.z, sx: 0.65, sz: 0.65 }); });
+      blobs.push({ x: mesh.position.x, y: lift, z: mesh.position.z, sx: turned ? big : ww * 1.25, sz: turned ? big : wh * 1.25 });
+      chairPlacements(t).forEach(c => { chairs.push({ ...c, y: lift, tableId: t.id }); blobs.push({ x: c.x, y: lift, z: c.z, sx: 0.65, sz: 0.65 }); });
     });
     // All chairs: two instanced meshes (frame + cushion) for the whole room.
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), one = new THREE.Vector3(1, 1, 1);
@@ -1152,7 +1194,7 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, room: roo
     const cushions = new THREE.InstancedMesh(s.chairGeo.cushion, s.mats.cushion, Math.max(1, chairs.length));
     frames.count = cushions.count = chairs.length;
     chairs.forEach((c, i) => {
-      m.compose(new THREE.Vector3(c.x, 0, c.z), q.setFromAxisAngle(up, c.yaw), one);
+      m.compose(new THREE.Vector3(c.x, c.y || 0, c.z), q.setFromAxisAngle(up, c.yaw), one);
       frames.setMatrixAt(i, m); cushions.setMatrixAt(i, m);
     });
     // Guest's own seats: tint their cushions and add a named pin.
@@ -1178,7 +1220,7 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, room: roo
     // Soft contact shadows under everything (the only shadows on low-tier devices).
     const blobMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), s.mats.blob, Math.max(1, blobs.length));
     blobMesh.count = blobs.length;
-    blobs.forEach((b, i) => blobMesh.setMatrixAt(i, m.compose(new THREE.Vector3(b.x, 0.004, b.z), q.identity(), new THREE.Vector3(b.sx, 1, b.sz))));
+    blobs.forEach((b, i) => blobMesh.setMatrixAt(i, m.compose(new THREE.Vector3(b.x, (b.y || 0) + 0.004, b.z), q.identity(), new THREE.Vector3(b.sx, 1, b.sz))));
     blobMesh.userData.ownsGeometry = true;
     blobMesh.renderOrder = 1;
     s.contentGroup.add(blobMesh);
@@ -1189,7 +1231,7 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, room: roo
     // don't move the camera (the venue display re-polls the plan every few seconds).
     applyTableHighlight(tableMeshesRef.current, s.activeTableId, s.focusColor || focusColor);
     s.invalidate();
-  }, [tables, objects, markersKey, chairColor]);
+  }, [tables, objects, markersKey, chairColor, levelsKey]);
 
   // Recolor for the externally-driven (guest search) or locally-clicked
   // selection, and fly the camera to whichever table is focused.
@@ -1202,7 +1244,7 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, room: roo
     applyTableHighlight(tableMeshesRef.current, activeId, focusColor);
     const targetMesh = activeId ? tableMeshesRef.current.get(activeId) : null;
     if (s.mode === "walk") { if (targetMesh) fp3dWalkToTable(s, targetMesh); s.invalidate(); return; }
-    const target = targetMesh ? targetMesh.position.clone().setY(0.6) : s.center;
+    const target = targetMesh ? targetMesh.position.clone().setY(targetMesh.position.y + 0.6) : s.center;
     const dist = s.camera.position.distanceTo(s.controls.target) || 6;
     const dir = s.camera.position.clone().sub(s.controls.target).normalize();
     let toDist = dist;
