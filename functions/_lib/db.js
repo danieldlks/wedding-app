@@ -65,7 +65,8 @@ export function rowToFloorObject(row) {
     x2: row.x2,
     y2: row.y2,
     rotation: row.rotation ?? null,
-    color: row.color || null
+    color: row.color || null,
+    depth: row.depth ?? null // rectangles only: front-to-back size (NULL = as deep as `size` is wide)
   };
 }
 

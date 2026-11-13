@@ -414,20 +414,23 @@ function objectStatement(db, p) {
   const label = String(p.label || "").trim();
   const x = Number.isFinite(Number(p.x)) ? Number(p.x) : 100;
   const y = Number.isFinite(Number(p.y)) ? Number(p.y) : 100;
-  const size = Math.max(10, Number(p.size) || 60);
+  const size = Math.min(5000, Math.max(10, Number(p.size) || 60));
   const x2 = p.x2 != null && Number.isFinite(Number(p.x2)) ? Number(p.x2) : null;
   const y2 = p.y2 != null && Number.isFinite(Number(p.y2)) ? Number(p.y2) : null;
   const rotation = p.rotation != null && Number.isFinite(Number(p.rotation)) ? ((Number(p.rotation) % 360) + 360) % 360 : null;
   const color = isHexColor(p.color) ? p.color : null;
+  // Rectangles can be deeper or shallower than they are wide (0.5 m to 100 m); other shapes have no depth.
+  const depth = type === "rect" && p.depth != null && Number.isFinite(Number(p.depth)) ? Math.min(5000, Math.max(10, Number(p.depth))) : null;
   const createdAt = new Date().toISOString();
 
   return db.prepare(`
-    INSERT INTO floor_objects (id, type, label, x, y, size, x2, y2, created_at, rotation, color)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO floor_objects (id, type, label, x, y, size, x2, y2, created_at, rotation, color, depth)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       type = excluded.type, label = excluded.label, x = excluded.x, y = excluded.y,
-      size = excluded.size, x2 = excluded.x2, y2 = excluded.y2, rotation = excluded.rotation, color = excluded.color
-  `).bind(id, type, label, x, y, size, x2, y2, createdAt, rotation, color);
+      size = excluded.size, x2 = excluded.x2, y2 = excluded.y2, rotation = excluded.rotation, color = excluded.color,
+      depth = excluded.depth
+  `).bind(id, type, label, x, y, size, x2, y2, createdAt, rotation, color, depth);
 }
 
 const EMAIL_BATCH_SIZE = 10;
