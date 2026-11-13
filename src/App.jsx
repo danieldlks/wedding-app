@@ -350,6 +350,10 @@ const CSS = `
 .choice-card .ic{width:42px;height:42px;border-radius:50%;background:var(--paper-2);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-size:20px;color:var(--gold);}
 .choice-card h3{margin:0 0 3px;font-family:var(--display);font-size:19px;font-weight:600;}
 .choice-card p{margin:0;font-size:13px;color:var(--ink-soft);}
+/* Seating plan keyboard/mouse tips: only on devices with a mouse */
+.seating-shortcuts{display:none;font-size:12.5px;line-height:1.6;color:var(--ink-soft);margin:-8px 0 16px;}
+@media (hover:hover) and (pointer:fine){.seating-shortcuts{display:block;}}
+.seating-shortcuts kbd{font-family:inherit;font-size:11.5px;background:#fff;border:1px solid var(--gold-soft);border-bottom-width:2px;border-radius:4px;padding:0 5px;color:var(--ink);}
 .ev-dress{display:flex;flex-direction:column;gap:1px;margin-top:14px;padding-left:10px;border-left:2px solid var(--gold-soft);}
 .ev-dress-label{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;font-weight:600;color:var(--gold);}
 .ev-dress-code{font-family:var(--display);font-size:17px;font-weight:600;color:var(--ink);line-height:1.25;}
@@ -385,6 +389,9 @@ textarea.settings-input.settings-input-short{min-height:64px;}
 .remove-link{background:none;border:none;color:var(--error);font-size:12px;text-decoration:underline;padding:4px;}
 .add-member-btn{width:100%;padding:13px;border:1px dashed var(--gold);background:transparent;color:var(--sage-dark);font-weight:600;font-size:13.5px;}
 .btn-row{display:flex;gap:12px;margin-top:28px;}
+/* Edit panels have up to four buttons: let them wrap on a phone rather than run off the edge. */
+.table-editor-panel .btn-row{flex-wrap:wrap;}
+.table-editor-panel .btn-row .btn{flex:1 1 auto;min-width:96px;}
 .btn{flex:1;padding:14px 18px;border:none;font-size:14px;font-weight:600;letter-spacing:.03em;}
 .btn:active{transform:scale(.98);}
 .btn-primary{background:var(--sage);color:#fff;}
@@ -1833,7 +1840,7 @@ function zoomSeatTransform(t, factor, room = DEFAULT_ROOM) {
 // PNG export so the two can never visually drift apart.
 function drawFloorPlan(ctx, opts) {
   const {
-    tables, objects, editable, selectedTableId, selectedObjectId,
+    tables, objects, editable, selectedTableId, selectedObjectId, groupSelection = null,
     occupancy, occupiedSeats, highlightColors, highlightSeatIndices, zoom = 1, showGrid = true, dimOthers = false, chairColor = null,
     room = DEFAULT_ROOM, showScale = false
   } = opts;
@@ -1866,8 +1873,12 @@ function drawFloorPlan(ctx, opts) {
   }
 
   // Floor objects draw first (background layer) so tables visually sit on top of them.
+  // Several things selected (desktop): each gets the selected outline; a wall's end handles only
+  // show when it's selected on its own.
+  const groupT = new Set(groupSelection?.tables || []), groupO = new Set(groupSelection?.objects || []);
   objects.forEach(o => {
-    const isSelected = editable && selectedObjectId === o.id;
+    const isSelected = editable && (selectedObjectId === o.id || groupO.has(o.id));
+    const showHandles = editable && selectedObjectId === o.id;
     ctx.save();
     if (o.type === "window") {
       // Architect's window symbol: a framed strip with the glazing line down the middle.
@@ -1877,7 +1888,7 @@ function drawFloorPlan(ctx, opts) {
       ctx.fillRect(0, -5, L, 10); ctx.strokeRect(0, -5, L, 10);
       ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(L, 0); ctx.lineWidth = 1; ctx.stroke();
       for (let k = 1; k < Math.max(2, Math.round(L / 45)); k++) { const x = (L * k) / Math.max(2, Math.round(L / 45)); ctx.beginPath(); ctx.moveTo(x, -5); ctx.lineTo(x, 5); ctx.stroke(); }
-      if (isSelected) [[0, 0], [L, 0]].forEach(([px, py]) => { ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI * 2); ctx.fillStyle = "#6E7F63"; ctx.fill(); });
+      if (showHandles) [[0, 0], [L, 0]].forEach(([px, py]) => { ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI * 2); ctx.fillStyle = "#6E7F63"; ctx.fill(); });
       if (o.label) {
         ctx.rotate(-Math.atan2(dy, dx));
         ctx.fillStyle = "#202B22"; ctx.font = "600 12px 'Work Sans', sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -1950,7 +1961,7 @@ function drawFloorPlan(ctx, opts) {
       ctx.lineWidth = isSelected ? 7 : 5;
       ctx.lineCap = "round";
       ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(o.x2, o.y2); ctx.stroke();
-      if (isSelected) {
+      if (showHandles) {
         [[o.x, o.y], [o.x2, o.y2]].forEach(([px, py]) => {
           ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI * 2);
           ctx.fillStyle = "#6E7F63"; ctx.fill();
@@ -1988,7 +1999,7 @@ function drawFloorPlan(ctx, opts) {
   });
 
   tables.forEach(t => {
-    const isSelected = editable && selectedTableId === t.id;
+    const isSelected = editable && (selectedTableId === t.id || groupT.has(t.id));
     const hlColor = !editable && highlightColors ? highlightColors[t.id] : null;
     // "Find my seat" always highlights the guest's own table(s), so any other
     // table is fair game to mute — otherwise one that happens to clip the
@@ -2134,7 +2145,8 @@ function SeatingCanvas({
   tables, objects, editable, selectedTableId, onSelectTable, onDragTableEnd, occupancy,
   occupiedSeats, highlightColors, highlightSeatIndices, dimOthers, chairColor,
   selectedObjectId, onSelectObject, onObjectDragEnd,
-  viewTransform, onViewTransformChange, room: roomProp, onResizeRoom
+  viewTransform, onViewTransformChange, room: roomProp, onResizeRoom,
+  groupSelection, onToggleSelect, onBoxSelect, onGroupDragEnd
 }) {
   const room = roomOf(roomProp);
   const { w: SEAT_LW, h: SEAT_LH } = room;
@@ -2144,7 +2156,8 @@ function SeatingCanvas({
   const [roomDrag, setRoomDrag] = useState(null); // { w, h } | null
   const dragStartRef = useRef(null);
   const panStartRef = useRef(null);
-  const [liveDrag, setLiveDrag] = useState(null); // { kind: "table"|"object", id, x, y, x2, y2 }
+  const [liveDrag, setLiveDrag] = useState(null); // { kind: "table"|"object", id, x, y, x2, y2 } | { kind: "group", dx, dy }
+  const [box, setBox] = useState(null); // selection box being dragged on the empty floor (mouse): { x0, y0, x1, y1 }
   const vtRef = useRef(viewTransform);
   const roomRef = useRef(room);
   roomRef.current = room;
@@ -2153,18 +2166,24 @@ function SeatingCanvas({
   cbRef.current = onViewTransformChange;
 
   const objs = objects || [];
-  const draggedTables = liveDrag?.kind === "table" ? tables.map(t => (t.id === liveDrag.id ? { ...t, x: liveDrag.x, y: liveDrag.y } : t)) : tables;
+  // What's selected: several things (groupSelection, desktop) or the one open table/item.
+  const selT = new Set(groupSelection ? groupSelection.tables : selectedTableId ? [selectedTableId] : []);
+  const selO = new Set(groupSelection ? groupSelection.objects : selectedObjectId ? [selectedObjectId] : []);
+  const shiftBy = (it, dx, dy) => ({ ...it, x: it.x + dx, y: it.y + dy, ...(it.x2 != null && { x2: it.x2 + dx, y2: it.y2 + dy }) });
+  const groupDrag = liveDrag?.kind === "group";
+  const draggedTables = liveDrag?.kind === "table" ? tables.map(t => (t.id === liveDrag.id ? { ...t, x: liveDrag.x, y: liveDrag.y } : t))
+    : groupDrag ? tables.map(t => (selT.has(t.id) ? shiftBy(t, liveDrag.dx, liveDrag.dy) : t)) : tables;
   const draggedObjects = liveDrag?.kind === "object"
     ? objs.map(o => (o.id === liveDrag.id ? { ...o, ...(liveDrag.x != null && { x: liveDrag.x, y: liveDrag.y }), ...(liveDrag.x2 != null && { x2: liveDrag.x2, y2: liveDrag.y2 }) } : o))
-    : objs;
+    : groupDrag ? objs.map(o => (selO.has(o.id) ? shiftBy(o, liveDrag.dx, liveDrag.dy) : o)) : objs;
   // Dragged past the right/bottom edge: the room will grow to this size on release (never shrinks here).
   // Only when the dragged item itself pokes out of the room — moving something that's merely near an
   // edge must never resize the room.
   // Past the left/top edge, the room grows on that side: everything shifts right/down by
   // shiftX/shiftY (the plan's coordinates start at the top-left corner).
   const growTo = editable && liveDrag && onResizeRoom ? (() => {
-    const item = liveDrag.kind === "table" ? draggedTables.filter(t => t.id === liveDrag.id) : [];
-    const itemObjs = liveDrag.kind === "object" ? draggedObjects.filter(o => o.id === liveDrag.id) : [];
+    const item = groupDrag ? draggedTables.filter(t => selT.has(t.id)) : liveDrag.kind === "table" ? draggedTables.filter(t => t.id === liveDrag.id) : [];
+    const itemObjs = groupDrag ? draggedObjects.filter(o => selO.has(o.id)) : liveDrag.kind === "object" ? draggedObjects.filter(o => o.id === liveDrag.id) : [];
     const ib = layoutBounds(item, itemObjs);
     const outR = snapUpHalfM(ib.maxX) > SEAT_LW, outB = snapUpHalfM(ib.maxY) > SEAT_LH, outL = ib.minX < 0, outT = ib.minY < 0;
     if (!outR && !outB && !outL && !outT) return null;
@@ -2176,9 +2195,10 @@ function SeatingCanvas({
   })() : null;
   // Until release, an item past an edge is drawn pinned at that edge (the canvas can't show beyond it).
   const pin = (x, y) => [clamp(x, 8, SEAT_LW - 8), clamp(y, 8, SEAT_LH - 8)];
-  const effectiveTables = liveDrag?.kind === "table" ? draggedTables.map(t => (t.id === liveDrag.id ? { ...t, ...(([x, y]) => ({ x, y }))(pin(t.x, t.y)) } : t)) : draggedTables;
-  const effectiveObjects = liveDrag?.kind === "object" ? draggedObjects.map(o => {
-    if (o.id !== liveDrag.id) return o;
+  const isLive = (kind, id) => (groupDrag ? (kind === "table" ? selT : selO).has(id) : liveDrag?.kind === kind && liveDrag.id === id);
+  const effectiveTables = liveDrag ? draggedTables.map(t => (isLive("table", t.id) ? { ...t, ...(([x, y]) => ({ x, y }))(pin(t.x, t.y)) } : t)) : draggedTables;
+  const effectiveObjects = liveDrag ? draggedObjects.map(o => {
+    if (!isLive("object", o.id)) return o;
     const [x, y] = pin(o.x, o.y); const p2 = o.x2 != null ? pin(o.x2, o.y2) : [o.x2, o.y2];
     return { ...o, x, y, x2: p2[0], y2: p2[1] };
   }) : draggedObjects;
@@ -2222,13 +2242,20 @@ function SeatingCanvas({
     ctx.translate(panX, panY);
     ctx.scale(zoom, zoom);
     drawFloorPlan(ctx, {
-      tables: effectiveTables, objects: effectiveObjects, editable, selectedTableId, selectedObjectId,
+      tables: effectiveTables, objects: effectiveObjects, editable, selectedTableId, selectedObjectId, groupSelection,
       occupancy: editable ? occupancy : null, occupiedSeats, highlightColors, highlightSeatIndices, zoom, dimOthers, chairColor,
       room, showScale: editable
     });
     ctx.restore();
     if (editable && onResizeRoom) drawRoomResizeUI(ctx, room, roomDrag, growTo);
-  }, [effectiveTables, effectiveObjects, editable, selectedTableId, selectedObjectId, occupancy, occupiedSeats, highlightColors, highlightSeatIndices, dimOthers, viewTransform, chairColor, SEAT_LW, SEAT_LH, roomDrag, growTo?.w, growTo?.h, growTo?.shiftX, growTo?.shiftY]);
+    if (box) {
+      const x = Math.min(box.x0, box.x1), y = Math.min(box.y0, box.y1), w = Math.abs(box.x1 - box.x0), h = Math.abs(box.y1 - box.y0);
+      ctx.save();
+      ctx.fillStyle = "rgba(110,127,99,.12)"; ctx.fillRect(x, y, w, h);
+      ctx.setLineDash([6, 4]); ctx.strokeStyle = "#6E7F63"; ctx.lineWidth = 1.5; ctx.strokeRect(x, y, w, h);
+      ctx.restore();
+    }
+  }, [box, groupSelection, effectiveTables, effectiveObjects, editable, selectedTableId, selectedObjectId, occupancy, occupiedSeats, highlightColors, highlightSeatIndices, dimOthers, viewTransform, chairColor, SEAT_LW, SEAT_LH, roomDrag, growTo?.w, growTo?.h, growTo?.shiftX, growTo?.shiftY]);
 
   function handlePointerDown(e) {
     const canvas = canvasRef.current;
@@ -2245,7 +2272,22 @@ function SeatingCanvas({
         canvas.setPointerCapture(e.pointerId);
         return;
       }
+      // Mouse only (multi-select is a desktop feature): Shift/⌘/Ctrl-click adds or removes a
+      // table/item, dragging anything in a multi-selection moves the whole group, and dragging on
+      // the empty floor draws a selection box.
+      const mouse = e.pointerType === "mouse" && !!onToggleSelect;
+      const additive = mouse && (e.shiftKey || e.metaKey || e.ctrlKey);
       const tableHit = hitTestTable(tables, pt.x, pt.y);
+      const objHitAny = tableHit ? null : hitTestObjects(objs, pt.x, pt.y, room);
+      if (additive && (tableHit || objHitAny)) {
+        onToggleSelect(tableHit ? "table" : "object", tableHit ? tableHit.id : objHitAny.object.id);
+        return;
+      }
+      if (groupSelection && (tableHit ? selT.has(tableHit.id) : objHitAny && selO.has(objHitAny.object.id))) {
+        dragStartRef.current = { kind: "group", startPtX: pt.x, startPtY: pt.y };
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
       if (tableHit) {
         onSelectTable(tableHit.id);
         onSelectObject(null);
@@ -2262,6 +2304,13 @@ function SeatingCanvas({
           startX: objHit.object.x, startY: objHit.object.y, startX2: objHit.object.x2, startY2: objHit.object.y2,
           startPtX: pt.x, startPtY: pt.y
         };
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+      if (mouse && onBoxSelect) {
+        // The box lives in the ref too: a quick click's release can arrive before the re-render.
+        dragStartRef.current = { kind: "box", additive, box: { x0: pt.x, y0: pt.y, x1: pt.x, y1: pt.y } };
+        setBox(dragStartRef.current.box);
         canvas.setPointerCapture(e.pointerId);
         return;
       }
@@ -2294,6 +2343,12 @@ function SeatingCanvas({
         }
         return;
       }
+      if (d.kind === "box") { d.box = { ...d.box, x1: pt.x, y1: pt.y }; setBox(d.box); return; }
+      if (d.kind === "group") {
+        // Whole grid steps, so everything keeps its spacing (and stays on the grid).
+        setLiveDrag({ kind: "group", dx: snapToGrid(dx), dy: snapToGrid(dy) });
+        return;
+      }
       // Items can be dragged past any edge when the room can be resized (it grows on release).
       const lo = onResizeRoom ? -ROOM_MAX : 0, XM = onResizeRoom ? ROOM_MAX : SEAT_LW, YM = onResizeRoom ? ROOM_MAX : SEAT_LH;
       const sx = v => snapClamp(v, lo, XM), sy = v => snapClamp(v, lo, YM);
@@ -2318,6 +2373,32 @@ function SeatingCanvas({
     const d = dragStartRef.current;
     if (editable && d?.kind === "room") {
       if (roomDrag && (roomDrag.w !== SEAT_LW || roomDrag.h !== SEAT_LH)) onResizeRoom({ w: roomDrag.w, h: roomDrag.h }, { shiftX: roomDrag.shiftX, shiftY: roomDrag.shiftY });
+    } else if (editable && d?.kind === "box") {
+      const box = d.box;
+      {
+        const x0 = Math.min(box.x0, box.x1), x1 = Math.max(box.x0, box.x1), y0 = Math.min(box.y0, box.y1), y1 = Math.max(box.y0, box.y1);
+        if (x1 - x0 < 6 && y1 - y0 < 6) {
+          // A plain click on the floor: clear the selection (Shift-click on the floor keeps it).
+          if (!d.additive) onBoxSelect({ tables: [], objects: [] }, false);
+        } else {
+          // Anything the box touches is selected.
+          const touches = b => b.maxX >= x0 && b.minX <= x1 && b.maxY >= y0 && b.minY <= y1;
+          onBoxSelect({
+            tables: tables.filter(t => touches(layoutBounds([t], []))).map(t => t.id),
+            objects: objs.filter(o => {
+              if (!isLineObject(o)) return touches(layoutBounds([], [o]));
+              // A wall/curtain/window counts if any point along it is inside the box.
+              for (let i = 0; i <= 24; i++) {
+                const x = o.x + (o.x2 - o.x) * i / 24, y = o.y + (o.y2 - o.y) * i / 24;
+                if (x >= x0 && x <= x1 && y >= y0 && y <= y1) return true;
+              }
+              return false;
+            }).map(o => o.id)
+          }, d.additive);
+        }
+      }
+    } else if (editable && d?.kind === "group" && liveDrag) {
+      if (liveDrag.dx || liveDrag.dy || growTo) onGroupDragEnd(liveDrag.dx, liveDrag.dy, growTo);
     } else if (editable && d && liveDrag) {
       // `growTo` (if set) is the bigger room this drop needs; the parent saves it with the move.
       if (d.kind === "table") onDragTableEnd(liveDrag.id, liveDrag.x, liveDrag.y, growTo);
@@ -2332,6 +2413,7 @@ function SeatingCanvas({
     panStartRef.current = null;
     setLiveDrag(null);
     setRoomDrag(null);
+    setBox(null);
   }
   return (
     <canvas
@@ -2596,6 +2678,33 @@ function AdminSeating({ state, actions }) {
   // use ~17,000 of the 100,000 free daily Function requests.
   useVisiblePolling(() => actions.loadSeating(true), 5000, { enabled: state.seatingLoaded, immediate: false });
 
+  // Keyboard shortcuts on the seating plan (desktop). Never while typing in a field or with the
+  // "Add to room" menu open. ⌘ on a Mac, Ctrl elsewhere.
+  const keyRef = useRef(null);
+  keyRef.current = e => {
+    if (e.target?.closest?.("input, textarea, select, [contenteditable='true']") || document.querySelector(".room-menu-sheet")) return;
+    const sel = actions.currentSelection(), any = sel.tables.length + sel.objects.length > 0;
+    const mod = e.metaKey || e.ctrlKey, k = e.key;
+    if (k === "Escape" && any) { actions.clearSelection(); return; }
+    if ((k === "Delete" || k === "Backspace") && any && !mod) { e.preventDefault(); actions.deleteSelection(); return; }
+    if (mod && !e.altKey && !e.shiftKey) {
+      const key = k.toLowerCase();
+      if (key === "a") { e.preventDefault(); actions.selectAll(); }
+      else if (key === "c" && any && !window.getSelection()?.toString()) { e.preventDefault(); actions.copySelection(); }
+      else if (key === "v") { e.preventDefault(); actions.pasteClipboard(); }
+      else if (key === "d" && any) { e.preventDefault(); actions.duplicateSelection(); }
+      return;
+    }
+    const step = e.shiftKey ? UNITS_PER_M * 2 : UNITS_PER_M / 2; // 2 m with Shift, otherwise 0.5 m
+    const arrow = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[k];
+    if (arrow && any && !mod) { e.preventDefault(); actions.nudgeSelection(...arrow); }
+  };
+  useEffect(() => {
+    const onKey = e => keyRef.current(e);
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
   if (state.seatingLoading && !state.seatingLoaded) {
     return <div className="empty-state"><div className="em-ic">✦</div>Loading seating chart…</div>;
   }
@@ -2614,6 +2723,12 @@ function AdminSeating({ state, actions }) {
   });
 
   const selectedTable = state.seatingTables.find(t => t.id === state.selectedTableId);
+  // Several selected (desktop): only the ones that still exist (another admin may have deleted some).
+  const group = state.groupSelection && {
+    tables: state.groupSelection.tables.filter(id => state.seatingTables.some(t => t.id === id)),
+    objects: state.groupSelection.objects.filter(id => state.seatingObjects.some(o => o.id === id))
+  };
+  const groupSeated = group ? Object.values(state.seatingAssignments).filter(a => group.tables.includes(a.tableId)).length : 0;
   // Unsaved edits (rotation, colours, size…) show on the plan straight away; Save keeps them.
   const previewTables = state.tableDraft ? state.seatingTables.map(t => (t.id === state.tableDraft.id ? { ...t, ...state.tableDraft, capacity: Math.max(1, Number(state.tableDraft.capacity) || 1) } : t)) : state.seatingTables;
   const previewObjects = state.objectDraft ? state.seatingObjects.map(o => (o.id === state.objectDraft.id ? { ...o, ...state.objectDraft } : o)) : state.seatingObjects;
@@ -2641,6 +2756,10 @@ function AdminSeating({ state, actions }) {
       <p className="lede" style={{ textAlign: "left", margin: "0 0 16px" }}>
         Tap a table to see its seats. Drag a guest onto an empty seat — or tap a guest, then tap the seat.
         Drag tables and shapes to arrange the room; drag a wall's endpoints to angle or stretch it.
+      </p>
+      <p className="seating-shortcuts">
+        <strong>With a mouse:</strong> Shift-click or drag a box to select several, then drag any of them to move them together.
+        <span> <kbd>⌫</kbd> deletes · <kbd>⌘C</kbd> / <kbd>⌘V</kbd> copy and paste · <kbd>⌘D</kbd> duplicates · arrow keys nudge (hold <kbd>Shift</kbd> for 2 m) · <kbd>Esc</kbd> clears. On Windows use Ctrl.</span>
       </p>
       <div className="seating-toolbar">
         <button className="btn btn-primary" style={{ flex: "none" }} onClick={actions.addTable} disabled={state.loading}>+ Add table</button>
@@ -2690,8 +2809,26 @@ function AdminSeating({ state, actions }) {
               selectedObjectId={state.selectedObjectId}
               onSelectObject={actions.selectObject}
               onObjectDragEnd={actions.moveObject}
+              groupSelection={group}
+              onToggleSelect={actions.toggleSelect}
+              onBoxSelect={actions.boxSelect}
+              onGroupDragEnd={actions.moveGroup}
             />
           </div>
+          {group && (
+            <div className="table-editor-panel group-panel">
+              <h4>{actions.describeSelection(group)} selected</h4>
+              <p className="helptext" style={{ margin: "0 0 14px" }}>
+                Drag any of them to move them together, or use the arrow keys.
+                {groupSeated > 0 && ` ${groupSeated} guest${groupSeated === 1 ? " is" : "s are"} seated at these tables.`}
+              </p>
+              <div className="btn-row" style={{ marginTop: 0 }}>
+                <button className="btn btn-ghost" onClick={actions.clearSelection}>Clear selection</button>
+                <button className="btn btn-ghost" style={{ color: "var(--error)", borderColor: "var(--error)" }} onClick={actions.deleteSelection} disabled={state.loading}>Delete</button>
+                <button className="btn btn-primary" onClick={actions.duplicateSelection} disabled={state.loading}>Duplicate</button>
+              </div>
+            </div>
+          )}
           {selectedTable && state.tableDraft && (
             <div className="table-editor-panel">
               <h4>Edit table</h4>
@@ -2748,6 +2885,7 @@ function AdminSeating({ state, actions }) {
               <div className="btn-row" style={{ marginTop: 0, marginBottom: 18 }}>
                 <button className="btn btn-ghost" onClick={actions.deselectTable}>Close</button>
                 <button className="btn btn-ghost" style={{ color: "var(--error)", borderColor: "var(--error)" }} onClick={actions.deleteTable}>Delete table</button>
+                <button className="btn btn-ghost" onClick={actions.duplicateSelection} disabled={state.loading}>Duplicate</button>
                 <button className="btn btn-primary" onClick={actions.saveTableDraft} disabled={state.loading}>Save details</button>
               </div>
 
@@ -2802,6 +2940,7 @@ function AdminSeating({ state, actions }) {
               <div className="btn-row" style={{ marginTop: 0 }}>
                 <button className="btn btn-ghost" onClick={actions.deselectObject}>Close</button>
                 <button className="btn btn-ghost" style={{ color: "var(--error)", borderColor: "var(--error)" }} onClick={actions.deleteObject}>Delete</button>
+                <button className="btn btn-ghost" onClick={actions.duplicateSelection} disabled={state.loading}>Duplicate</button>
                 <button className="btn btn-primary" onClick={actions.saveObjectDraft} disabled={state.loading}>Save</button>
               </div>
             </div>
@@ -3539,10 +3678,14 @@ export default function App() {
     tableDraft: null,
     selectedObjectId: null,
     objectDraft: null,
-    armedGuest: null
+    armedGuest: null,
+    groupSelection: null // several tables/items selected at once (desktop): { tables: [ids], objects: [ids] }
   });
 
   const patch = p => setState(s => ({ ...s, ...p }));
+  // The latest state, for timers that fire after a later render (see nudgeSelection).
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   // Seating requests (background polling + every add/move/delete/assign) can
   // resolve out of order — e.g. a 5s poll fired before a manual "add shape"
@@ -3770,6 +3913,7 @@ export default function App() {
 
   /* ---------- admin: seating chart ---------- */
   async function loadSeating(silent) {
+    if (silent && nudgeRef.current.timer) return; // arrow-key moves still to save (see nudgeSelection)
     if (!silent) patch({ seatingLoading: true });
     try {
       const data = await seatingMutate("list-seating");
@@ -3784,7 +3928,7 @@ export default function App() {
   }
   function selectTable(id) {
     const t = state.seatingTables.find(t => t.id === id);
-    patch({ selectedTableId: id, tableDraft: t ? { ...t } : null });
+    patch({ selectedTableId: id, tableDraft: t ? { ...t } : null, groupSelection: null });
   }
   function deselectTable() { patch({ selectedTableId: null, tableDraft: null }); }
   function updateTableDraftField(field, value) { patch({ tableDraft: { ...state.tableDraft, [field]: value } }); }
@@ -3820,18 +3964,8 @@ export default function App() {
       showToast("Couldn't save the table.");
     }
   }
-  async function deleteTable() {
-    const id = state.selectedTableId;
-    if (!id) return;
-    patch({ loading: true });
-    try {
-      const data = await seatingMutate("delete-table", { id });
-      if (data) patch({ loading: false, selectedTableId: null, tableDraft: null });
-      else patch({ loading: false });
-    } catch (e) {
-      patch({ loading: false });
-      showToast("Couldn't delete the table.");
-    }
+  function deleteTable() {
+    if (state.selectedTableId) deleteItems({ tables: [state.selectedTableId], objects: [] });
   }
   async function moveTable(id, x, y, growTo) {
     const t = state.seatingTables.find(t => t.id === id);
@@ -3851,7 +3985,7 @@ export default function App() {
   }
   function selectObject(id) {
     const o = id ? state.seatingObjects.find(o => o.id === id) : null;
-    patch({ selectedObjectId: id, objectDraft: o ? { ...o } : null });
+    patch({ selectedObjectId: id, objectDraft: o ? { ...o } : null, groupSelection: null });
   }
   function deselectObject() { patch({ selectedObjectId: null, objectDraft: null }); }
   function updateObjectDraftField(field, value) { patch({ objectDraft: { ...state.objectDraft, [field]: value } }); }
@@ -3883,18 +4017,8 @@ export default function App() {
       showToast("Couldn't save that.");
     }
   }
-  async function deleteObject() {
-    const id = state.selectedObjectId;
-    if (!id) return;
-    patch({ loading: true });
-    try {
-      const data = await seatingMutate("delete-object", { id });
-      if (data) patch({ loading: false, selectedObjectId: null, objectDraft: null });
-      else patch({ loading: false });
-    } catch (e) {
-      patch({ loading: false });
-      showToast("Couldn't delete that.");
-    }
+  function deleteObject() {
+    if (state.selectedObjectId) deleteItems({ tables: [], objects: [state.selectedObjectId] });
   }
   async function moveObject(id, changes, growTo) {
     const o = state.seatingObjects.find(o => o.id === id);
@@ -4006,6 +4130,189 @@ export default function App() {
       showToast("Couldn't update the tables.");
     }
   }
+  /* ---------- admin: seating — several at once, copy/paste, keyboard ---------- */
+  // A selection is { tables: [ids], objects: [ids] }. One thing selected opens its edit panel
+  // (selectedTableId / selectedObjectId, as before); two or more is groupSelection (desktop only).
+  function currentSelection(s = state) {
+    if (s.groupSelection) return s.groupSelection;
+    return { tables: s.selectedTableId ? [s.selectedTableId] : [], objects: s.selectedObjectId ? [s.selectedObjectId] : [] };
+  }
+  function selectionPatch(sel, tablesList = state.seatingTables, objectsList = state.seatingObjects) {
+    const tables = [...new Set(sel.tables)].filter(id => tablesList.some(t => t.id === id));
+    const objects = [...new Set(sel.objects)].filter(id => objectsList.some(o => o.id === id));
+    const none = { selectedTableId: null, tableDraft: null, selectedObjectId: null, objectDraft: null, groupSelection: null };
+    if (tables.length + objects.length === 0) return none;
+    if (tables.length + objects.length > 1) return { ...none, groupSelection: { tables, objects } };
+    if (tables.length) { const t = tablesList.find(t => t.id === tables[0]); return { ...none, selectedTableId: t.id, tableDraft: { ...t } }; }
+    const o = objectsList.find(o => o.id === objects[0]);
+    return { ...none, selectedObjectId: o.id, objectDraft: { ...o } };
+  }
+  function describeSelection(sel) {
+    const nt = sel.tables.length, no = sel.objects.length;
+    if (nt === 1 && no === 0) return state.seatingTables.find(t => t.id === sel.tables[0])?.label || "1 table";
+    return [nt && `${nt} table${nt === 1 ? "" : "s"}`, no && `${no} item${no === 1 ? "" : "s"}`].filter(Boolean).join(" and ");
+  }
+  function toggleSelect(kind, id) {
+    const sel = currentSelection(), key = kind === "table" ? "tables" : "objects";
+    const list = sel[key].includes(id) ? sel[key].filter(x => x !== id) : [...sel[key], id];
+    patch(selectionPatch({ ...sel, [key]: list }));
+  }
+  function boxSelect(sel, additive) {
+    const base = additive ? currentSelection() : { tables: [], objects: [] };
+    patch(selectionPatch({ tables: [...base.tables, ...sel.tables], objects: [...base.objects, ...sel.objects] }));
+  }
+  function selectAll() {
+    patch(selectionPatch({ tables: state.seatingTables.map(t => t.id), objects: state.seatingObjects.map(o => o.id) }));
+  }
+  function clearSelection() { patch(selectionPatch({ tables: [], objects: [] })); }
+
+  // Moves the selected tables/items by dx/dy. growTo (from a drag past an edge) also resizes the
+  // room, shifting everything by its shiftX/shiftY first. Saved in one request.
+  async function moveItems(sel, dx, dy, growTo) {
+    const sx = growTo?.shiftX || 0, sy = growTo?.shiftY || 0;
+    const tSet = new Set(sel.tables), oSet = new Set(sel.objects);
+    const mv = (it, on) => {
+      const ddx = sx + (on ? dx : 0), ddy = sy + (on ? dy : 0);
+      return ddx || ddy ? { ...it, x: it.x + ddx, y: it.y + ddy, ...(it.x2 != null && { x2: it.x2 + ddx, y2: it.y2 + ddy }) } : it;
+    };
+    const tables = state.seatingTables.map(t => mv(t, tSet.has(t.id)));
+    const objects = state.seatingObjects.map(o => mv(o, oSet.has(o.id)));
+    const room = growTo ? { w: growTo.w, h: growTo.h } : null;
+    patch({
+      seatingTables: tables, seatingObjects: objects, roomNotice: null, ...(room && { seatingRoom: room }),
+      tableDraft: state.tableDraft && mv(state.tableDraft, tSet.has(state.tableDraft.id)),
+      objectDraft: state.objectDraft && mv(state.objectDraft, oSet.has(state.objectDraft.id))
+    });
+    try {
+      if (room) await pinAutoRotations();
+      await seatingMutate("save-items", {
+        tables: tables.filter(t => tSet.has(t.id)), objects: objects.filter(o => oSet.has(o.id)),
+        ...(room && { room: { ...room, shiftX: sx, shiftY: sy } })
+      });
+      if (room) showToast(`Room extended to ${metres(room.w)} × ${metres(room.h)}.`);
+    } catch (e) {
+      showToast("Couldn't save the new positions.");
+      loadSeating(true);
+    }
+  }
+  function moveGroup(dx, dy, growTo) { moveItems(currentSelection(), dx, dy, growTo); }
+
+  // Arrow keys: moves straight away on screen; saves once the keys go quiet, so holding an
+  // arrow down doesn't send a request per step. Never pushes anything out of the room. The moved
+  // positions are kept here until saved (key repeats can outrun re-renders, and a background
+  // refresh mustn't put things back in the meantime; loadSeating skips refreshes while one waits).
+  const nudgeRef = useRef({ timer: null, items: new Map() }); // "t:id" / "o:id" -> moved table/item
+  function nudgeSelection(dx, dy) {
+    const sel = currentSelection();
+    if (!sel.tables.length && !sel.objects.length) return;
+    const n = nudgeRef.current;
+    const cur = (k, it) => n.items.get(k + it.id) || it;
+    const selTables = state.seatingTables.filter(t => sel.tables.includes(t.id)).map(t => cur("t:", t));
+    const selObjects = state.seatingObjects.filter(o => sel.objects.includes(o.id)).map(o => cur("o:", o));
+    const room = roomOf(state.seatingRoom);
+    const b = layoutBounds(selTables, selObjects);
+    // Stop at the walls, still in whole half-metre steps so things stay lined up.
+    const half = UNITS_PER_M / 2, fit = (v, lo, hi) => { const c = Math.min(Math.max(v, lo), hi); return c === v ? v : Math.trunc(c / half) * half; };
+    dx = fit(dx, Math.min(0, -b.minX), Math.max(0, room.w - b.maxX));
+    dy = fit(dy, Math.min(0, -b.minY), Math.max(0, room.h - b.maxY));
+    if (!dx && !dy) return;
+    const mv = it => ({ ...it, x: it.x + dx, y: it.y + dy, ...(it.x2 != null && { x2: it.x2 + dx, y2: it.y2 + dy }) });
+    selTables.forEach(t => n.items.set("t:" + t.id, mv(t)));
+    selObjects.forEach(o => n.items.set("o:" + o.id, mv(o)));
+    const pick = (d, k) => d && (n.items.has(k + d.id) ? { ...d, ...pos(n.items.get(k + d.id)) } : d);
+    const pos = it => ({ x: it.x, y: it.y, ...(it.x2 != null && { x2: it.x2, y2: it.y2 }) });
+    seatingSeqRef.current++; // a background refresh already on its way would put things back
+    patch({
+      seatingTables: state.seatingTables.map(t => n.items.get("t:" + t.id) || t),
+      seatingObjects: state.seatingObjects.map(o => n.items.get("o:" + o.id) || o),
+      tableDraft: pick(state.tableDraft, "t:"), objectDraft: pick(state.objectDraft, "o:")
+    });
+    clearTimeout(n.timer);
+    n.timer = setTimeout(async () => {
+      const items = [...n.items.entries()];
+      n.items = new Map();
+      try {
+        await seatingMutate("save-items", { tables: items.filter(([k]) => k.startsWith("t:")).map(([, v]) => v), objects: items.filter(([k]) => k.startsWith("o:")).map(([, v]) => v) });
+        if (!n.items.size) n.timer = null;
+      } catch (e) { n.timer = null; showToast("Couldn't save the new positions."); loadSeating(true); }
+    }, 450);
+  }
+
+  // Deletes tables/items in one request. Asks first when guests are seated at a table being deleted.
+  async function deleteItems(sel) {
+    if (!sel.tables.length && !sel.objects.length) return;
+    const seated = Object.values(state.seatingAssignments).filter(a => sel.tables.includes(a.tableId)).length;
+    const what = describeSelection(sel);
+    if (seated && !window.confirm(`Delete ${what}? ${seated} guest${seated === 1 ? "" : "s"} will be unseated.`)) return;
+    patch({ loading: true });
+    try {
+      const data = await seatingMutate("delete-items", { tableIds: sel.tables, objectIds: sel.objects });
+      patch({ loading: false, ...(data && selectionPatch({ tables: [], objects: [] })) });
+      if (data) showToast(`Deleted ${what}.`);
+    } catch (e) {
+      patch({ loading: false });
+      showToast("Couldn't delete that.");
+    }
+  }
+  function deleteSelection() { deleteItems(currentSelection()); }
+
+  // Copy/paste. Copies keep shape, size, capacity, colours and rotation but never the guests
+  // seated there. A table numbered like "Table 7" gets the next free number; each paste of the
+  // same copy lands another 1 m down and right (or up/left near the far walls).
+  const clipboardRef = useRef(null); // { tables, objects, pastes }
+  function copySelection() {
+    const sel = currentSelection();
+    if (!sel.tables.length && !sel.objects.length) return;
+    clipboardRef.current = {
+      tables: state.seatingTables.filter(t => sel.tables.includes(t.id)).map(t => ({ ...t })),
+      objects: state.seatingObjects.filter(o => sel.objects.includes(o.id)).map(o => ({ ...o })),
+      pastes: 0
+    };
+    showToast(`Copied ${describeSelection(sel)}.`);
+  }
+  async function pasteItems(clip) {
+    clip.pastes++;
+    const room = roomOf(state.seatingRoom), off = UNITS_PER_M * clip.pastes;
+    const b = layoutBounds(clip.tables, clip.objects);
+    const dx = b.maxX + off <= room.w ? off : b.minX - off >= 0 ? -off : 0;
+    const dy = b.maxY + off <= room.h ? off : b.minY - off >= 0 ? -off : 0;
+    const used = new Set(state.seatingTables.map(t => t.label));
+    const nextLabel = label => {
+      const m = label.match(/^(.*?)(\d+)$/);
+      const base = m ? m[1] : `${label} `;
+      let n = 1;
+      for (const l of used) { const mm = l.startsWith(base) && l.slice(base.length).match(/^\d+$/); if (mm) n = Math.max(n, Number(mm[0])); }
+      let next = `${base}${n + 1}`;
+      while (used.has(next)) next = `${base}${++n + 1}`;
+      used.add(next);
+      return next;
+    };
+    const tables = clip.tables.map(t => ({ ...t, id: genId(), label: nextLabel(t.label), x: t.x + dx, y: t.y + dy }));
+    const objects = clip.objects.map(o => ({ ...o, id: genId(), x: o.x + dx, y: o.y + dy, ...(o.x2 != null && { x2: o.x2 + dx, y2: o.y2 + dy }) }));
+    patch({ loading: true });
+    try {
+      const data = await seatingMutate("save-items", { tables, objects });
+      patch({ loading: false, ...(data && selectionPatch({ tables: tables.map(t => t.id), objects: objects.map(o => o.id) }, data.tables, data.objects)) });
+      if (data) showToast(`Pasted ${[tables.length && `${tables.length} table${tables.length === 1 ? "" : "s"}`, objects.length && `${objects.length} item${objects.length === 1 ? "" : "s"}`].filter(Boolean).join(" and ")}.`);
+    } catch (e) {
+      patch({ loading: false });
+      showToast("Couldn't paste that.");
+    }
+  }
+  function pasteClipboard() {
+    if (!clipboardRef.current) { showToast("Nothing copied yet. Select something and press ⌘C (Ctrl+C on Windows) first."); return; }
+    pasteItems(clipboardRef.current);
+  }
+  function duplicateSelection() {
+    const sel = currentSelection();
+    if (!sel.tables.length && !sel.objects.length) return;
+    pasteItems({
+      tables: state.seatingTables.filter(t => sel.tables.includes(t.id)).map(t => ({ ...t })),
+      objects: state.seatingObjects.filter(o => sel.objects.includes(o.id)).map(o => ({ ...o })),
+      pastes: 0
+    });
+  }
+
   function downloadFloorPlan() {
     const occupancy = {};
     Object.values(state.seatingAssignments).forEach(a => { occupancy[a.tableId] = (occupancy[a.tableId] || 0) + 1; });
@@ -4158,6 +4465,8 @@ export default function App() {
     loadSeating, selectTable, deselectTable, updateTableDraftField, addTable, saveTableDraft, deleteTable, moveTable, armGuest, assignSeat,
     selectObject, deselectObject, updateObjectDraftField, addObject, saveObjectDraft, deleteObject, moveObject,
     setTableShape, downloadFloorPlan, saveSeatingReveal, saveChairColor, styleAllTables, saveRoom, undoRoomGrow,
+    currentSelection, describeSelection, toggleSelect, boxSelect, selectAll, clearSelection, moveGroup, nudgeSelection,
+    deleteSelection, copySelection, pasteClipboard, duplicateSelection,
     saveSettings, loadRegistry, registryAdmin, fetchProductLink
   };
 

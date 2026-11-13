@@ -233,6 +233,49 @@ export async function onRequestPost({ request, env }) {
       return Response.json(await listSeating(env.DB));
     }
 
+    // Several tables/items at once (a group move or nudge, or pasted copies), optionally with a
+    // room resize that shifts everything first (as save-room does). Positions sent are final ones
+    // (after any shift). One D1 batch, so it all saves or none of it does.
+    case "save-items": {
+      const p = payload || {};
+      const tables = Array.isArray(p.tables) ? p.tables : [], objects = Array.isArray(p.objects) ? p.objects : [];
+      if (tables.length + objects.length === 0) return new Response("Nothing to save", { status: 400 });
+      if (tables.length > 300 || objects.length > 300) return new Response("Too many items", { status: 400 });
+      const stmts = [];
+      if (p.room) {
+        const w = Math.round(Number(p.room.w)), h = Math.round(Number(p.room.h));
+        if (!(w >= 300 && w <= 5000 && h >= 300 && h <= 5000)) return new Response("Room must be between 6 m and 100 m each way", { status: 400 });
+        const sx = Math.round(Number(p.room.shiftX) || 0), sy = Math.round(Number(p.room.shiftY) || 0);
+        if (Math.abs(sx) > 5000 || Math.abs(sy) > 5000) return new Response("Invalid shift", { status: 400 });
+        if (sx || sy) {
+          stmts.push(env.DB.prepare("UPDATE seating_tables SET x = x + ?, y = y + ?").bind(sx, sy));
+          stmts.push(env.DB.prepare("UPDATE floor_objects SET x = x + ?, y = y + ?, x2 = x2 + ?, y2 = y2 + ?").bind(sx, sy, sx, sy));
+        }
+        const put = (k, v) => env.DB.prepare("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind(k, String(v));
+        stmts.push(put("room_width", w), put("room_depth", h));
+      }
+      for (const t of tables) stmts.push(tableStatement(env.DB, t || {}));
+      for (const o of objects) stmts.push(objectStatement(env.DB, o || {}));
+      await env.DB.batch(stmts);
+      return Response.json(await listSeating(env.DB));
+    }
+
+    // Deletes several tables/items at once; guests seated at a deleted table become unseated.
+    case "delete-items": {
+      const ids = v => (Array.isArray(v) ? v.map(x => String(x || "").trim()).filter(Boolean) : []);
+      const tableIds = ids(payload?.tableIds), objectIds = ids(payload?.objectIds);
+      if (tableIds.length + objectIds.length === 0) return new Response("Nothing to delete", { status: 400 });
+      if (tableIds.length > 300 || objectIds.length > 300) return new Response("Too many items", { status: 400 });
+      const stmts = [];
+      for (const id of tableIds) {
+        stmts.push(env.DB.prepare("DELETE FROM seat_assignments WHERE table_id = ?").bind(id));
+        stmts.push(env.DB.prepare("DELETE FROM seating_tables WHERE id = ?").bind(id));
+      }
+      for (const id of objectIds) stmts.push(env.DB.prepare("DELETE FROM floor_objects WHERE id = ?").bind(id));
+      await env.DB.batch(stmts);
+      return Response.json(await listSeating(env.DB));
+    }
+
     case "save-object":
       return Response.json(await saveFloorObject(env.DB, payload || {}));
 
@@ -325,6 +368,13 @@ async function saveHousehold(db, p) {
 }
 
 async function saveTable(db, p) {
+  await tableStatement(db, p).run();
+  return listSeating(db);
+}
+
+// The upsert for one table, cleaned up. Used on its own (save-table) and in batches (save-items).
+// A new row's created_at is now; an existing row keeps its own (ON CONFLICT doesn't touch it).
+function tableStatement(db, p) {
   const id = String(p.id || "").trim() || genId();
   const label = String(p.label || "").trim() || "Table";
   const shape = ["rect", "oval", "banquet"].includes(p.shape) ? p.shape : "round";
@@ -336,20 +386,16 @@ async function saveTable(db, p) {
   const capacity = Math.max(1, Number(p.capacity) || 8);
   const color = isHexColor(p.color) ? p.color : null;
   const chairColor = isHexColor(p.chairColor) ? p.chairColor : null;
+  const createdAt = new Date().toISOString();
 
-  const existing = await db.prepare("SELECT created_at FROM seating_tables WHERE id = ?").bind(id).first();
-  const createdAt = existing?.created_at || new Date().toISOString();
-
-  await db.prepare(`
+  return db.prepare(`
     INSERT INTO seating_tables (id, label, shape, x, y, size, size2, rotation, capacity, created_at, color, chair_color)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       label = excluded.label, shape = excluded.shape, x = excluded.x, y = excluded.y,
       size = excluded.size, size2 = excluded.size2, rotation = excluded.rotation, capacity = excluded.capacity,
       color = excluded.color, chair_color = excluded.chair_color
-  `).bind(id, label, shape, x, y, size, size2, rotation, capacity, createdAt, color, chairColor).run();
-
-  return listSeating(db);
+  `).bind(id, label, shape, x, y, size, size2, rotation, capacity, createdAt, color, chairColor);
 }
 
 // Basic shapes, walls, and the room features with their own 2D drawing / 3D model.
@@ -357,6 +403,12 @@ async function saveTable(db, p) {
 const FLOOR_OBJECT_TYPES = ["circle", "rect", "triangle", "line", "fireplace", "stairs", "curtain", "window", "pillar", "post"];
 
 async function saveFloorObject(db, p) {
+  await objectStatement(db, p).run();
+  return listSeating(db);
+}
+
+// The upsert for one floor item, cleaned up (see tableStatement).
+function objectStatement(db, p) {
   const id = String(p.id || "").trim() || genId();
   const type = FLOOR_OBJECT_TYPES.includes(p.type) ? p.type : "rect";
   const label = String(p.label || "").trim();
@@ -367,19 +419,15 @@ async function saveFloorObject(db, p) {
   const y2 = p.y2 != null && Number.isFinite(Number(p.y2)) ? Number(p.y2) : null;
   const rotation = p.rotation != null && Number.isFinite(Number(p.rotation)) ? ((Number(p.rotation) % 360) + 360) % 360 : null;
   const color = isHexColor(p.color) ? p.color : null;
+  const createdAt = new Date().toISOString();
 
-  const existing = await db.prepare("SELECT created_at FROM floor_objects WHERE id = ?").bind(id).first();
-  const createdAt = existing?.created_at || new Date().toISOString();
-
-  await db.prepare(`
+  return db.prepare(`
     INSERT INTO floor_objects (id, type, label, x, y, size, x2, y2, created_at, rotation, color)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       type = excluded.type, label = excluded.label, x = excluded.x, y = excluded.y,
       size = excluded.size, x2 = excluded.x2, y2 = excluded.y2, rotation = excluded.rotation, color = excluded.color
-  `).bind(id, type, label, x, y, size, x2, y2, createdAt, rotation, color).run();
-
-  return listSeating(db);
+  `).bind(id, type, label, x, y, size, x2, y2, createdAt, rotation, color);
 }
 
 const EMAIL_BATCH_SIZE = 10;
