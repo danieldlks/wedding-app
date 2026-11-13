@@ -417,12 +417,14 @@ let FP3D_STONE = null;
 // Fireplace, stairs and curtain models. Fireplace/stairs are built in a local
 // frame (width on x, depth on z, front / climb direction = +z), then turned to
 // featureAngle(); curtains run between the item's two end points like a wall.
-function buildFeature(o, mats, room) {
+// opts.ceil: as for buildPillar. opts.stairsH: stairs that lead up to a loft climb exactly to its floor.
+function buildFeature(o, mats, room, opts = {}) {
+  const ceil = opts.ceil ?? FP3D_WALL_H;
   const group = new THREE.Group();
   if (o.type === "curtain") {
     const dx = o.x2 - o.x, dy = o.y2 - o.y;
     const [lx, ly] = fp3dLogicalToWorld(dx, dy);
-    const L = Math.max(0.2, Math.hypot(lx, ly)), H = FP3D_WALL_H - 0.35;
+    const L = Math.max(0.2, Math.hypot(lx, ly)), H = ceil - 0.35;
     const segX = Math.ceil(L / 0.05), geo = new THREE.PlaneGeometry(L, H, segX, 12);
     const pos = geo.attributes.position;
     for (let i = 0; i < pos.count; i++) {
@@ -460,7 +462,7 @@ function buildFeature(o, mats, room) {
       mats.flame = new THREE.MeshStandardMaterial({ color: "#FFB15C", emissive: "#FF8A2A", emissiveIntensity: 2.2, transparent: true, opacity: 0.9 });
     }
     const back = -D / 2, sd = D * 0.55;                             // surround depth from the wall
-    box(W * 0.86, FP3D_WALL_H, D * 0.42, mats.stone, 0, FP3D_WALL_H / 2, back + D * 0.21); // chimney breast to the ceiling
+    box(W * 0.86, ceil, D * 0.42, mats.stone, 0, ceil / 2, back + D * 0.21); // chimney breast to the ceiling (or the loft above)
     box(W * 0.22, 1.2, sd, mats.stone, -W / 2 + W * 0.11, 0.6, back + sd / 2);           // piers
     box(W * 0.22, 1.2, sd, mats.stone, W / 2 - W * 0.11, 0.6, back + sd / 2);
     box(W, 0.34, sd, mats.stone, 0, 1.03, back + sd / 2);                                // lintel
@@ -473,9 +475,10 @@ function buildFeature(o, mats, room) {
     [[0, 0.34, 0.12], [-0.17, 0.24, 0.09], [0.16, 0.26, 0.09]].forEach(([x, h, r]) => { const f = new THREE.Mesh(new THREE.ConeGeometry(r, h, 10), mats.flame); f.position.set(x, 0.12 + h / 2, back + D * 0.5); inner.add(f); });
     const glow = new THREE.PointLight("#FFB066", 3, 5, 1.6); glow.position.set(0, 0.45, back + D * 0.75); inner.add(glow);
     [-0.32, 0, 0.3].forEach((x, i) => { const c = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.16 + i % 2 * 0.1, 10), mats.candle); c.position.set(x * W, 1.36 + (i % 2) * 0.05, back + sd / 2 + 0.06); inner.add(c); });
-    labelY = FP3D_WALL_H * 0.62;
+    labelY = Math.min(FP3D_WALL_H * 0.62, ceil - 0.3);
   } else {
-    const n = 9, H = 2.2, rise = H / n, run = D / n;
+    // Up to a loft: exactly its floor height. Otherwise 2.2, kept (with its handrail) under any loft above.
+    const H = opts.stairsH ?? Math.min(2.2, ceil - 1.0), n = Math.max(6, Math.round(H / 0.21)), rise = H / n, run = D / n;
     for (let i = 0; i < n; i++) {
       box(W, rise * (i + 1), run, mats.timber, 0, (rise * (i + 1)) / 2, -D / 2 + run * (i + 0.5));
       box(W + 0.02, 0.03, run * 0.25, mats.timberDark, 0, rise * (i + 1) + 0.005, -D / 2 + run * (i + 0.12)); // nosing
@@ -495,7 +498,8 @@ function buildFeature(o, mats, room) {
 }
 
 // A round column from floor to ceiling, with a stone base and capital.
-function buildPillar(o, mats) {
+// `ceil` (world units) is how high the item can go: the room's ceiling, or just under a loft above it.
+function buildPillar(o, mats, ceil = FP3D_WALL_H) {
   const group = new THREE.Group();
   if (!FP3D_STONE) FP3D_STONE = stoneTexture();
   if (!mats.column) {
@@ -506,24 +510,24 @@ function buildPillar(o, mats) {
   const [r] = fp3dLogicalToWorld(o.size / 2, 0);
   const [px, pz] = fp3dLogicalToWorld(o.x, o.y);
   const add = (geo, mat, y) => { const m = new THREE.Mesh(geo, mat); m.position.set(px, y, pz); m.castShadow = m.receiveShadow = true; group.add(m); };
-  const shaftH = FP3D_WALL_H - 0.5;
+  const shaftH = ceil - 0.5;
   add(new THREE.BoxGeometry(r * 2.5, 0.12, r * 2.5), mats.columnBase, 0.06);             // plinth
   add(new THREE.CylinderGeometry(r * 1.12, r * 1.18, 0.14, 32), mats.columnBase, 0.19);  // base torus-ish step
   const shaftMat = o.color ? new THREE.MeshStandardMaterial({ color: o.color, roughness: 0.85 }) : mats.column;
   add(new THREE.CylinderGeometry(r * 0.94, r, shaftH, 32), shaftMat, 0.26 + shaftH / 2); // slightly tapered shaft
-  add(new THREE.CylinderGeometry(r * 1.2, r * 0.96, 0.16, 32), mats.columnBase, FP3D_WALL_H - 0.16); // capital
-  add(new THREE.BoxGeometry(r * 2.6, 0.08, r * 2.6), mats.columnBase, FP3D_WALL_H - 0.04);           // abacus under the ceiling
+  add(new THREE.CylinderGeometry(r * 1.2, r * 0.96, 0.16, 32), mats.columnBase, ceil - 0.16); // capital
+  add(new THREE.BoxGeometry(r * 2.6, 0.08, r * 2.6), mats.columnBase, ceil - 0.04);           // abacus under the ceiling (or loft)
   if (o.label) group.add(makeFp3dLabelObject(o.label, { kind: "object" }).translateX(px).translateZ(pz).translateY(2.2));
   return group;
 }
 
 // A square timber post from floor to ceiling, with knee braces up to a short beam (barn-style).
-function buildPost(o, mats) {
+function buildPost(o, mats, ceil = FP3D_WALL_H) {
   const group = new THREE.Group();
   const mat = o.color ? new THREE.MeshStandardMaterial({ color: o.color, roughness: 0.7 }) : mats.timberDark;
   const [half] = fp3dLogicalToWorld(o.size / 2, 0);
   const [px, pz] = fp3dLogicalToWorld(o.x, o.y);
-  const s = Math.min(0.32, Math.max(0.14, half * 2)), H = FP3D_WALL_H;
+  const s = Math.min(0.32, Math.max(0.14, half * 2)), H = ceil;
   const box = (sx, sy, sz, x, y, z, rx = 0, rz = 0) => { const m = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat); m.position.set(px + x, y, pz + z); m.rotation.set(rx, 0, rz); m.castShadow = m.receiveShadow = true; group.add(m); };
   box(s, H, s, 0, H / 2, 0);                                   // post
   box(s * 1.6, 0.06, s * 1.6, 0, 0.03, 0);                      // foot plate
@@ -534,11 +538,11 @@ function buildPost(o, mats) {
 }
 
 // A window on a wall line: a framed, glazed opening with glazing bars and a sill.
-function buildWindow(o, mats) {
+function buildWindow(o, mats, ceil = FP3D_WALL_H) {
   const group = new THREE.Group();
   const dx = o.x2 - o.x, dy = o.y2 - o.y;
   const [lx, ly] = fp3dLogicalToWorld(dx, dy);
-  const L = Math.max(0.3, Math.hypot(lx, ly)), bottom = 0.85, top = FP3D_WALL_H - 0.55, H = top - bottom;
+  const L = Math.max(0.3, Math.hypot(lx, ly)), bottom = 0.85, top = Math.max(bottom + 0.6, Math.min(FP3D_WALL_H - 0.55, ceil - 0.3)), H = top - bottom;
   const frameMat = o.color ? new THREE.MeshStandardMaterial({ color: o.color, roughness: 0.6 }) : mats.timberDark;
   if (!mats.daylight) mats.daylight = new THREE.MeshStandardMaterial({ color: "#DCE9EC", emissive: "#EAF3F5", emissiveIntensity: 0.55, roughness: 0.15, transparent: true, opacity: 0.85 });
   const inner = new THREE.Group();
@@ -556,11 +560,11 @@ function buildWindow(o, mats) {
   return group;
 }
 
-function buildLandmark(o, mats, room) {
-  if (o.type === "pillar") return buildPillar(o, mats);
-  if (o.type === "post") return buildPost(o, mats);
-  if (o.type === "window") return buildWindow(o, mats);
-  if (o.type === "fireplace" || o.type === "stairs" || o.type === "curtain") return buildFeature(o, mats, room);
+function buildLandmark(o, mats, room, opts = {}) {
+  if (o.type === "pillar") return buildPillar(o, mats, opts.ceil);
+  if (o.type === "post") return buildPost(o, mats, opts.ceil);
+  if (o.type === "window") return buildWindow(o, mats, opts.ceil);
+  if (o.type === "fireplace" || o.type === "stairs" || o.type === "curtain") return buildFeature(o, mats, room, opts);
   const group = new THREE.Group();
   const kind = landmarkKind(o);
   let labelY = 1.0;
@@ -866,32 +870,72 @@ function applyTableHighlight(tableMeshes, activeId, focusColor) {
 
 // seatMarkers (optional, guest view): [{ tableId, seatIndex, label, color }] —
 // the guest's own seats get a coloured cushion and a named pin.
-// A loft: its floor, a railing round the edge and a post at each corner (plan-unit rect in, world out).
-function buildLoft(l) {
-  const g = new THREE.Group();
-  const [x0, z0] = fp3dLogicalToWorld(l.x, l.y), [w, d] = fp3dLogicalToWorld(l.w, l.h);
+// A loft: its floor, a railing round the edge and a post at each corner. `arrivals` are stairs that
+// lead up to it ({ T: top-centre [x, y], w: width, corners: footprint }, plan units): where they
+// arrive at its edge the railing has a gap, and where they climb up under it the floor has a
+// stairwell (with a guard rail round it, except on the side you step off).
+function buildLoft(l, arrivals = []) {
+  const g = new THREE.Group(), S = FP3D_SCALE;
   const slabMat = new THREE.MeshStandardMaterial({ color: "#C8A774", roughness: 0.8 });
   const timber = new THREE.MeshStandardMaterial({ color: "#6B4E31", roughness: 0.7 });
-  const slab = new THREE.Mesh(new THREE.BoxGeometry(w, 0.16, d), slabMat);
-  slab.position.set(x0 + w / 2, FP3D_LOFT_Y - 0.08, z0 + d / 2); slab.castShadow = slab.receiveShadow = true;
-  g.add(slab);
+  const x1 = l.x + l.w, y1 = l.y + l.h;
+  const inside = ([x, y]) => x > l.x && x < x1 && y > l.y && y < y1;
+  const holes = arrivals.filter(a => a.corners.some(inside)).map(a => {
+    const xs = a.corners.map(c => c[0]), ys = a.corners.map(c => c[1]);
+    return { x0: Math.max(l.x, Math.min(...xs) - 4), x1: Math.min(x1, Math.max(...xs) + 4), y0: Math.max(l.y, Math.min(...ys) - 4), y1: Math.min(y1, Math.max(...ys) + 4), T: a.T };
+  });
+  // Floor: the loft's rectangle cut into cells along every hole edge; cells inside a hole are left out.
+  const xs = [...new Set([l.x, x1, ...holes.flatMap(h => [h.x0, h.x1])])].sort((a, b) => a - b);
+  const ys = [...new Set([l.y, y1, ...holes.flatMap(h => [h.y0, h.y1])])].sort((a, b) => a - b);
+  for (let i = 0; i < xs.length - 1; i++) for (let j = 0; j < ys.length - 1; j++) {
+    const cx = (xs[i] + xs[i + 1]) / 2, cy = (ys[j] + ys[j + 1]) / 2;
+    if (holes.some(h => cx > h.x0 && cx < h.x1 && cy > h.y0 && cy < h.y1)) continue;
+    const cell = new THREE.Mesh(new THREE.BoxGeometry((xs[i + 1] - xs[i]) * S, 0.16, (ys[j + 1] - ys[j]) * S), slabMat);
+    cell.position.set(cx * S, FP3D_LOFT_Y - 0.08, cy * S); cell.castShadow = cell.receiveShadow = true; g.add(cell);
+  }
+  // Railing along a line (plan units), leaving out the gaps ([from, to] along it, plan units).
   const railH = 0.95, postGeo = new THREE.BoxGeometry(0.06, railH, 0.06);
-  const edges = [[x0, z0, x0 + w, z0], [x0 + w, z0, x0 + w, z0 + d], [x0 + w, z0 + d, x0, z0 + d], [x0, z0 + d, x0, z0]];
-  edges.forEach(([ax, az, bx, bz]) => {
-    const len = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.round(len / 1.2));
-    for (let i = 0; i < n; i++) {
-      const p = new THREE.Mesh(postGeo, timber);
-      p.position.set(ax + (bx - ax) * i / n, FP3D_LOFT_Y + railH / 2, az + (bz - az) * i / n); g.add(p);
+  const railing = (ax, ay, bx, by, gaps = []) => {
+    const len = Math.hypot(bx - ax, by - ay); if (len < 1) return;
+    const ux = (bx - ax) / len, uy = (by - ay) / len;
+    let parts = [[0, len]];
+    for (const [g0, g1] of gaps) parts = parts.flatMap(([p0, p1]) => (g1 <= p0 || g0 >= p1 ? [[p0, p1]] : [[p0, Math.max(p0, g0)], [Math.min(p1, g1), p1]].filter(([q0, q1]) => q1 - q0 > 6)));
+    for (const [p0, p1] of parts) {
+      const sx = ax + ux * p0, sy = ay + uy * p0, ex = ax + ux * p1, ey = ay + uy * p1, L = (p1 - p0) * S;
+      const n = Math.max(1, Math.round(L / 1.2));
+      for (let i = 0; i <= n; i++) { const p = new THREE.Mesh(postGeo, timber); p.position.set((sx + (ex - sx) * i / n) * S, FP3D_LOFT_Y + railH / 2, (sy + (ey - sy) * i / n) * S); g.add(p); }
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(L + 0.06, 0.07, 0.08), timber);
+      rail.position.set((sx + ex) / 2 * S, FP3D_LOFT_Y + railH, (sy + ey) / 2 * S); rail.rotation.y = -Math.atan2(ey - sy, ex - sx); g.add(rail);
     }
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(len + 0.06, 0.07, 0.08), timber);
-    rail.position.set((ax + bx) / 2, FP3D_LOFT_Y + railH, (az + bz) / 2); rail.rotation.y = -Math.atan2(bz - az, bx - ax); g.add(rail);
+  };
+  // The loft's own edges: gaps where stairs arrive at them, and where a stairwell meets them.
+  const edges = [[l.x, l.y, x1, l.y], [x1, l.y, x1, y1], [x1, y1, l.x, y1], [l.x, y1, l.x, l.y]];
+  edges.forEach(([ax, ay, bx, by]) => {
+    const len = Math.hypot(bx - ax, by - ay), ux = (bx - ax) / len, uy = (by - ay) / len, gaps = [];
+    for (const a of arrivals) {
+      const t = (a.T[0] - ax) * ux + (a.T[1] - ay) * uy, off = Math.abs((a.T[0] - ax) * -uy + (a.T[1] - ay) * ux);
+      if (off <= 40 && t > -a.w / 2 && t < len + a.w / 2) gaps.push([t - a.w / 2 - 8, t + a.w / 2 + 8]);
+    }
+    for (const h of holes) {
+      const corners = [[h.x0, h.y0], [h.x1, h.y0], [h.x1, h.y1], [h.x0, h.y1]];
+      const on = corners.filter(([x, y]) => Math.abs((x - ax) * -uy + (y - ay) * ux) < 1);
+      if (on.length >= 2) { const ts = on.map(([x, y]) => (x - ax) * ux + (y - ay) * uy); gaps.push([Math.min(...ts), Math.max(...ts)]); }
+    }
+    railing(ax, ay, bx, by, gaps);
   });
+  // Guard rail round each stairwell, except its edges on the loft's outline and the side you step off.
+  for (const h of holes) {
+    const hEdges = [[h.x0, h.y0, h.x1, h.y0], [h.x1, h.y0, h.x1, h.y1], [h.x1, h.y1, h.x0, h.y1], [h.x0, h.y1, h.x0, h.y0]];
+    const mid = e => [(e[0] + e[2]) / 2, (e[1] + e[3]) / 2];
+    const exit = hEdges.reduce((best, e) => (Math.hypot(mid(e)[0] - h.T[0], mid(e)[1] - h.T[1]) < Math.hypot(mid(best)[0] - h.T[0], mid(best)[1] - h.T[1]) ? e : best));
+    const onOutline = e => (Math.abs(e[0] - e[2]) < 1 && (Math.abs(e[0] - l.x) < 1 || Math.abs(e[0] - x1) < 1)) || (Math.abs(e[1] - e[3]) < 1 && (Math.abs(e[1] - l.y) < 1 || Math.abs(e[1] - y1) < 1));
+    hEdges.filter(e => e !== exit && !onOutline(e)).forEach(e => railing(...e));
+  }
   const legGeo = new THREE.CylinderGeometry(0.11, 0.11, FP3D_LOFT_Y - 0.16, 16);
-  [[x0, z0], [x0 + w, z0], [x0 + w, z0 + d], [x0, z0 + d]].forEach(([x, z]) => {
-    const leg = new THREE.Mesh(legGeo, timber); leg.position.set(x, (FP3D_LOFT_Y - 0.16) / 2, z); leg.castShadow = true; g.add(leg);
-  });
+  const legs = [[l.x, l.y], [x1, l.y], [x1, y1], [l.x, y1]].map(([x, y]) => [x * S, y * S]);
+  legs.forEach(([x, z]) => { const leg = new THREE.Mesh(legGeo, timber); leg.position.set(x, (FP3D_LOFT_Y - 0.16) / 2, z); leg.castShadow = true; g.add(leg); });
   g.traverse(o => { if (o.isMesh) { o.userData.ownsGeometry = true; o.userData.ownsMaterial = true; } });
-  return { group: g, legs: [[x0, z0], [x0 + w, z0], [x0 + w, z0 + d], [x0, z0 + d]] };
+  return { group: g, legs };
 }
 
 const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, levels = [], room: roomProp, chairColor = null, focusTableId, focusColor = "#A9814C", onSelectTable, seatMarkers }, ref) {
@@ -1149,13 +1193,33 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, levels = 
     // Lofts: things on one sit FP3D_LOFT_Y higher (a loft that no longer exists counts as ground).
     const lofts = JSON.parse(levelsKey);
     const liftOf = it => (it.level && lofts.some(l => l.id === it.level) ? FP3D_LOFT_Y : 0);
+    const inRect = (l, x, y, m = 0) => x >= l.x - m && x <= l.x + l.w + m && y >= l.y - m && y <= l.y + l.h + m;
+    // Points across an item's footprint (plan units), to tell whether a loft is above any of it.
+    const footprint = o => {
+      if (o.x2 != null) return Array.from({ length: 13 }, (_, i) => [o.x + (o.x2 - o.x) * i / 12, o.y + (o.y2 - o.y) * i / 12]);
+      const r = o.type === "fireplace" || o.type === "stairs" ? Math.hypot(featureDims(o).w, featureDims(o).d) / 2 : (o.size || 0) / 2;
+      return [[o.x, o.y], [o.x - r, o.y - r], [o.x + r, o.y - r], [o.x - r, o.y + r], [o.x + r, o.y + r]];
+    };
+    // Ground-floor stairs whose top end is at (or inside) a loft's edge lead up to it.
+    const arrivalOf = o => {
+      if (o.type !== "stairs" || liftOf(o)) return null;
+      const a = featureAngle(o, s.room), { w, d } = featureDims(o), ux = Math.cos(a), uy = Math.sin(a), px = -uy, py = ux;
+      const T = [o.x + ux * d / 2, o.y + uy * d / 2];
+      const loft = lofts.find(l => inRect(l, T[0], T[1], 37.5));
+      if (!loft) return null;
+      const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([i, j]) => [o.x + ux * d / 2 * i + px * w / 2 * j, o.y + uy * d / 2 * i + py * w / 2 * j]);
+      return { loftId: loft.id, T, w, corners };
+    };
+    const arrivals = (objects || []).map(arrivalOf).filter(Boolean);
+    // How high a ground-floor item can go: the ceiling, or just under a loft above any part of it.
+    const ceilOf = o => (!liftOf(o) && lofts.some(l => footprint(o).some(([x, y]) => inRect(l, x, y))) ? FP3D_LOFT_Y - 0.16 : FP3D_WALL_H);
     lofts.forEach(l => {
-      const { group, legs } = buildLoft(l);
+      const { group, legs } = buildLoft(l, arrivals.filter(a => a.loftId === l.id));
       s.contentGroup.add(group);
       legs.forEach(([cx, cz]) => s.obstacles.push({ cx, cz, clear: 0.5 }));
     });
     (objects || []).forEach(o => {
-      const g = buildLandmark(o, s.mats, s.room);
+      const g = buildLandmark(o, s.mats, s.room, { ceil: ceilOf(o), stairsH: arrivalOf(o) ? FP3D_LOFT_Y : undefined });
       g.position.y += liftOf(o);
       const shared = new Set(Object.values(s.mats)); // after building: some shared materials are made on first use
       g.traverse(obj => {
