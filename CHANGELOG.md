@@ -4,6 +4,54 @@ Notable changes to the RSVP app, newest first. See `plan.md`/`design.md` for the
 broader feature history (v1 → v3); this file tracks discrete fixes and changes
 made along the way.
 
+## 2026-11-13 — Lofts (upper levels) on the seating plan
+
+**Feature:** lofts. A loft is a raised area over part of the room, reached by stairs. You can have up to 5.
+
+**Admin › Seating:**
+- **Level switcher:** a **Level** row above the plan (**Ground floor**, then each loft) with **+ Add loft**.
+- **New lofts** start at 8 m × 5 m in the bottom-right corner.
+- **On a loft:** the plan shows that loft's tables and items. The ground floor appears faintly underneath for reference, and the rest of the room is washed out.
+- **Moving and resizing:** drag **✥** at the loft's top-left to move it (everything on it moves too), or its bottom-right corner to resize it in 0.5 m steps. It can't shrink past what's on it.
+- **Staying on the loft:** tables and items dragged, nudged or group-moved on a loft stay inside it.
+- **Adding:** new tables and items, pasted copies and duplicates go on the level being viewed. Copies pasted from the ground floor are centred on the loft.
+- **⌘A:** selects only that level.
+- **Loft panel:** shows its name (editable), size and **Delete loft**. Deleting asks first and says how many guests will be unseated.
+- **Ground floor:** each loft shows as a dashed outline marked "<name> above". Things under a loft stay fully editable.
+- **Room size:** growing the room on the left or top shifts lofts with everything else, and the room can't shrink past a loft.
+- **Download floor plan:** exports the level being viewed.
+
+**Guests (Find My Seat):**
+- The map opens on the level their table is on, with "Upstairs, in the <loft>. Follow the stairs up."
+- If the household is split across levels, a switch lets them view each one.
+- The seat list names the loft.
+
+**Venue display:**
+- A level switch appears when lofts exist.
+- Finding a guest switches to their level, and table labels include the loft's name.
+
+**3D:** each loft is a raised floor 2.5 m up, with a railing and corner posts, and its tables, chairs and items sit on it. Walking stays on the ground floor, and the loft's posts block it like pillars.
+
+**Database:**
+- New columns `seating_tables.level` and `floor_objects.level`.
+- Lofts are stored in `app_settings` under `levels`.
+- New admin action `delete-level`. `save-items` also takes `levels`.
+
+**DEPLOY NOTE:** run these one at a time on the remote database before deploying:
+
+```
+ALTER TABLE seating_tables ADD COLUMN level TEXT;
+ALTER TABLE floor_objects ADD COLUMN level TEXT;
+```
+
+**Files:**
+- `src/App.jsx`
+- `src/FloorPlan3D.jsx`
+- `functions/api/admin.js`
+- `functions/api/seating.js`
+- `functions/_lib/db.js`
+- `schema.sql`
+
 ## 2026-11-13 — Rectangles can be any width and depth
 
 **Feature:**
