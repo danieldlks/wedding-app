@@ -84,8 +84,11 @@ CREATE TABLE IF NOT EXISTS floor_objects (
   y2 REAL,
   created_at TEXT NOT NULL,
   rotation REAL,        -- degrees; fireplace/stairs facing (NULL = face away from / toward the nearest wall)
-  color TEXT            -- '#rrggbb' main colour (NULL = the item's natural finish)
+  color TEXT,           -- '#rrggbb' main colour (NULL = the item's natural finish)
+  depth REAL            -- rectangles: front-to-back size; `size` is the width (NULL = square)
 );
+-- DEPLOY NOTE (resizable rectangles): an existing database needs, once:
+--   ALTER TABLE floor_objects ADD COLUMN depth REAL;
 
 -- Generic global settings store — currently just the guest seating-reveal
 -- gate, kept as a key/value table rather than a dedicated single-row table

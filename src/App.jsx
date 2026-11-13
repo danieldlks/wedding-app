@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, lazy, Suspense } from "react";
 import { registryAccess } from "./registryRules.js";
 import { REGISTRY_CSS, GuestRegistry, AdminRegistry } from "./Registry.jsx";
-import { DEFAULT_ROOM, roomOf, metres, layoutExtent, layoutBounds, snapUpHalfM, snapDownHalfM, UNITS_PER_M, ROOM_MIN, ROOM_MAX, clamp, tableDims, triangleVertices, getSeatPositionsLocal, tableAngle, featureDims, featureAngle, isLineObject, textColorOn, FLOOR_COLORS, CHAIR_COLORS, DEFAULT_CHAIR_COLOR } from "./seatingGeometry.js";
+import { DEFAULT_ROOM, roomOf, metres, layoutExtent, layoutBounds, snapUpHalfM, snapDownHalfM, UNITS_PER_M, ROOM_MIN, ROOM_MAX, clamp, tableDims, triangleVertices, getSeatPositionsLocal, tableAngle, featureDims, featureAngle, isLineObject, objectDepth, textColorOn, FLOOR_COLORS, CHAIR_COLORS, DEFAULT_CHAIR_COLOR } from "./seatingGeometry.js";
 // The 3D venue view (and three.js) is split into its own file and only
 // downloaded the first time someone switches to 3D.
 const FloorPlan3D = lazy(() => import("./FloorPlan3D.jsx"));
@@ -1778,7 +1778,7 @@ function pointToSegmentDistance(px, py, x1, y1, x2, y2) {
   return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
 }
 const FLOOR_ITEM_NAMES = {
-  circle: "circle", rect: "square", triangle: "triangle", line: "wall / barrier", fireplace: "fireplace",
+  circle: "circle", rect: "rectangle", triangle: "triangle", line: "wall / barrier", fireplace: "fireplace",
   stairs: "stairs", curtain: "curtains", window: "window", pillar: "pillar", post: "timber post"
 };
 
@@ -1799,7 +1799,7 @@ function hitTestObject(o, x, y, room) {
   }
   if (o.type === "circle" || o.type === "pillar") return dx * dx + dy * dy <= (o.size / 2) * (o.size / 2) ? "body" : null;
   if (o.type === "triangle") return pointInTriangle(x, y, triangleVertices(o)) ? "body" : null;
-  return Math.abs(dx) <= o.size / 2 && Math.abs(dy) <= o.size / 2 ? "body" : null; // rect
+  return Math.abs(dx) <= o.size / 2 && Math.abs(dy) <= objectDepth(o) / 2 ? "body" : null; // rect (width × depth)
 }
 function hitTestObjects(objects, x, y, room) {
   for (let i = objects.length - 1; i >= 0; i--) {
@@ -1983,7 +1983,10 @@ function drawFloorPlan(ctx, opts) {
         pts.forEach(([px, py], i) => (i === 0 ? ctx.moveTo(px - o.x, py - o.y) : ctx.lineTo(px - o.x, py - o.y)));
         ctx.closePath(); ctx.fill(); ctx.stroke();
       } else {
-        roundRectPath(ctx, -o.size / 2, -o.size / 2, o.size, o.size, 4); ctx.fill(); ctx.stroke();
+        const d = objectDepth(o);
+        roundRectPath(ctx, -o.size / 2, -d / 2, o.size, d, 4); ctx.fill(); ctx.stroke();
+        // Selected on its own: a corner handle to drag it bigger or smaller (see SeatingCanvas).
+        if (showHandles) { ctx.fillStyle = "#6E7F63"; ctx.fillRect(o.size / 2 - 6, d / 2 - 6, 12, 12); ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.strokeRect(o.size / 2 - 6, d / 2 - 6, 12, 12); }
       }
       if (o.label) {
         ctx.fillStyle = o.color ? textColorOn(o.color) : "#202B22";
@@ -2171,7 +2174,7 @@ function SeatingCanvas({
   const draggedTables = liveDrag?.kind === "table" ? tables.map(t => (t.id === liveDrag.id ? { ...t, x: liveDrag.x, y: liveDrag.y } : t))
     : groupDrag ? tables.map(t => (selT.has(t.id) ? shiftBy(t, liveDrag.dx, liveDrag.dy) : t)) : tables;
   const draggedObjects = liveDrag?.kind === "object"
-    ? objs.map(o => (o.id === liveDrag.id ? { ...o, ...(liveDrag.x != null && { x: liveDrag.x, y: liveDrag.y }), ...(liveDrag.x2 != null && { x2: liveDrag.x2, y2: liveDrag.y2 }) } : o))
+    ? objs.map(o => (o.id === liveDrag.id ? { ...o, ...(liveDrag.x != null && { x: liveDrag.x, y: liveDrag.y }), ...(liveDrag.x2 != null && { x2: liveDrag.x2, y2: liveDrag.y2 }), ...(liveDrag.size != null && { size: liveDrag.size, depth: liveDrag.depth }) } : o))
     : groupDrag ? objs.map(o => (selO.has(o.id) ? shiftBy(o, liveDrag.dx, liveDrag.dy) : o)) : objs;
   // Dragged past the right/bottom edge: the room will grow to this size on release (never shrinks here).
   // Only when the dragged item itself pokes out of the room — moving something that's merely near an
@@ -2274,6 +2277,13 @@ function SeatingCanvas({
       // the empty floor draws a selection box.
       const mouse = e.pointerType === "mouse" && !!onToggleSelect;
       const additive = mouse && (e.shiftKey || e.metaKey || e.ctrlKey);
+      // The selected rectangle's corner handle resizes it (the opposite corner stays put).
+      const selRect = !groupSelection && selectedObjectId ? objs.find(o => o.id === selectedObjectId && o.type === "rect") : null;
+      if (selRect && Math.abs(pt.x - (selRect.x + selRect.size / 2)) <= 12 && Math.abs(pt.y - (selRect.y + objectDepth(selRect) / 2)) <= 12) {
+        dragStartRef.current = { kind: "resize", id: selRect.id, left: selRect.x - selRect.size / 2, top: selRect.y - objectDepth(selRect) / 2 };
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
       const tableHit = hitTestTable(tables, pt.x, pt.y);
       const objHitAny = tableHit ? null : hitTestObjects(objs, pt.x, pt.y, room);
       if (additive && (tableHit || objHitAny)) {
@@ -2340,6 +2350,12 @@ function SeatingCanvas({
         }
         return;
       }
+      if (d.kind === "resize") {
+        // 0.5 m steps, at least 0.5 m each way, never past 100 m.
+        const half = UNITS_PER_M / 2, w = clamp(Math.round((pt.x - d.left) / half) * half, half, ROOM_MAX), dd = clamp(Math.round((pt.y - d.top) / half) * half, half, ROOM_MAX);
+        setLiveDrag({ kind: "object", id: d.id, x: d.left + w / 2, y: d.top + dd / 2, size: w, depth: dd });
+        return;
+      }
       if (d.kind === "box") { d.box = { ...d.box, x1: pt.x, y1: pt.y }; setBox(d.box); return; }
       if (d.kind === "group") {
         // Whole grid steps, so everything keeps its spacing (and stays on the grid).
@@ -2403,6 +2419,7 @@ function SeatingCanvas({
         const changes = {};
         if (liveDrag.x != null) { changes.x = liveDrag.x; changes.y = liveDrag.y; }
         if (liveDrag.x2 != null) { changes.x2 = liveDrag.x2; changes.y2 = liveDrag.y2; }
+        if (liveDrag.size != null) { changes.size = liveDrag.size; changes.depth = liveDrag.depth; }
         onObjectDragEnd(liveDrag.id, changes, growTo);
       }
     }
@@ -2512,7 +2529,7 @@ const ROOM_ITEM_GROUPS = [
   ]],
   ["Basic shapes", [
     ["circle", "Circle", "M6 16a10 10 0 1 0 20 0 10 10 0 1 0-20 0", (x, y) => ({ type: "circle", label: "", x, y, size: 60 })],
-    ["square", "Square", "M6 6h20v20H6z", (x, y) => ({ type: "rect", label: "", x, y, size: 60 })],
+    ["rect", "Rectangle", "M4 9h24v14H4z", (x, y) => ({ type: "rect", label: "", x, y, size: 100, depth: 50 })],
     ["triangle", "Triangle", "M16 5l11 20H5z", (x, y) => ({ type: "triangle", label: "", x, y, size: 60 })],
     ["wall", "Wall", "M5 26L27 6", (x, y) => ({ type: "line", label: "", x: x - 60, y, x2: x + 60, y2: y, size: 10 })],
   ]],
@@ -2914,7 +2931,19 @@ function AdminSeating({ state, actions }) {
                   <input type="text" placeholder="e.g. Bar, Entrance, Dance floor" value={state.objectDraft.label}
                     onChange={e => actions.updateObjectDraftField("label", e.target.value)} />
                 </div>
-                {!isLineObject(selectedObject) && (
+                {selectedObject.type === "rect" && (
+                  <>
+                    <div className="field"><label htmlFor="obj-width">Width (m)</label>
+                      <input id="obj-width" type="number" min="0.5" max="100" step="0.5" value={state.objectDraft.size / UNITS_PER_M}
+                        onChange={e => actions.updateObjectDraftField("size", Math.max(0.5, Number(e.target.value) || 0.5) * UNITS_PER_M)} />
+                    </div>
+                    <div className="field"><label htmlFor="obj-depth">Depth (m)</label>
+                      <input id="obj-depth" type="number" min="0.5" max="100" step="0.5" value={objectDepth(state.objectDraft) / UNITS_PER_M}
+                        onChange={e => actions.updateObjectDraftField("depth", Math.max(0.5, Number(e.target.value) || 0.5) * UNITS_PER_M)} />
+                    </div>
+                  </>
+                )}
+                {!isLineObject(selectedObject) && selectedObject.type !== "rect" && (
                   <div className="field"><label>Size</label>
                     <input type="number" min="10" value={state.objectDraft.size}
                       onChange={e => actions.updateObjectDraftField("size", Number(e.target.value))} />

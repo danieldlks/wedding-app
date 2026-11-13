@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DRenderer, CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { roomOf, clamp, tableDims, triangleVertices, getSeatPositionsLocal, tableAngle, featureDims, featureAngle, DEFAULT_CHAIR_COLOR } from "./seatingGeometry.js";
+import { roomOf, clamp, tableDims, triangleVertices, getSeatPositionsLocal, tableAngle, featureDims, featureAngle, DEFAULT_CHAIR_COLOR, objectDepth } from "./seatingGeometry.js";
 
 // A furnished "dollhouse" of the reception room, built from the same
 // seating_tables / floor_objects data the 2D SeatingCanvas draws (issue #4).
@@ -382,7 +382,7 @@ function landmarkKind(o) {
   return "plinth";
 }
 function footprintGeometry(o, height) {
-  if (o.type === "rect") { const [sx, sz] = fp3dLogicalToWorld(o.size, o.size); return new THREE.BoxGeometry(sx, height, sz).translate(0, height / 2, 0); }
+  if (o.type === "rect") { const [sx, sz] = fp3dLogicalToWorld(o.size, objectDepth(o)); return new THREE.BoxGeometry(sx, height, sz).translate(0, height / 2, 0); }
   if (o.type === "circle") { const [r] = fp3dLogicalToWorld(o.size / 2, 0); return new THREE.CylinderGeometry(r, r, height, 40).translate(0, height / 2, 0); }
   const shape = new THREE.Shape();
   triangleVertices(o).forEach(([vx, vy], i) => {
@@ -1127,7 +1127,7 @@ const FloorPlan3D = forwardRef(function FloorPlan3D({ tables, objects, room: roo
       // Solid room features block walking, like tables do.
       if (["fireplace", "stairs", "pillar", "post"].includes(o.type)) {
         const [cx, cz] = fp3dLogicalToWorld(o.x, o.y);
-        const { w, d } = o.type === "fireplace" || o.type === "stairs" ? featureDims(o) : { w: o.size, d: o.size };
+        const { w, d } = o.type === "fireplace" || o.type === "stairs" ? featureDims(o) : { w: o.size, d: objectDepth(o) };
         s.obstacles.push({ cx, cz, clear: (Math.max(w, d) / 2) * FP3D_SCALE + 0.55 });
       }
     });
