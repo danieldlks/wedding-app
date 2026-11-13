@@ -389,6 +389,9 @@ textarea.settings-input.settings-input-short{min-height:64px;}
 .remove-link{background:none;border:none;color:var(--error);font-size:12px;text-decoration:underline;padding:4px;}
 .add-member-btn{width:100%;padding:13px;border:1px dashed var(--gold);background:transparent;color:var(--sage-dark);font-weight:600;font-size:13.5px;}
 .btn-row{display:flex;gap:12px;margin-top:28px;}
+/* Edit panels have up to four buttons: let them wrap on a phone rather than run off the edge. */
+.table-editor-panel .btn-row{flex-wrap:wrap;}
+.table-editor-panel .btn-row .btn{flex:1 1 auto;min-width:96px;}
 .btn{flex:1;padding:14px 18px;border:none;font-size:14px;font-weight:600;letter-spacing:.03em;}
 .btn:active{transform:scale(.98);}
 .btn-primary{background:var(--sage);color:#fff;}
