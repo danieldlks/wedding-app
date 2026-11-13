@@ -25,7 +25,8 @@ export function layoutBounds(tables, objects) {
   for (const t of tables || []) { const { w, h } = tableDims(t); const r = Math.hypot(w, h) / 2 + 14; add(t.x - r, t.y - r, t.x + r, t.y + r); }
   for (const o of objects || []) {
     const r = o.type === "fireplace" || o.type === "stairs" ? Math.hypot(featureDims(o).w, featureDims(o).d) / 2 : (o.size || 0) / 2;
-    add(o.x - r, o.y - r, o.x + r, o.y + r);
+    const rd = o.type === "rect" ? objectDepth(o) / 2 : r;
+    add(o.x - r, o.y - rd, o.x + r, o.y + rd);
     if (o.x2 != null) add(o.x2 - 6, o.y2 - 6, o.x2 + 6, o.y2 + 6);
   }
   return minX === Infinity ? { minX: 0, minY: 0, maxX: 0, maxY: 0 } : { minX, minY, maxX, maxY };
@@ -98,6 +99,10 @@ export function isLineObject(o) { return LINE_TYPES.includes(o.type); }
 // width along local x, depth along local y, "forward" = local +y (the
 // fireplace's front / the direction the stairs climb). featureAngle() is that
 // forward direction in canvas radians.
+// A rectangle item's depth (front to back); `size` is its width. Older items (and every other
+// shape) have no depth of their own, so they're as deep as they are wide.
+export function objectDepth(o) { return o.type === "rect" && Number(o.depth) > 0 ? Number(o.depth) : o.size; }
+
 export function featureDims(o) {
   return o.type === "fireplace" ? { w: o.size, d: o.size * 0.38 } : { w: o.size * 0.55, d: o.size };
 }

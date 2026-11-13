@@ -1,4 +1,4 @@
-import { rowToRecord, genId, genInviteCode, listAllRecords, listSeating, getSiteSettings, putSetting, isValidDate, resolveEvents, isHexColor } from "../_lib/db.js";
+import { rowToRecord, genId, genInviteCode, listAllRecords, listSeating, getSiteSettings, putSetting, isValidDate, resolveEvents, isHexColor, getLevels, cleanLevels, isLevelId } from "../_lib/db.js";
 import { isValidTimeZone } from "../_lib/time.js";
 import { sendEmail, getEmailQuota } from "../_lib/email.js";
 import { renderUpdateEmail, renderReminderEmail, recipientFor } from "../_lib/templates.js";
@@ -211,6 +211,8 @@ export async function onRequestPost({ request, env }) {
       if (sx || sy) {
         await env.DB.prepare("UPDATE seating_tables SET x = x + ?, y = y + ?").bind(sx, sy).run();
         await env.DB.prepare("UPDATE floor_objects SET x = x + ?, y = y + ?, x2 = x2 + ?, y2 = y2 + ?").bind(sx, sy, sx, sy).run();
+        const levels = await getLevels(env.DB);
+        if (levels.length) await putSetting(env.DB, "levels", JSON.stringify(levels.map(l => ({ ...l, x: l.x + sx, y: l.y + sy }))));
       }
       await putSetting(env.DB, "room_width", w);
       await putSetting(env.DB, "room_depth", h);
@@ -239,7 +241,13 @@ export async function onRequestPost({ request, env }) {
     case "save-items": {
       const p = payload || {};
       const tables = Array.isArray(p.tables) ? p.tables : [], objects = Array.isArray(p.objects) ? p.objects : [];
-      if (tables.length + objects.length === 0) return new Response("Nothing to save", { status: 400 });
+      // `levels` (optional): the whole list of lofts, e.g. after one is added, moved or resized.
+      let levels = null;
+      if (p.levels !== undefined) {
+        levels = cleanLevels(p.levels);
+        if (!levels) return new Response("Invalid lofts", { status: 400 });
+      }
+      if (tables.length + objects.length === 0 && !levels) return new Response("Nothing to save", { status: 400 });
       if (tables.length > 300 || objects.length > 300) return new Response("Too many items", { status: 400 });
       const stmts = [];
       if (p.room) {
@@ -251,12 +259,31 @@ export async function onRequestPost({ request, env }) {
           stmts.push(env.DB.prepare("UPDATE seating_tables SET x = x + ?, y = y + ?").bind(sx, sy));
           stmts.push(env.DB.prepare("UPDATE floor_objects SET x = x + ?, y = y + ?, x2 = x2 + ?, y2 = y2 + ?").bind(sx, sy, sx, sy));
         }
-        const put = (k, v) => env.DB.prepare("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind(k, String(v));
-        stmts.push(put("room_width", w), put("room_depth", h));
+        stmts.push(putStatement(env.DB, "room_width", w), putStatement(env.DB, "room_depth", h));
+        // The lofts move with everything else (unless this save sends a new list, already shifted).
+        if ((sx || sy) && !levels) {
+          const cur = await getLevels(env.DB);
+          if (cur.length) stmts.push(putStatement(env.DB, "levels", JSON.stringify(cur.map(l => ({ ...l, x: l.x + sx, y: l.y + sy })))));
+        }
       }
+      if (levels) stmts.push(putStatement(env.DB, "levels", JSON.stringify(levels)));
       for (const t of tables) stmts.push(tableStatement(env.DB, t || {}));
       for (const o of objects) stmts.push(objectStatement(env.DB, o || {}));
       await env.DB.batch(stmts);
+      return Response.json(await listSeating(env.DB));
+    }
+
+    // Removes a loft and everything on it (guests at its tables become unseated).
+    case "delete-level": {
+      const id = String(payload?.id || "");
+      const levels = await getLevels(env.DB);
+      if (!levels.some(l => l.id === id)) return new Response("No such loft", { status: 404 });
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM seat_assignments WHERE table_id IN (SELECT id FROM seating_tables WHERE level = ?)").bind(id),
+        env.DB.prepare("DELETE FROM seating_tables WHERE level = ?").bind(id),
+        env.DB.prepare("DELETE FROM floor_objects WHERE level = ?").bind(id),
+        putStatement(env.DB, "levels", JSON.stringify(levels.filter(l => l.id !== id)))
+      ]);
       return Response.json(await listSeating(env.DB));
     }
 
@@ -386,16 +413,22 @@ function tableStatement(db, p) {
   const capacity = Math.max(1, Number(p.capacity) || 8);
   const color = isHexColor(p.color) ? p.color : null;
   const chairColor = isHexColor(p.chairColor) ? p.chairColor : null;
+  const level = isLevelId(p.level) ? p.level : null;
   const createdAt = new Date().toISOString();
 
   return db.prepare(`
-    INSERT INTO seating_tables (id, label, shape, x, y, size, size2, rotation, capacity, created_at, color, chair_color)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO seating_tables (id, label, shape, x, y, size, size2, rotation, capacity, created_at, color, chair_color, level)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       label = excluded.label, shape = excluded.shape, x = excluded.x, y = excluded.y,
       size = excluded.size, size2 = excluded.size2, rotation = excluded.rotation, capacity = excluded.capacity,
-      color = excluded.color, chair_color = excluded.chair_color
-  `).bind(id, label, shape, x, y, size, size2, rotation, capacity, createdAt, color, chairColor);
+      color = excluded.color, chair_color = excluded.chair_color, level = excluded.level
+  `).bind(id, label, shape, x, y, size, size2, rotation, capacity, createdAt, color, chairColor, level);
+}
+
+// An app_settings upsert, for use inside a D1 batch.
+function putStatement(db, key, value) {
+  return db.prepare("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind(key, String(value));
 }
 
 // Basic shapes, walls, and the room features with their own 2D drawing / 3D model.
@@ -414,20 +447,24 @@ function objectStatement(db, p) {
   const label = String(p.label || "").trim();
   const x = Number.isFinite(Number(p.x)) ? Number(p.x) : 100;
   const y = Number.isFinite(Number(p.y)) ? Number(p.y) : 100;
-  const size = Math.max(10, Number(p.size) || 60);
+  const size = Math.min(5000, Math.max(10, Number(p.size) || 60));
   const x2 = p.x2 != null && Number.isFinite(Number(p.x2)) ? Number(p.x2) : null;
   const y2 = p.y2 != null && Number.isFinite(Number(p.y2)) ? Number(p.y2) : null;
   const rotation = p.rotation != null && Number.isFinite(Number(p.rotation)) ? ((Number(p.rotation) % 360) + 360) % 360 : null;
   const color = isHexColor(p.color) ? p.color : null;
+  // Rectangles can be deeper or shallower than they are wide (0.5 m to 100 m); other shapes have no depth.
+  const depth = type === "rect" && p.depth != null && Number.isFinite(Number(p.depth)) ? Math.min(5000, Math.max(10, Number(p.depth))) : null;
+  const level = isLevelId(p.level) ? p.level : null;
   const createdAt = new Date().toISOString();
 
   return db.prepare(`
-    INSERT INTO floor_objects (id, type, label, x, y, size, x2, y2, created_at, rotation, color)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO floor_objects (id, type, label, x, y, size, x2, y2, created_at, rotation, color, depth, level)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       type = excluded.type, label = excluded.label, x = excluded.x, y = excluded.y,
-      size = excluded.size, x2 = excluded.x2, y2 = excluded.y2, rotation = excluded.rotation, color = excluded.color
-  `).bind(id, type, label, x, y, size, x2, y2, createdAt, rotation, color);
+      size = excluded.size, x2 = excluded.x2, y2 = excluded.y2, rotation = excluded.rotation, color = excluded.color,
+      depth = excluded.depth, level = excluded.level
+  `).bind(id, type, label, x, y, size, x2, y2, createdAt, rotation, color, depth, level);
 }
 
 const EMAIL_BATCH_SIZE = 10;
