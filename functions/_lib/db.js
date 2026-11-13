@@ -50,7 +50,8 @@ export function rowToTable(row) {
     rotation: row.rotation,
     capacity: row.capacity,
     color: row.color || null,
-    chairColor: row.chair_color || null
+    chairColor: row.chair_color || null,
+    level: row.level || null // a loft's id (see getLevels); NULL = the ground floor
   };
 }
 
@@ -66,7 +67,8 @@ export function rowToFloorObject(row) {
     y2: row.y2,
     rotation: row.rotation ?? null,
     color: row.color || null,
-    depth: row.depth ?? null // rectangles only: front-to-back size (NULL = as deep as `size` is wide)
+    depth: row.depth ?? null, // rectangles only: front-to-back size (NULL = as deep as `size` is wide)
+    level: row.level || null  // a loft's id; NULL = the ground floor
   };
 }
 
@@ -79,9 +81,33 @@ export async function listSeating(db) {
   const reveal = await getSeatingRevealSetting(db);
   return {
     tables: tableRows.map(rowToTable), assignments, objects: objectRows.map(rowToFloorObject),
-    revealMode: reveal.mode, revealAt: reveal.revealAt, chairColor: await getChairColor(db), room: await getRoom(db)
+    revealMode: reveal.mode, revealAt: reveal.revealAt, chairColor: await getChairColor(db), room: await getRoom(db),
+    levels: await getLevels(db)
   };
 }
+
+// Lofts: raised areas over part of the room (app_settings `levels`, JSON). Each is
+// { id, name, x, y, w, h } in floor-plan units (x/y = its top-left corner). Tables and items on a
+// loft carry its id in their `level` column; everything else is on the ground floor.
+export const MAX_LEVELS = 5;
+export async function getLevels(db) {
+  const row = await db.prepare("SELECT value FROM app_settings WHERE key = 'levels'").first();
+  try { return cleanLevels(JSON.parse(row?.value || "[]")) || []; } catch { return []; }
+}
+// A valid list of lofts, or null if anything in it is wrong.
+export function cleanLevels(list) {
+  if (!Array.isArray(list) || list.length > MAX_LEVELS) return null;
+  const out = [], ids = new Set();
+  for (const l of list) {
+    const id = String(l?.id || ""), name = String(l?.name || "").trim();
+    const [x, y, w, h] = [l?.x, l?.y, l?.w, l?.h].map(Number);
+    if (!/^[a-z0-9-]{1,24}$/.test(id) || ids.has(id) || !name || name.length > 40) return null;
+    if (![x, y, w, h].every(Number.isFinite) || w < 100 || h < 100 || w > 5000 || h > 5000 || Math.abs(x) > 5000 || Math.abs(y) > 5000) return null;
+    ids.add(id); out.push({ id, name, x, y, w, h });
+  }
+  return out;
+}
+export function isLevelId(v) { return typeof v === "string" && /^[a-z0-9-]{1,24}$/.test(v); }
 
 // The venue's chair colour (app_settings chair_color); a table's own chair_color overrides it.
 export async function getChairColor(db) {

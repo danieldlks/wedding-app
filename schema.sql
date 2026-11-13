@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS seating_tables (
   capacity INTEGER NOT NULL DEFAULT 8,
   created_at TEXT NOT NULL,
   color TEXT,                          -- tablecloth '#rrggbb' (NULL = white linen)
-  chair_color TEXT                     -- this table's chairs (NULL = the venue's chair colour, app_settings chair_color)
+  chair_color TEXT,                    -- this table's chairs (NULL = the venue's chair colour, app_settings chair_color)
+  level TEXT                           -- a loft's id (app_settings `levels`); NULL = the ground floor
 );
 -- DEPLOY NOTE (floor-plan features): an existing database needs, run one at a time:
 --   ALTER TABLE seating_tables ADD COLUMN color TEXT;
@@ -85,8 +86,12 @@ CREATE TABLE IF NOT EXISTS floor_objects (
   created_at TEXT NOT NULL,
   rotation REAL,        -- degrees; fireplace/stairs facing (NULL = face away from / toward the nearest wall)
   color TEXT,           -- '#rrggbb' main colour (NULL = the item's natural finish)
-  depth REAL            -- rectangles: front-to-back size; `size` is the width (NULL = square)
+  depth REAL,           -- rectangles: front-to-back size; `size` is the width (NULL = square)
+  level TEXT            -- a loft's id (app_settings `levels`); NULL = the ground floor
 );
+-- DEPLOY NOTE (lofts): an existing database needs, one at a time:
+--   ALTER TABLE seating_tables ADD COLUMN level TEXT;
+--   ALTER TABLE floor_objects ADD COLUMN level TEXT;
 -- DEPLOY NOTE (resizable rectangles): an existing database needs, once:
 --   ALTER TABLE floor_objects ADD COLUMN depth REAL;
 
