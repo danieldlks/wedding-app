@@ -19,10 +19,11 @@ const CONFIG = {
   // functions/_lib/config.js). date = 'YYYY-MM-DD', time = 24h 'HH:MM', both
   // local to timeZone; display text and the countdown are derived from them.
   events: [
-    { id: "engagement", name: "Engagement Party", date: "2027-02-20", time: "14:30", timeZone: "Australia/Adelaide", venue: "SUNDAY", address: "" },
+    // dressCode / dressNote: optional, shown under that event on the guest Details page and in RSVP confirmations.
+    { id: "engagement", name: "Engagement Party", date: "2027-02-20", time: "14:30", timeZone: "Australia/Adelaide", venue: "SUNDAY", address: "", dressCode: "", dressNote: "" },
     // seated: true = this event has the reception seating plan (Find My Seat, and its
     // capacity in admin Settings is the total of the seating tables' capacities).
-    { id: "wedding", seated: true, name: "Wedding Ceremony & Reception", date: "2027-08-06", time: "15:30", timeZone: "Australia/Adelaide", venue: "Longview Vineyard", address: "" }
+    { id: "wedding", seated: true, name: "Wedding Ceremony & Reception", date: "2027-08-06", time: "15:30", timeZone: "Australia/Adelaide", venue: "Longview Vineyard", address: "", dressCode: "", dressNote: "" }
   ],
   // The site's usual time zone. An event in a different zone shows its time
   // with a label, e.g. "3:30 PM (Perth time)". Keep in sync with TIME_ZONE in functions/_lib/config.js.
@@ -350,6 +351,12 @@ const CSS = `
 .choice-card h3{margin:0 0 3px;font-family:var(--display);font-size:19px;font-weight:600;}
 .choice-card p{margin:0;font-size:13px;color:var(--ink-soft);}
 .choice-card p.choice-extra{margin-top:4px;color:var(--gold);}
+.ev-dress{display:flex;flex-direction:column;gap:1px;margin-top:8px;padding-left:10px;border-left:2px solid var(--gold-soft);}
+.ev-dress-label{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;font-weight:600;color:var(--gold);}
+.ev-dress-code{font-family:var(--display);font-size:17px;font-weight:600;color:var(--ink);line-height:1.25;}
+.ev-dress-note{font-size:12.5px;color:var(--ink-soft);line-height:1.45;white-space:pre-line;}
+.settings-note{font-size:13px;line-height:1.5;color:#7A5B21;background:#F7EFDD;border-radius:10px;padding:10px 12px;margin:0 0 14px;}
+textarea.settings-input.settings-input-short{min-height:64px;}
 .steps{display:flex;justify-content:center;gap:10px;margin-bottom:28px;}
 .step-dot{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-size:13px;font-weight:600;border:1px solid var(--gold-soft);color:var(--ink-soft);background:transparent;}
 .step-dot.active{background:var(--sage);border-color:var(--sage);color:var(--paper);}
@@ -955,6 +962,13 @@ function GuestDetails({ state, actions }) {
               <div style={{ fontWeight: 600 }}>{ev.name}</div>
               <div className="slabel" style={{ fontSize: 12.5 }}>{eventDateText(ev)} · {eventTimeText(ev)}</div>
               <div className="slabel" style={{ fontSize: 12.5 }}>{ev.venue}</div>
+              {ev.dressCode && (
+                <div className="ev-dress">
+                  <span className="ev-dress-label">Dress code</span>
+                  <span className="ev-dress-code">{ev.dressCode}</span>
+                  {ev.dressNote && <span className="ev-dress-note">{ev.dressNote}</span>}
+                </div>
+              )}
               <DeadlineChip ymd={deadlineFor(state.siteSettings, id)} tz={ev.timeZone} />
             </div>
           );
@@ -3059,7 +3073,7 @@ const COMMON_TIME_ZONES = [
 function allTimeZones() { try { return Intl.supportedValuesOf("timeZone"); } catch { return []; } }
 
 function eventDraftFrom(ev) {
-  return { name: ev.name, date: ev.date, time: ev.time, timeZone: ev.timeZone || CONFIG.timeZone, venue: ev.venue, address: ev.address || "" };
+  return { name: ev.name, date: ev.date, time: ev.time, timeZone: ev.timeZone || CONFIG.timeZone, venue: ev.venue, address: ev.address || "", dressCode: ev.dressCode || "", dressNote: ev.dressNote || "" };
 }
 function eventDraftErrors(d) {
   const e = {};
@@ -3083,7 +3097,7 @@ function EventSettings({ state, actions, open, onToggle }) {
     + (eventsList().every(e => (e.timeZone || CONFIG.timeZone) === CONFIG.timeZone) ? ` · ${tzCity(CONFIG.timeZone)} time` : "");
 
   function save() {
-    const events = Object.fromEntries(Object.entries(draft).map(([id, d]) => [id, { ...d, name: d.name.trim(), venue: d.venue.trim(), address: d.address.trim() }]));
+    const events = Object.fromEntries(Object.entries(draft).map(([id, d]) => [id, { ...d, name: d.name.trim(), venue: d.venue.trim(), address: d.address.trim(), dressCode: d.dressCode.trim(), dressNote: d.dressCode.trim() ? d.dressNote.trim() : "" }]));
     actions.saveSettings({ events });
   }
 
@@ -3146,8 +3160,22 @@ function EventSettings({ state, actions, open, onToggle }) {
                   onChange={e => set(ev.id, "address", e.target.value)} />
                 <div className="helptext">Used for the map and “Get Directions”. Leave blank to search by venue name.</div>
               </div>
+              <div className="field">
+                <label htmlFor={`${idp}-dress`}>Dress code (optional)</label>
+                <input id={`${idp}-dress`} className="settings-input" type="text" maxLength={80} value={d.dressCode} placeholder="e.g. Cocktail"
+                  onChange={e => set(ev.id, "dressCode", e.target.value)} />
+              </div>
+              {d.dressCode.trim() && (
+                <div className="field">
+                  <label htmlFor={`${idp}-dress-note`}>Dress code note (optional)</label>
+                  <textarea id={`${idp}-dress-note`} className="settings-input settings-input-short" maxLength={300} value={d.dressNote}
+                    placeholder="e.g. The ceremony is on the lawn."
+                    onChange={e => set(ev.id, "dressNote", e.target.value)} />
+                  <div className="helptext">Shown under the dress code on the guest's Details page.</div>
+                </div>
+              )}
               {Object.keys(err).length === 0 && (
-                <div className="settings-preview"><span>Guests see:</span> {eventDateText(preview)} · {eventTimeText(preview)} · {d.venue.trim()}</div>
+                <div className="settings-preview"><span>Guests see:</span> {eventDateText(preview)} · {eventTimeText(preview)} · {d.venue.trim()}{d.dressCode.trim() ? ` · Dress code: ${d.dressCode.trim()}` : ""}</div>
               )}
             </div>
           );
@@ -3180,6 +3208,9 @@ function GuestInfoSettings({ state, actions, open, onToggle }) {
   return (
     <SettingsAccordion id="info" title="Guest information" summary={summary} open={open} onToggle={onToggle} dirty={dirty}>
       <p className="settings-help">Shown on every guest's Details page, below the events, in this order — dress code, gifts, parking, anything else.</p>
+      {eventsList().some(e => e.dressCode) && saved.some(i => /dress/i.test(i.title)) && (
+        <p className="settings-note">Each event now has its own dress code (Event details), so you may not need the “{saved.find(i => /dress/i.test(i.title)).title}” item here. Every guest sees it, whichever events they're invited to.</p>
+      )}
       {items.length === 0 && <p className="helptext" style={{ marginTop: 0 }}>No items — the Details page will just show the events.</p>}
       {items.map((it, idx) => (
         <div className="settings-card guest-info-item" key={it.key}>

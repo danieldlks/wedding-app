@@ -97,13 +97,18 @@ export async function onRequestPost({ request, env }) {
           timeZone: String(e.timeZone || "").trim(),
           venue: String(e.venue || "").trim(),
           address: String(e.address || "").trim(),
+          dressCode: String(e.dressCode || "").trim(),
+          dressNote: String(e.dressNote || "").trim(),
         };
+        if (!clean.dressCode) clean.dressNote = "";
         if (!clean.name || clean.name.length > 100) return new Response(`Event name for ${ev.id} is required (max 100 characters)`, { status: 400 });
         if (!isValidDate(clean.date)) return new Response(`Invalid date for ${ev.id}`, { status: 400 });
         if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(clean.time)) return new Response(`Invalid start time for ${ev.id}`, { status: 400 });
         if (!isValidTimeZone(clean.timeZone)) return new Response(`Invalid time zone for ${ev.id}`, { status: 400 });
         if (!clean.venue || clean.venue.length > 150) return new Response(`Venue for ${ev.id} is required (max 150 characters)`, { status: 400 });
         if (clean.address.length > 300) return new Response(`Address for ${ev.id} is too long (max 300 characters)`, { status: 400 });
+        if (clean.dressCode.length > 80) return new Response(`Dress code for ${ev.id} is too long (max 80 characters)`, { status: 400 });
+        if (clean.dressNote.length > 300) return new Response(`Dress code note for ${ev.id} is too long (max 300 characters)`, { status: 400 });
         writes.push([`event_details_${ev.id}`, JSON.stringify(clean)]);
       }
       // Guest information (Details page items). An empty list is allowed and

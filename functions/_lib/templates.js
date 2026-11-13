@@ -68,6 +68,13 @@ function guestShell(record, preview, body) {
 function dietText(m) {
   return [(m.dietaryTags || []).join(", "), m.dietaryNote || ""].filter(Boolean).join(": ");
 }
+// An event's dress code (and note), for households with someone going to it.
+function dressCodeBlock(ev) {
+  if (!ev?.dressCode) return "";
+  return `<div style="margin-top:10px;padding-left:10px;border-left:2px solid ${C.goldSoft};">${eyebrow("Dress code")}
+    <div style="font-family:${SERIF};font-size:18px;font-weight:600;color:${C.ink};margin-top:2px;">${escapeHtml(ev.dressCode)}</div>
+    ${ev.dressNote ? `<div style="font-family:${SANS};font-size:13px;line-height:1.5;color:${C.inkSoft};margin-top:2px;">${multiline(ev.dressNote)}</div>` : ""}</div>`;
+}
 const attendsAny = (record, m) => record.invitedEvents.some(id => m.attending?.[id]);
 
 // ---- Guest: RSVP confirmation ----------------------------------------------
@@ -81,7 +88,8 @@ export function renderGuestConfirmationEmail(record, events, { deadlines = {}, u
     const notGoing = members.filter(m => !m.attending?.[id]).map(m => escapeHtml(m.name));
     return panelRow(`${panelTitle(escapeHtml(nameOf(events, id)))}
       ${going.length ? `<div style="font-family:${SANS};font-size:14px;line-height:1.55;color:${C.inkSoft};margin-top:6px;"><span style="color:${C.sage};font-weight:600;">&#10003;&nbsp;Attending</span> &nbsp;${going.join(", ")}</div>` : ""}
-      ${notGoing.length ? `<div style="font-family:${SANS};font-size:14px;line-height:1.55;color:${C.muted};margin-top:3px;">&#10005;&nbsp;Can't make it &nbsp;${notGoing.join(", ")}</div>` : ""}`);
+      ${notGoing.length ? `<div style="font-family:${SANS};font-size:14px;line-height:1.55;color:${C.muted};margin-top:3px;">&#10005;&nbsp;Can't make it &nbsp;${notGoing.join(", ")}</div>` : ""}
+      ${going.length ? dressCodeBlock(events?.[id]) : ""}`);
   }).join("");
   const diets = members.filter(m => attendsAny(record, m) && dietText(m)).map(m => `${escapeHtml(m.name)} &mdash; ${escapeHtml(dietText(m))}`);
   const dietRow = diets.length ? panelRow(`${eyebrow("Dietary notes")}<div style="font-family:${SANS};font-size:14px;line-height:1.6;color:${C.inkSoft};margin-top:6px;">${diets.join("<br>")}</div>`) : "";
