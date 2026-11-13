@@ -592,10 +592,11 @@ textarea.settings-input.settings-input-short{min-height:64px;}
 .venue-header h1{font-family:var(--display);font-weight:500;font-style:italic;font-size:clamp(34px,5vw,54px);line-height:1.05;margin:0 0 8px;}
 .venue-header .sub{font-family:var(--display);font-size:clamp(14px,1.6vw,17px);color:var(--gold-soft);margin:0;}
 .venue-exit{position:absolute;top:20px;right:24px;background:none;border:1px solid rgba(216,200,165,.5);color:var(--gold-soft);font-size:12.5px;padding:8px 14px;border-radius:16px;}
-.venue-main{max-width:1360px;margin:0 auto;display:grid;grid-template-columns:1.15fr 1fr;gap:0;}
-.venue-panel{padding:36px 40px;}
+.venue-main{max-width:1360px;margin:0 auto;display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:0;}
+.venue-panel{padding:36px 40px;min-width:0;}
 .venue-panel + .venue-panel{border-left:1px solid var(--gold-soft);}
-.venue-panel .panel-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:18px;gap:16px;}
+.venue-panel .panel-head{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;margin-bottom:18px;gap:10px 16px;}
+.venue-controls{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;}
 .venue-panel .panel-head h2{font-family:var(--display);font-weight:600;font-size:24px;margin:0;}
 .venue-panel .panel-head .count{font-size:12px;color:var(--ink-soft);white-space:nowrap;}
 .venue-search input{width:100%;font-size:15px;padding:11px 16px;border:1px solid var(--gold-soft);border-radius:3px;margin-bottom:22px;background:#fff;}
@@ -610,11 +611,13 @@ textarea.settings-input.settings-input-short{min-height:64px;}
 .venue-guest-row.active .badge{background:var(--gold);color:#fff;border-color:var(--gold);}
 .venue-guest-row.active .guest-name{color:var(--sage-dark);font-weight:600;}
 .no-match{text-align:center;color:var(--ink-soft);font-style:italic;padding:20px 0;}
-@media(max-width:880px){.venue-main{grid-template-columns:1fr;}.venue-panel + .venue-panel{border-left:none;border-top:1px solid var(--gold-soft);}.venue-columns{column-count:1;}}
+@media(max-width:880px){.venue-main{grid-template-columns:minmax(0,1fr);}.venue-panel + .venue-panel{border-left:none;border-top:1px solid var(--gold-soft);}.venue-columns{column-count:1;}}
 /* Phone-width fixes only — .venue-exit and .zoom-controls keep their
    desktop absolute-overlay positioning above this breakpoint untouched. */
 @media(max-width:600px){
-  .venue-header{padding-top:20px;}
+  .venue-header{padding:20px 16px 26px;}
+  .venue-panel{padding:26px 16px;}
+  .venue-guest-row .badge{max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .venue-exit{position:static;display:block;margin:0 auto 18px;width:max-content;}
   .seating-canvas-wrap .zoom-controls{position:static;flex-direction:row;justify-content:center;margin-top:10px;}
 }
@@ -3277,7 +3280,7 @@ function VenueDisplay({ state, actions }) {
         <div className="venue-panel">
           <div className="panel-head">
             <h2>Floor Plan</h2>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div className="venue-controls">
               <span className="count">{state.seatingTables.length} tables</span>
               {viewMode === "2d" && state.seatingLevels.length > 0 && (
                 <div className="view-toggle">
