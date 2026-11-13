@@ -367,7 +367,7 @@ textarea.settings-input.settings-input-short{min-height:64px;}
 .step-line{width:24px;height:1px;background:var(--gold-soft);align-self:center;margin-top:14px;}
 .field{margin-bottom:18px;}
 .field label{display:block;font-size:11px;letter-spacing:.12em;text-transform:uppercase;font-weight:600;color:var(--ink-soft);margin-bottom:7px;}
-.field input[type=text],.field input[type=email],.field input[type=tel],.field textarea{width:100%;padding:12px 13px;border:1px solid var(--gold-soft);background:#fff;font-size:15.5px;color:var(--ink);border-radius:2px;}
+.field input[type=text],.field input[type=email],.field input[type=tel],.field input[type=number],.field textarea{width:100%;padding:12px 13px;border:1px solid var(--gold-soft);background:#fff;font-size:15.5px;color:var(--ink);border-radius:2px;}
 .field input:focus,.field textarea:focus{outline:none;border-color:var(--sage);box-shadow:0 0 0 3px rgba(110,127,99,.15);}
 .field textarea{resize:vertical;min-height:74px;}
 .field .err{color:var(--error);font-size:12.5px;margin-top:6px;}

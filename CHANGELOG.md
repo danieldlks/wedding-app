@@ -4,6 +4,32 @@ Notable changes to the RSVP app, newest first. See `plan.md`/`design.md` for the
 broader feature history (v1 → v3); this file tracks discrete fixes and changes
 made along the way.
 
+## 2026-11-13 — Rectangles can be any width and depth
+
+**Feature:**
+- **New look:** "Square" in Add to room is now **Rectangle**, and starts at 2 m × 1 m.
+- **Edit panel:** has **Width** and **Depth** fields in metres (0.5 m steps).
+- **Corner handle:** when a rectangle is selected on its own, the green handle on its bottom-right corner resizes it in 0.5 m steps. This works with a mouse or a finger. The top-left corner stays put.
+- **Everywhere:** the true shape shows on the plan, in Find My Seat, on the venue display, in the downloaded image and in 3D, where it also blocks walking.
+- **Clicking:** only selects inside the real shape.
+- **Older items:** existing square items are unchanged. They have no depth yet, so they stay square until resized.
+
+**Also:**
+- **Number fields:** number inputs (width, depth, size, capacity) now get the same styling as other fields.
+- **Labels:** the width and depth labels are linked to their inputs.
+
+**Database:** new column `floor_objects.depth`.
+
+**DEPLOY NOTE:** run `ALTER TABLE floor_objects ADD COLUMN depth REAL;` on the remote database before deploying.
+
+**Files:**
+- `src/App.jsx`
+- `src/FloorPlan3D.jsx`
+- `src/seatingGeometry.js`
+- `functions/api/admin.js`
+- `functions/_lib/db.js`
+- `schema.sql`
+
 ## 2026-11-13 — Seating plan: select several, move together, keyboard shortcuts
 
 **Feature (desktop, with a mouse):**
