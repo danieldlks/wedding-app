@@ -350,6 +350,16 @@ const CSS = `
 .choice-card .ic{width:42px;height:42px;border-radius:50%;background:var(--paper-2);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-size:20px;color:var(--gold);}
 .choice-card h3{margin:0 0 3px;font-family:var(--display);font-size:19px;font-weight:600;}
 .choice-card p{margin:0;font-size:13px;color:var(--ink-soft);}
+/* Seating plan levels (ground floor / lofts) */
+.level-bar{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin:0 0 10px;}
+.level-bar .segmented{margin:0;flex-wrap:wrap;}
+.level-bar .segmented button{flex:0 1 auto;padding:0 14px;}
+.loft-panel{background:#fff;border:1px solid var(--gold-soft);border-left:3px solid var(--gold);padding:12px 14px;margin:0 0 10px;}
+.loft-panel-row{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px 16px;}
+.loft-size{display:flex;flex-direction:column;gap:2px;padding-bottom:8px;}
+.loft-size strong{font-size:15px;}
+.loft-delete{flex:none !important;color:var(--error) !important;border-color:var(--error) !important;padding:10px 14px !important;}
+.level-tag{display:inline-block;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;font-weight:600;color:#fff;background:var(--gold);padding:1px 6px;border-radius:3px;margin-left:6px;vertical-align:2px;}
 /* Seating plan keyboard/mouse tips: only on devices with a mouse */
 .seating-shortcuts{display:none;font-size:12.5px;line-height:1.6;color:var(--ink-soft);margin:-8px 0 16px;}
 @media (hover:hover) and (pointer:fine){.seating-shortcuts{display:block;}}
@@ -693,6 +703,7 @@ select.settings-input{-webkit-appearance:auto;appearance:auto;}
 /* Guest Find My Seat: Map / 3D switch, and a taller 3D view on phones */
 .seat-view-switch{display:flex;background:var(--paper-2);border-radius:12px;padding:4px;margin:0 auto 12px;max-width:280px;}
 .seat-view-switch button{flex:1;min-height:40px;border:none;background:none;border-radius:9px;font-size:14px;font-weight:600;color:var(--ink-soft);}
+.seat-level-note{text-align:center;font-size:14px;color:var(--ink);background:#F7EFDD;border-radius:10px;padding:9px 12px;margin:0 0 12px;}
 .seat-view-switch button.on{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(32,43,34,.15);}
 @media(max-width:600px){.seating-canvas-wrap.guest-3d{aspect-ratio:4/5;}}
 /* 3D view: Walk around / Overview button and hint (rendered by FloorPlan3D) */
@@ -1046,6 +1057,15 @@ function GuestSeating({ state, actions }) {
   // whole room, or "find your seat" turns back into "find it yourself."
   const myTableIds = new Set((seating?.mySeats || []).map(s => s.tableId));
   const myTables = (seating?.tables || []).filter(t => myTableIds.has(t.id));
+  // Lofts: the map opens on the level the household's table is on (a switch if they're on two).
+  const levels = seating?.levels || [];
+  const levelName = id => levels.find(l => l.id === id)?.name || "";
+  const myLevels = [...new Set(myTables.map(t => (levels.some(l => l.id === t.level) ? t.level : null)))];
+  const [levelChoice, setLevelChoice] = useState(undefined);
+  const shownLevel = levelChoice !== undefined ? levelChoice : (myLevels[0] ?? null);
+  const shownLoft = levels.find(l => l.id === shownLevel) || null;
+  const onShown = it => (levels.some(l => l.id === it.level) ? it.level : null) === shownLevel;
+  const onShownGround = it => levels.some(l => l.id === it.level); // true = on a loft (so not shown faintly as ground)
 
   useEffect(() => {
     if (seating && myTables.length > 0 && !fitted) {
@@ -1089,9 +1109,18 @@ function GuestSeating({ state, actions }) {
             <button role="tab" aria-selected={view === "map"} className={view === "map" ? "on" : ""} onClick={() => setView("map")}>Map</button>
             <button role="tab" aria-selected={view === "3d"} className={view === "3d" ? "on" : ""} onClick={() => setView("3d")}>3D view</button>
           </div>
+          {myLevels.length > 1 && view === "map" && (
+            <div className="seat-view-switch" role="group" aria-label="Level">
+              {myLevels.map(id => <button key={id || "ground"} type="button" className={shownLevel === id ? "on" : ""} aria-pressed={shownLevel === id} onClick={() => setLevelChoice(id)}>{id ? levelName(id) : "Ground floor"}</button>)}
+            </div>
+          )}
+          {shownLoft && myTables.some(t => t.level === shownLoft.id) && (
+            <p className="seat-level-note">Upstairs, in the <strong>{shownLoft.name}</strong>. Follow the stairs up.</p>
+          )}
           {view === "map" ? (
             <div className="seating-canvas-wrap">
-              <SeatingCanvas tables={seating.tables} objects={seating.objects} chairColor={seating.chairColor} room={seating.room} highlightColors={highlightColors} highlightSeatIndices={highlightSeatIndices} dimOthers viewTransform={transform} onViewTransformChange={setTransform} />
+              <SeatingCanvas tables={seating.tables.filter(onShown)} objects={seating.objects.filter(onShown)} chairColor={seating.chairColor} room={seating.room} highlightColors={highlightColors} highlightSeatIndices={highlightSeatIndices} dimOthers viewTransform={transform} onViewTransformChange={setTransform}
+                levels={levels} currentLevel={shownLoft} ghostTables={shownLoft ? seating.tables.filter(t => !onShownGround(t)) : []} ghostObjects={shownLoft ? seating.objects.filter(o => !onShownGround(o)) : []} />
               <div className="zoom-controls">
                 <button onClick={() => setTransform(t => zoomSeatTransform(t, 1.25, seating.room))} aria-label="Zoom in">+</button>
                 <button onClick={() => setTransform(t => zoomSeatTransform(t, 1 / 1.25, seating.room))} aria-label="Zoom out">−</button>
@@ -1105,6 +1134,7 @@ function GuestSeating({ state, actions }) {
                   ref={floorPlan3DRef}
                   tables={seating.tables}
                   objects={seating.objects}
+                  levels={levels}
                   chairColor={seating.chairColor}
                   room={seating.room}
                   key={seating.room ? `${seating.room.w}x${seating.room.h}` : "room"}
@@ -1127,7 +1157,7 @@ function GuestSeating({ state, actions }) {
               return (
                 <div className="seat-legend-row" key={s.memberId}>
                   <span className="seat-legend-dot" style={{ background: highlightColors[s.tableId] }} />
-                  <span>{s.memberName} — <strong>{t ? t.label : "Table"}</strong>, seat {s.seatIndex + 1}</span>
+                  <span>{s.memberName} — <strong>{t ? t.label : "Table"}</strong>{t && levelName(t.level) ? ` (${levelName(t.level)})` : ""}, seat {s.seatIndex + 1}</span>
                 </div>
               );
             })}
@@ -2067,7 +2097,57 @@ function drawFloorPlan(ctx, opts) {
 // something the couple can hand to a venue or caterer, so it deliberately
 // shows table capacity/occupancy (useful for a headcount) but not the grid
 // (a snap aid, not something a venue needs to see) or any selection state.
-function exportFloorPlanPNG(tables, objects, occupancy, title, chairColor = null, room = DEFAULT_ROOM) {
+// One level of the plan. On a loft (currentLevel set) the ground floor shows faintly underneath
+// for reference and everything outside the loft is washed out; on the ground floor each loft is a
+// dashed outline marked "… above". Shared by the live canvas, guests' Find My Seat and the PNG export.
+function drawLevelView(ctx, opts) {
+  const { levels = [], currentLevel = null, ghostTables = [], ghostObjects = [], room = DEFAULT_ROOM, zoom = 1, editable = false, levelPreview = null } = opts;
+  const R = roomOf(room);
+  const loft = currentLevel && (levelPreview || currentLevel);
+  if (loft) {
+    ctx.save(); ctx.globalAlpha = 0.22;
+    drawFloorPlan(ctx, { tables: ghostTables, objects: ghostObjects, editable: false, room, zoom, showGrid: false, chairColor: opts.chairColor });
+    ctx.restore();
+    ctx.save();
+    ctx.fillStyle = "rgba(244,239,227,.8)";
+    ctx.beginPath(); ctx.rect(0, 0, R.w, R.h); ctx.rect(loft.x, loft.y, loft.w, loft.h); ctx.fill("evenodd");
+    ctx.fillStyle = "rgba(169,129,76,.05)"; ctx.fillRect(loft.x, loft.y, loft.w, loft.h);
+    ctx.restore();
+  }
+  drawFloorPlan(ctx, { ...opts, showGrid: loft ? false : opts.showGrid });
+  for (const l of levels) {
+    const on = !!loft && l.id === currentLevel.id;
+    if (loft && !on) continue;
+    const r = on ? loft : l;
+    ctx.save();
+    ctx.setLineDash(on ? [] : [9, 6]);
+    ctx.strokeStyle = on ? "#A9814C" : "rgba(169,129,76,.9)"; ctx.lineWidth = (on ? 2.5 : 2) / zoom;
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.setLineDash([]);
+    const grip = on && editable;
+    const text = on ? l.name : `${l.name} above`;
+    ctx.font = "600 12px 'Work Sans', sans-serif";
+    const tx = r.x + 6 + (grip ? 28 : 0), tw = ctx.measureText(text).width + 14;
+    ctx.fillStyle = on ? "#A9814C" : "rgba(251,247,239,.95)"; ctx.fillRect(tx, r.y + 6, tw, 20);
+    if (!on) { ctx.strokeStyle = "rgba(169,129,76,.9)"; ctx.lineWidth = 1; ctx.strokeRect(tx, r.y + 6, tw, 20); }
+    ctx.fillStyle = on ? "#fff" : "#7A5B21"; ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.fillText(text, tx + 7, r.y + 16.5);
+    if (grip) {
+      // Move grip (top-left) and resize handle (bottom-right): see SeatingCanvas.
+      ctx.fillStyle = "#A9814C"; ctx.fillRect(r.x + 6, r.y + 6, 22, 20);
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.6; ctx.beginPath();
+      const cx = r.x + 17, cy = r.y + 16;
+      ctx.moveTo(cx - 6, cy); ctx.lineTo(cx + 6, cy); ctx.moveTo(cx, cy - 6); ctx.lineTo(cx, cy + 6); ctx.stroke();
+      ctx.fillStyle = "#A9814C"; ctx.fillRect(r.x + r.w - 16, r.y + r.h - 16, 14, 14);
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.strokeRect(r.x + r.w - 16, r.y + r.h - 16, 14, 14);
+    }
+    ctx.restore();
+  }
+}
+// Where a loft's move grip and resize handle are (plan units), for hit-testing.
+const loftGripAt = l => ({ x: l.x + 17, y: l.y + 16 });
+const loftResizeAt = l => ({ x: l.x + l.w - 9, y: l.y + l.h - 9 });
+
+function exportFloorPlanPNG(tables, objects, occupancy, title, chairColor = null, room = DEFAULT_ROOM, levelOpts = {}) {
   const { w: SEAT_LW, h: SEAT_LH } = roomOf(room);
   const scale = Math.min(1.6, 3200 / Math.max(SEAT_LW, SEAT_LH)), margin = 40, titleH = 70; // capped for very large rooms
   const canvas = document.createElement("canvas");
@@ -2085,7 +2165,7 @@ function exportFloorPlanPNG(tables, objects, occupancy, title, chairColor = null
   ctx.save();
   ctx.translate(margin, titleH + margin / 2);
   ctx.scale(scale, scale);
-  drawFloorPlan(ctx, { tables, objects, occupancy, zoom: scale, showGrid: false, chairColor, room, showScale: true });
+  drawLevelView(ctx, { tables, objects, occupancy, zoom: scale, showGrid: false, chairColor, room, showScale: true, ...levelOpts });
   ctx.restore();
 
   const a = document.createElement("a");
@@ -2149,7 +2229,11 @@ function SeatingCanvas({
   occupiedSeats, highlightColors, highlightSeatIndices, dimOthers, chairColor,
   selectedObjectId, onSelectObject, onObjectDragEnd,
   viewTransform, onViewTransformChange, room: roomProp, onResizeRoom,
-  groupSelection, onToggleSelect, onBoxSelect, onGroupDragEnd
+  groupSelection, onToggleSelect, onBoxSelect, onGroupDragEnd,
+  // Lofts: `levels` (all of them), `currentLevel` (the loft being shown, or null for the ground
+  // floor), the other level's things drawn faintly (`ghostTables/ghostObjects`), `onLevelEdit`
+  // (move/resize the current loft) and `extent` (everything on every level, for room-size limits).
+  levels = [], currentLevel = null, ghostTables = [], ghostObjects = [], onLevelEdit, extent
 }) {
   const room = roomOf(roomProp);
   const { w: SEAT_LW, h: SEAT_LH } = room;
@@ -2161,6 +2245,7 @@ function SeatingCanvas({
   const panStartRef = useRef(null);
   const [liveDrag, setLiveDrag] = useState(null); // { kind: "table"|"object", id, x, y, x2, y2 } | { kind: "group", dx, dy }
   const [box, setBox] = useState(null); // selection box being dragged on the empty floor (mouse): { x0, y0, x1, y1 }
+  const [levelPreview, setLevelPreview] = useState(null); // the current loft while it's being moved/resized: { x, y, w, h, dx, dy }
   const vtRef = useRef(viewTransform);
   const roomRef = useRef(room);
   roomRef.current = room;
@@ -2169,6 +2254,11 @@ function SeatingCanvas({
   cbRef.current = onViewTransformChange;
 
   const objs = objects || [];
+  // Everything else in the room (other levels' things, and the lofts themselves): counted when the
+  // room's size is worked out, so it never shrinks or shifts out from under them.
+  const extra = extent || { tables: [], objects: [] };
+  // On a loft, its things stay on it: positions are kept inside its outline.
+  const loftBox = currentLevel && (levelPreview || currentLevel);
   // What's selected: several things (groupSelection, desktop) or the one open table/item.
   const selT = new Set(groupSelection ? groupSelection.tables : selectedTableId ? [selectedTableId] : []);
   const selO = new Set(groupSelection ? groupSelection.objects : selectedObjectId ? [selectedObjectId] : []);
@@ -2190,7 +2280,7 @@ function SeatingCanvas({
     const ib = layoutBounds(item, itemObjs);
     const outR = snapUpHalfM(ib.maxX) > SEAT_LW, outB = snapUpHalfM(ib.maxY) > SEAT_LH, outL = ib.minX < 0, outT = ib.minY < 0;
     if (!outR && !outB && !outL && !outT) return null;
-    const all = layoutBounds(draggedTables, draggedObjects);
+    const all = layoutBounds([...draggedTables, ...extra.tables], [...draggedObjects, ...extra.objects]);
     const shiftX = outL ? snapUpHalfM(-all.minX + UNITS_PER_M) : 0, shiftY = outT ? snapUpHalfM(-all.minY + UNITS_PER_M) : 0;
     const w = Math.min(ROOM_MAX, Math.max(SEAT_LW, outR ? snapUpHalfM(all.maxX + UNITS_PER_M) : SEAT_LW) + shiftX);
     const h = Math.min(ROOM_MAX, Math.max(SEAT_LH, outB ? snapUpHalfM(all.maxY + UNITS_PER_M) : SEAT_LH) + shiftY);
@@ -2198,9 +2288,10 @@ function SeatingCanvas({
   })() : null;
   // Until release, an item past an edge is drawn pinned at that edge (the canvas can't show beyond it).
   const pin = (x, y) => [clamp(x, 8, SEAT_LW - 8), clamp(y, 8, SEAT_LH - 8)];
+  const loftShift = levelPreview && (levelPreview.dx || levelPreview.dy) ? levelPreview : null;
   const isLive = (kind, id) => (groupDrag ? (kind === "table" ? selT : selO).has(id) : liveDrag?.kind === kind && liveDrag.id === id);
-  const effectiveTables = liveDrag ? draggedTables.map(t => (isLive("table", t.id) ? { ...t, ...(([x, y]) => ({ x, y }))(pin(t.x, t.y)) } : t)) : draggedTables;
-  const effectiveObjects = liveDrag ? draggedObjects.map(o => {
+  const effectiveTables = loftShift ? tables.map(t => shiftBy(t, loftShift.dx, loftShift.dy)) : liveDrag ? draggedTables.map(t => (isLive("table", t.id) ? { ...t, ...(([x, y]) => ({ x, y }))(pin(t.x, t.y)) } : t)) : draggedTables;
+  const effectiveObjects = loftShift ? objs.map(o => shiftBy(o, loftShift.dx, loftShift.dy)) : liveDrag ? draggedObjects.map(o => {
     if (!isLive("object", o.id)) return o;
     const [x, y] = pin(o.x, o.y); const p2 = o.x2 != null ? pin(o.x2, o.y2) : [o.x2, o.y2];
     return { ...o, x, y, x2: p2[0], y2: p2[1] };
@@ -2244,7 +2335,8 @@ function SeatingCanvas({
     const { panX = 0, panY = 0, zoom = 1 } = viewTransform || {};
     ctx.translate(panX, panY);
     ctx.scale(zoom, zoom);
-    drawFloorPlan(ctx, {
+    drawLevelView(ctx, {
+      levels, currentLevel, ghostTables, ghostObjects, levelPreview,
       tables: effectiveTables, objects: effectiveObjects, editable, selectedTableId, selectedObjectId, groupSelection,
       occupancy: editable ? occupancy : null, occupiedSeats, highlightColors, highlightSeatIndices, zoom, dimOthers, chairColor,
       room, showScale: editable
@@ -2258,19 +2350,33 @@ function SeatingCanvas({
       ctx.setLineDash([6, 4]); ctx.strokeStyle = "#6E7F63"; ctx.lineWidth = 1.5; ctx.strokeRect(x, y, w, h);
       ctx.restore();
     }
-  }, [box, groupSelection, effectiveTables, effectiveObjects, editable, selectedTableId, selectedObjectId, occupancy, occupiedSeats, highlightColors, highlightSeatIndices, dimOthers, viewTransform, chairColor, SEAT_LW, SEAT_LH, roomDrag, growTo?.w, growTo?.h, growTo?.shiftX, growTo?.shiftY]);
+  }, [box, groupSelection, levels, currentLevel, ghostTables, ghostObjects, levelPreview, effectiveTables, effectiveObjects, editable, selectedTableId, selectedObjectId, occupancy, occupiedSeats, highlightColors, highlightSeatIndices, dimOthers, viewTransform, chairColor, SEAT_LW, SEAT_LH, roomDrag, growTo?.w, growTo?.h, growTo?.shiftX, growTo?.shiftY]);
 
   function handlePointerDown(e) {
     const canvas = canvasRef.current;
     const pt = seatToLogical(e, canvas, room);
     if (editable) {
+      // The current loft's move grip and resize handle.
+      if (currentLevel && onLevelEdit) {
+        const g = loftGripAt(currentLevel), r = loftResizeAt(currentLevel);
+        const hit = q => Math.abs(pt.x - q.x) <= 13 && Math.abs(pt.y - q.y) <= 13;
+        if (hit(g) || hit(r)) {
+          // Resizing can't cut off anything standing on the loft.
+          const b = tables.length || objs.length ? layoutBounds(tables, objs) : null;
+          dragStartRef.current = { kind: hit(g) ? "loft-move" : "loft-resize", start: { ...currentLevel }, startPtX: pt.x, startPtY: pt.y, items: b };
+          setLevelPreview({ ...currentLevel, dx: 0, dy: 0 });
+          canvas.setPointerCapture(e.pointerId);
+          return;
+        }
+      }
       // The room's corner handles (bottom-right ◢, top-left ◤) resize the room.
       const near = (cx, cy) => Math.abs(pt.x - cx) <= ROOM_HANDLE && Math.abs(pt.y - cy) <= ROOM_HANDLE;
       const corner = !onResizeRoom ? null
         : near(SEAT_LW - ROOM_HANDLE / 2 - 4, SEAT_LH - ROOM_HANDLE / 2 - 4) ? "br"
         : near(ROOM_HANDLE / 2 + 4, ROOM_HANDLE / 2 + 4) ? "tl" : null;
       if (corner) {
-        dragStartRef.current = { kind: "room", corner, startW: SEAT_LW, startH: SEAT_LH, startPtX: pt.x, startPtY: pt.y, min: layoutExtent(tables, objs), bounds: layoutBounds(tables, objs), empty: !tables.length && !objs.length };
+        const allT = [...tables, ...extra.tables], allO = [...objs, ...extra.objects];
+        dragStartRef.current = { kind: "room", corner, startW: SEAT_LW, startH: SEAT_LH, startPtX: pt.x, startPtY: pt.y, min: layoutExtent(allT, allO), bounds: layoutBounds(allT, allO), empty: !allT.length && !allO.length };
         setRoomDrag({ w: SEAT_LW, h: SEAT_LH, shiftX: 0, shiftY: 0, corner });
         canvas.setPointerCapture(e.pointerId);
         return;
@@ -2353,6 +2459,17 @@ function SeatingCanvas({
         }
         return;
       }
+      if (d.kind === "loft-move" || d.kind === "loft-resize") {
+        const half = UNITS_PER_M / 2, snap = v => Math.round(v / half) * half, L = d.start;
+        if (d.kind === "loft-move") {
+          const dx2 = clamp(snap(dx), -L.x, SEAT_LW - L.x - L.w), dy2 = clamp(snap(dy), -L.y, SEAT_LH - L.y - L.h);
+          setLevelPreview({ ...L, x: L.x + dx2, y: L.y + dy2, dx: dx2, dy: dy2 });
+        } else {
+          const minW = Math.max(2 * UNITS_PER_M, d.items ? snap(d.items.maxX - L.x + half / 2) : 0), minH = Math.max(2 * UNITS_PER_M, d.items ? snap(d.items.maxY - L.y + half / 2) : 0);
+          setLevelPreview({ ...L, w: clamp(snap(L.w + dx), minW, SEAT_LW - L.x), h: clamp(snap(L.h + dy), minH, SEAT_LH - L.y), dx: 0, dy: 0 });
+        }
+        return;
+      }
       if (d.kind === "resize") {
         // 0.5 m steps, at least 0.5 m each way, never past 100 m.
         const half = UNITS_PER_M / 2, w = clamp(Math.round((pt.x - d.left) / half) * half, half, ROOM_MAX), dd = clamp(Math.round((pt.y - d.top) / half) * half, half, ROOM_MAX);
@@ -2362,12 +2479,20 @@ function SeatingCanvas({
       if (d.kind === "box") { d.box = { ...d.box, x1: pt.x, y1: pt.y }; setBox(d.box); return; }
       if (d.kind === "group") {
         // Whole grid steps, so everything keeps its spacing (and stays on the grid).
-        setLiveDrag({ kind: "group", dx: snapToGrid(dx), dy: snapToGrid(dy) });
+        let gx = snapToGrid(dx), gy = snapToGrid(dy);
+        if (loftBox) {
+          // Keep the whole group's centres on the loft.
+          const cs = [...tables.filter(t => selT.has(t.id)), ...objs.filter(o => selO.has(o.id))];
+          const minX = Math.min(...cs.map(c => c.x)), maxX = Math.max(...cs.map(c => c.x)), minY = Math.min(...cs.map(c => c.y)), maxY = Math.max(...cs.map(c => c.y));
+          gx = clamp(gx, loftBox.x - minX, loftBox.x + loftBox.w - maxX); gy = clamp(gy, loftBox.y - minY, loftBox.y + loftBox.h - maxY);
+        }
+        setLiveDrag({ kind: "group", dx: gx, dy: gy });
         return;
       }
       // Items can be dragged past any edge when the room can be resized (it grows on release).
       const lo = onResizeRoom ? -ROOM_MAX : 0, XM = onResizeRoom ? ROOM_MAX : SEAT_LW, YM = onResizeRoom ? ROOM_MAX : SEAT_LH;
-      const sx = v => snapClamp(v, lo, XM), sy = v => snapClamp(v, lo, YM);
+      const sx = v => loftBox ? clamp(snapToGrid(v), loftBox.x, loftBox.x + loftBox.w) : snapClamp(v, lo, XM);
+      const sy = v => loftBox ? clamp(snapToGrid(v), loftBox.y, loftBox.y + loftBox.h) : snapClamp(v, lo, YM);
       if (d.kind === "table") {
         setLiveDrag({ kind: "table", id: d.id, x: sx(d.startX + dx), y: sy(d.startY + dy) });
       } else if (d.handle === "p1") {
@@ -2389,6 +2514,9 @@ function SeatingCanvas({
     const d = dragStartRef.current;
     if (editable && d?.kind === "room") {
       if (roomDrag && (roomDrag.w !== SEAT_LW || roomDrag.h !== SEAT_LH)) onResizeRoom({ w: roomDrag.w, h: roomDrag.h }, { shiftX: roomDrag.shiftX, shiftY: roomDrag.shiftY });
+    } else if (editable && (d?.kind === "loft-move" || d?.kind === "loft-resize")) {
+      const p = levelPreview;
+      if (p && (p.x !== d.start.x || p.y !== d.start.y || p.w !== d.start.w || p.h !== d.start.h)) onLevelEdit({ x: p.x, y: p.y, w: p.w, h: p.h }, p.dx || 0, p.dy || 0);
     } else if (editable && d?.kind === "box") {
       const box = d.box;
       {
@@ -2431,6 +2559,7 @@ function SeatingCanvas({
     setLiveDrag(null);
     setRoomDrag(null);
     setBox(null);
+    setLevelPreview(null);
   }
   return (
     <canvas
@@ -2746,6 +2875,10 @@ function AdminSeating({ state, actions }) {
     objects: state.groupSelection.objects.filter(id => state.seatingObjects.some(o => o.id === id))
   };
   const groupSeated = group ? Object.values(state.seatingAssignments).filter(a => group.tables.includes(a.tableId)).length : 0;
+  // Lofts: the plan shows one level at a time (see drawLevelView).
+  const loft = state.seatingLevels.find(l => l.id === state.seatingLevel) || null;
+  const onLevel = it => (it.level || null) === (loft ? loft.id : null);
+  const loftRects = state.seatingLevels.map(l => ({ type: "rect", x: l.x + l.w / 2, y: l.y + l.h / 2, size: l.w, depth: l.h }));
   // Unsaved edits (rotation, colours, size…) show on the plan straight away; Save keeps them.
   const previewTables = state.tableDraft ? state.seatingTables.map(t => (t.id === state.tableDraft.id ? { ...t, ...state.tableDraft, capacity: Math.max(1, Number(state.tableDraft.capacity) || 1) } : t)) : state.seatingTables;
   const previewObjects = state.objectDraft ? state.seatingObjects.map(o => (o.id === state.objectDraft.id ? { ...o, ...state.objectDraft } : o)) : state.seatingObjects;
@@ -2810,13 +2943,30 @@ function AdminSeating({ state, actions }) {
           ))}
         </div>
         <div className="seating-main">
+          <div className="level-bar">
+            <span className="room-style-label">Level</span>
+            <div className="segmented level-switch" role="group" aria-label="Level">
+              <button type="button" className={!loft ? "on" : ""} aria-pressed={!loft} onClick={() => actions.selectLevel(null)}>Ground floor</button>
+              {state.seatingLevels.map(l => (
+                <button key={l.id} type="button" className={loft?.id === l.id ? "on" : ""} aria-pressed={loft?.id === l.id} onClick={() => actions.selectLevel(l.id)}>{l.name}</button>
+              ))}
+            </div>
+            {state.seatingLevels.length < 5 && <button type="button" className="chip-btn" onClick={actions.addLevel} disabled={state.loading}>+ Add loft</button>}
+          </div>
+          {loft && <LoftPanel key={loft.id + loft.name} loft={loft} state={state} actions={actions} />}
           <div className="seating-canvas-wrap">
             <SeatingCanvas
-              tables={previewTables}
-              objects={previewObjects}
+              tables={previewTables.filter(onLevel)}
+              objects={previewObjects.filter(onLevel)}
+              levels={state.seatingLevels}
+              currentLevel={loft}
+              ghostTables={loft ? previewTables.filter(t => !t.level) : []}
+              ghostObjects={loft ? previewObjects.filter(o => !o.level) : []}
+              onLevelEdit={actions.editLevel}
+              extent={{ tables: previewTables.filter(t => !onLevel(t)), objects: [...previewObjects.filter(o => !onLevel(o)), ...loftRects] }}
               chairColor={state.seatingChairColor}
               room={state.seatingRoom}
-              onResizeRoom={(r, shift) => actions.saveRoom(r, shift)}
+              onResizeRoom={loft ? undefined : (r, shift) => actions.saveRoom(r, shift)}
               editable
               selectedTableId={state.selectedTableId}
               onSelectTable={actions.selectTable}
@@ -2848,7 +2998,7 @@ function AdminSeating({ state, actions }) {
           )}
           {selectedTable && state.tableDraft && (
             <div className="table-editor-panel">
-              <h4>Edit table</h4>
+              <h4>Edit table{loft && <span className="level-tag">{loft.name}</span>}</h4>
               <div className="table-editor-row">
                 <div className="field"><label>Label</label>
                   <input type="text" value={state.tableDraft.label} onChange={e => actions.updateTableDraftField("label", e.target.value)} />
@@ -2980,6 +3130,32 @@ function AdminSeating({ state, actions }) {
   );
 }
 
+// The loft being edited: its name, size, how to move it, and Delete.
+function LoftPanel({ loft, state, actions }) {
+  const [name, setName] = useState(loft.name);
+  const n = state.seatingTables.filter(t => t.level === loft.id).length;
+  return (
+    <div className="loft-panel">
+      <div className="loft-panel-row">
+        <div className="field" style={{ margin: 0, flex: "1 1 180px" }}>
+          <label htmlFor="loft-name">Loft name</label>
+          <div className="settings-input-row">
+            <input id="loft-name" className="settings-input" type="text" maxLength={40} value={name} onChange={e => setName(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter" && name.trim() !== loft.name) actions.renameLevel(loft.id, name); }} />
+            {name.trim() !== loft.name && <button type="button" className="settings-clear" onClick={() => actions.renameLevel(loft.id, name)}>Save</button>}
+          </div>
+        </div>
+        <div className="loft-size"><span className="room-style-label">Size</span><strong>{metres(loft.w)} × {metres(loft.h)}</strong></div>
+        <button type="button" className="btn btn-ghost loft-delete" onClick={() => actions.deleteLevel(loft.id)} disabled={state.loading}>Delete loft</button>
+      </div>
+      <p className="helptext" style={{ margin: "8px 0 0" }}>
+        Drag <strong>✥</strong> at its top-left to move it (everything on it moves too), or its bottom-right corner to resize it.
+        Tables and items you add now go on the {loft.name}{n ? ` (${n} table${n === 1 ? "" : "s"} so far)` : ""}. The faded plan underneath is the ground floor.
+      </p>
+    </div>
+  );
+}
+
 // Full-screen, admin-only: a large-format "find your name, find your table"
 // display meant for a lobby screen/tablet or a printed poster — distinct from
 // the personal per-household "Find My Seat" guest page (GuestSeating above),
@@ -2993,6 +3169,7 @@ function VenueDisplay({ state, actions }) {
   const [selected, setSelected] = useState(null); // { tableId, tableLabel, seatIndex, name } | null — name/seatIndex null when selected by clicking a table rather than a guest
   const [transform, setTransform] = useState(() => fitSeatTransform(state.seatingTables, state.seatingRoom));
   const [viewMode, setViewMode] = useState("2d"); // '2d' | '3d' — see issue #4
+  const [venueLevel, setVenueLevel] = useState(null); // 2D: which level is shown (a loft's id, or null = ground floor)
   const floorPlan3DRef = useRef(null);
   const animGenRef = useRef(0);
 
@@ -3002,7 +3179,8 @@ function VenueDisplay({ state, actions }) {
       const a = state.seatingAssignments[m.id];
       if (!a) return;
       const table = state.seatingTables.find(t => t.id === a.tableId);
-      roster.push({ memberId: m.id, name: m.name, tableId: a.tableId, seatIndex: a.seatIndex, tableLabel: table ? table.label : "Table" });
+      const loftName = table && state.seatingLevels.find(l => l.id === table.level)?.name;
+      roster.push({ memberId: m.id, name: m.name, tableId: a.tableId, seatIndex: a.seatIndex, tableLabel: table ? `${table.label}${loftName ? ` (${loftName})` : ""}` : "Table" });
     });
   });
   roster.sort((a, b) => a.name.localeCompare(b.name));
@@ -3038,6 +3216,7 @@ function VenueDisplay({ state, actions }) {
   function selectGuest(g) {
     setSelected({ tableId: g.tableId, tableLabel: g.tableLabel, seatIndex: g.seatIndex, name: g.name });
     const table = state.seatingTables.find(t => t.id === g.tableId);
+    if (table) setVenueLevel(state.seatingLevels.some(l => l.id === table.level) ? table.level : null);
     if (table) animateTo(fitSeatTransform([table], state.seatingRoom));
   }
   // Reverse lookup for the 3D view: clicking a table (rather than searching a
@@ -3053,6 +3232,8 @@ function VenueDisplay({ state, actions }) {
     animateTo(fitSeatTransform(state.seatingTables, state.seatingRoom));
   }
 
+  const venueLoft = state.seatingLevels.find(l => l.id === venueLevel) || null;
+  const onVenueLevel = it => (state.seatingLevels.some(l => l.id === it.level) ? it.level : null) === (venueLoft?.id || null);
   const highlightColors = selected ? { [selected.tableId]: "#A9814C" } : {};
   const highlightSeatIndices = selected && selected.seatIndex != null ? { [selected.tableId]: new Set([selected.seatIndex]) } : {};
   const tableOccupants = selected && selected.name == null ? roster.filter(g => g.tableId === selected.tableId) : null;
@@ -3098,6 +3279,12 @@ function VenueDisplay({ state, actions }) {
             <h2>Floor Plan</h2>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <span className="count">{state.seatingTables.length} tables</span>
+              {viewMode === "2d" && state.seatingLevels.length > 0 && (
+                <div className="view-toggle">
+                  <button className={!venueLoft ? "active" : ""} onClick={() => setVenueLevel(null)}>Ground</button>
+                  {state.seatingLevels.map(l => <button key={l.id} className={venueLoft?.id === l.id ? "active" : ""} onClick={() => setVenueLevel(l.id)}>{l.name}</button>)}
+                </div>
+              )}
               <div className="view-toggle">
                 <button className={viewMode === "2d" ? "active" : ""} onClick={() => setViewMode("2d")}>2D</button>
                 <button className={viewMode === "3d" ? "active" : ""} onClick={() => setViewMode("3d")}>3D</button>
@@ -3108,8 +3295,12 @@ function VenueDisplay({ state, actions }) {
             {viewMode === "2d" ? (
               <>
                 <SeatingCanvas
-                  tables={state.seatingTables}
-                  objects={state.seatingObjects}
+                  tables={state.seatingTables.filter(onVenueLevel)}
+                  objects={state.seatingObjects.filter(onVenueLevel)}
+                  levels={state.seatingLevels}
+                  currentLevel={venueLoft}
+                  ghostTables={venueLoft ? state.seatingTables.filter(t => !t.level) : []}
+                  ghostObjects={venueLoft ? state.seatingObjects.filter(o => !o.level) : []}
                   chairColor={state.seatingChairColor}
                   room={state.seatingRoom}
                   highlightColors={highlightColors}
@@ -3130,6 +3321,7 @@ function VenueDisplay({ state, actions }) {
                     ref={floorPlan3DRef}
                     tables={state.seatingTables}
                     objects={state.seatingObjects}
+                    levels={state.seatingLevels}
                     chairColor={state.seatingChairColor}
                     room={state.seatingRoom}
                     key={state.seatingRoom ? `${state.seatingRoom.w}x${state.seatingRoom.h}` : "room"}
@@ -3708,7 +3900,9 @@ export default function App() {
     selectedObjectId: null,
     objectDraft: null,
     armedGuest: null,
-    groupSelection: null // several tables/items selected at once (desktop): { tables: [ids], objects: [ids] }
+    groupSelection: null, // several tables/items selected at once (desktop): { tables: [ids], objects: [ids] }
+    seatingLevels: [], // lofts: [{ id, name, x, y, w, h }] (see getLevels in functions/_lib/db.js)
+    seatingLevel: null // the level being edited: a loft's id, or null for the ground floor
   });
 
   const patch = p => setState(s => ({ ...s, ...p }));
@@ -3728,7 +3922,8 @@ export default function App() {
     const mySeq = ++seatingSeqRef.current;
     const data = await apiAdmin(state.adminPassword, action, payload);
     if (seatingSeqRef.current !== mySeq) return null; // superseded by a newer request; drop it
-    patch({ seatingTables: data.tables, seatingAssignments: data.assignments, seatingObjects: data.objects, seatingRevealMode: data.revealMode, seatingRevealAt: data.revealAt, seatingChairColor: data.chairColor || null, seatingRoom: data.room || null });
+    patch({ seatingTables: data.tables, seatingAssignments: data.assignments, seatingObjects: data.objects, seatingRevealMode: data.revealMode, seatingRevealAt: data.revealAt, seatingChairColor: data.chairColor || null, seatingRoom: data.room || null,
+      seatingLevels: data.levels || [], ...(!(data.levels || []).some(l => l.id === stateRef.current.seatingLevel) && { seatingLevel: null }) });
     return data;
   }
   async function saveSeatingReveal(mode, revealAt) {
@@ -3968,7 +4163,10 @@ export default function App() {
 
   async function addTable() {
     const n = state.seatingTables.length + 1;
-    const table = { id: genId(), label: `Table ${n}`, shape: "round", x: 140 + ((n * 97) % 720), y: 110 + ((n * 61) % 460), size: 90, rotation: 0, capacity: 8 };
+    const loft = currentLoft();
+    // On a loft, new tables go in its middle (nudged so repeats don't stack).
+    const spot = loft ? { x: Math.round(loft.x + loft.w / 2 + ((n * 37) % 80) - 40), y: Math.round(loft.y + loft.h / 2 + ((n * 23) % 60) - 30) } : { x: 140 + ((n * 97) % 720), y: 110 + ((n * 61) % 460) };
+    const table = { id: genId(), label: `Table ${n}`, shape: "round", ...spot, size: 90, rotation: 0, capacity: 8, level: loft ? loft.id : null };
     patch({ loading: true });
     try {
       const data = await seatingMutate("save-table", table);
@@ -4023,8 +4221,9 @@ export default function App() {
   async function addObject(make) {
     const n = state.seatingObjects.length;
     const { w: RW, h: RH } = roomOf(state.seatingRoom);
-    const baseX = RW / 2 + ((n * 37) % 120) - 60, baseY = RH / 2 + ((n * 23) % 80) - 40;
-    const obj = { id: genId(), x2: null, y2: null, rotation: null, color: null, ...make(Math.round(baseX), Math.round(baseY)) };
+    const loft = currentLoft();
+    const baseX = (loft ? loft.x + loft.w / 2 : RW / 2) + ((n * 37) % 120) - 60, baseY = (loft ? loft.y + loft.h / 2 : RH / 2) + ((n * 23) % 80) - 40;
+    const obj = { id: genId(), x2: null, y2: null, rotation: null, color: null, ...make(Math.round(baseX), Math.round(baseY)), level: loft ? loft.id : null };
     patch({ loading: true });
     try {
       const data = await seatingMutate("save-object", obj);
@@ -4159,6 +4358,69 @@ export default function App() {
       showToast("Couldn't update the tables.");
     }
   }
+  /* ---------- admin: seating — lofts ---------- */
+  // A loft is a raised area over part of the room; its tables/items carry its id in `level`.
+  function currentLoft(s = state) { return s.seatingLevels.find(l => l.id === s.seatingLevel) || null; }
+  function selectLevel(id) { patch({ seatingLevel: id || null, ...selectionPatch({ tables: [], objects: [] }) }); }
+  async function addLevel() {
+    if (state.seatingLevels.length >= 5) { showToast("You can have up to 5 lofts."); return; }
+    const room = roomOf(state.seatingRoom);
+    const used = new Set(state.seatingLevels.map(l => l.name));
+    let name = "Loft", n = 1;
+    while (used.has(name)) name = `Loft ${++n}`;
+    // 8 m × 5 m in the bottom-right corner to start with; drag it into place.
+    const w = Math.min(8 * UNITS_PER_M, room.w), h = Math.min(5 * UNITS_PER_M, room.h);
+    const loft = { id: `loft-${genId()}`, name, x: room.w - w, y: room.h - h, w, h };
+    // Shown and selected straight away: a background refresh landing first mustn't leave the
+    // editor on another level (where "Delete loft" would then delete the wrong one).
+    patch({ loading: true, seatingLevels: [...state.seatingLevels, loft], seatingLevel: loft.id, ...selectionPatch({ tables: [], objects: [] }) });
+    try {
+      await seatingMutate("save-items", { levels: [...state.seatingLevels, loft] });
+      patch({ loading: false });
+      showToast(`${name} added. Drag ✥ to move it, or its corner to resize it.`);
+    } catch (e) { patch({ loading: false, seatingLevel: null }); showToast("Couldn't add a loft."); loadSeating(true); }
+  }
+  // Moved and/or resized: everything on it moves by dx/dy too. Saved in one request.
+  async function editLevel(rect, dx, dy) {
+    const loft = currentLoft();
+    if (!loft) return;
+    const levels = state.seatingLevels.map(l => (l.id === loft.id ? { ...l, ...rect } : l));
+    const on = it => it.level === loft.id;
+    const mv = it => ({ ...it, x: it.x + dx, y: it.y + dy, ...(it.x2 != null && { x2: it.x2 + dx, y2: it.y2 + dy }) });
+    const tables = (dx || dy) ? state.seatingTables.filter(on).map(mv) : [], objects = (dx || dy) ? state.seatingObjects.filter(on).map(mv) : [];
+    patch({
+      seatingLevels: levels,
+      seatingTables: state.seatingTables.map(t => tables.find(x => x.id === t.id) || t),
+      seatingObjects: state.seatingObjects.map(o => objects.find(x => x.id === o.id) || o),
+      tableDraft: state.tableDraft && (tables.find(x => x.id === state.tableDraft.id) ? mv(state.tableDraft) : state.tableDraft),
+      objectDraft: state.objectDraft && (objects.find(x => x.id === state.objectDraft.id) ? mv(state.objectDraft) : state.objectDraft)
+    });
+    try { await seatingMutate("save-items", { tables, objects, levels }); }
+    catch (e) { showToast("Couldn't save the loft."); loadSeating(true); }
+  }
+  async function renameLevel(id, name) {
+    const clean = name.trim();
+    if (!clean) { showToast("Give the loft a name."); return; }
+    try {
+      await seatingMutate("save-items", { levels: state.seatingLevels.map(l => (l.id === id ? { ...l, name: clean.slice(0, 40) } : l)) });
+      showToast("Loft renamed.");
+    } catch (e) { showToast("Couldn't rename the loft."); }
+  }
+  async function deleteLevel(id) {
+    const loft = state.seatingLevels.find(l => l.id === id);
+    if (!loft) return;
+    const ts = state.seatingTables.filter(t => t.level === id), os = state.seatingObjects.filter(o => o.level === id);
+    const seated = Object.values(state.seatingAssignments).filter(a => ts.some(t => t.id === a.tableId)).length;
+    const what = [ts.length && `${ts.length} table${ts.length === 1 ? "" : "s"}`, os.length && `${os.length} item${os.length === 1 ? "" : "s"}`].filter(Boolean).join(" and ");
+    if (!window.confirm(`Delete ${loft.name}${what ? ` and the ${what} on it` : ""}?${seated ? ` ${seated} guest${seated === 1 ? "" : "s"} will be unseated.` : ""}`)) return;
+    patch({ loading: true });
+    try {
+      await seatingMutate("delete-level", { id });
+      patch({ loading: false, seatingLevel: null, seatingLevels: stateRef.current.seatingLevels.filter(l => l.id !== id), ...selectionPatch({ tables: [], objects: [] }) });
+      showToast(`${loft.name} deleted.`);
+    } catch (e) { patch({ loading: false }); showToast("Couldn't delete the loft."); }
+  }
+
   /* ---------- admin: seating — several at once, copy/paste, keyboard ---------- */
   // A selection is { tables: [ids], objects: [ids] }. One thing selected opens its edit panel
   // (selectedTableId / selectedObjectId, as before); two or more is groupSelection (desktop only).
@@ -4191,7 +4453,8 @@ export default function App() {
     patch(selectionPatch({ tables: [...base.tables, ...sel.tables], objects: [...base.objects, ...sel.objects] }));
   }
   function selectAll() {
-    patch(selectionPatch({ tables: state.seatingTables.map(t => t.id), objects: state.seatingObjects.map(o => o.id) }));
+    const here = it => (it.level || null) === (currentLoft()?.id || null);
+    patch(selectionPatch({ tables: state.seatingTables.filter(here).map(t => t.id), objects: state.seatingObjects.filter(here).map(o => o.id) }));
   }
   function clearSelection() { patch(selectionPatch({ tables: [], objects: [] })); }
 
@@ -4238,12 +4501,16 @@ export default function App() {
     const cur = (k, it) => n.items.get(k + it.id) || it;
     const selTables = state.seatingTables.filter(t => sel.tables.includes(t.id)).map(t => cur("t:", t));
     const selObjects = state.seatingObjects.filter(o => sel.objects.includes(o.id)).map(o => cur("o:", o));
-    const room = roomOf(state.seatingRoom);
-    const b = layoutBounds(selTables, selObjects);
+    const loftBox = currentLoft();
+    const room = loftBox ? { w: loftBox.x + loftBox.w, h: loftBox.y + loftBox.h } : roomOf(state.seatingRoom);
+    const lo = loftBox ? { x: loftBox.x, y: loftBox.y } : { x: 0, y: 0 };
+    // On a loft, things stop at its edge (by their centres); in the room, at the walls.
+    const b = loftBox ? (pts => ({ minX: Math.min(...pts.map(p => p.x)), maxX: Math.max(...pts.map(p => p.x)), minY: Math.min(...pts.map(p => p.y)), maxY: Math.max(...pts.map(p => p.y)) }))([...selTables, ...selObjects])
+      : layoutBounds(selTables, selObjects);
     // Stop at the walls, still in whole half-metre steps so things stay lined up.
     const half = UNITS_PER_M / 2, fit = (v, lo, hi) => { const c = Math.min(Math.max(v, lo), hi); return c === v ? v : Math.trunc(c / half) * half; };
-    dx = fit(dx, Math.min(0, -b.minX), Math.max(0, room.w - b.maxX));
-    dy = fit(dy, Math.min(0, -b.minY), Math.max(0, room.h - b.maxY));
+    dx = fit(dx, Math.min(0, lo.x - b.minX), Math.max(0, room.w - b.maxX));
+    dy = fit(dy, Math.min(0, lo.y - b.minY), Math.max(0, room.h - b.maxY));
     if (!dx && !dy) return;
     const mv = it => ({ ...it, x: it.x + dx, y: it.y + dy, ...(it.x2 != null && { x2: it.x2 + dx, y2: it.y2 + dy }) });
     selTables.forEach(t => n.items.set("t:" + t.id, mv(t)));
@@ -4316,8 +4583,20 @@ export default function App() {
       used.add(next);
       return next;
     };
-    const tables = clip.tables.map(t => ({ ...t, id: genId(), label: nextLabel(t.label), x: t.x + dx, y: t.y + dy }));
-    const objects = clip.objects.map(o => ({ ...o, id: genId(), x: o.x + dx, y: o.y + dy, ...(o.x2 != null && { x2: o.x2 + dx, y2: o.y2 + dy }) }));
+    // Copies land on the level being viewed. Pasted onto a loft from elsewhere, they're centred on it.
+    const loft = currentLoft();
+    let lx = 0, ly = 0;
+    if (loft) {
+      const all = [...clip.tables, ...clip.objects].map(it => ({ x: it.x + dx, y: it.y + dy }));
+      const inside = all.every(p => p.x >= loft.x && p.x <= loft.x + loft.w && p.y >= loft.y && p.y <= loft.y + loft.h);
+      if (!inside) {
+        const cx = all.reduce((a, p) => a + p.x, 0) / all.length, cy = all.reduce((a, p) => a + p.y, 0) / all.length;
+        lx = Math.round((loft.x + loft.w / 2 - cx) / 25) * 25; ly = Math.round((loft.y + loft.h / 2 - cy) / 25) * 25;
+      }
+    }
+    const level = loft ? loft.id : null;
+    const tables = clip.tables.map(t => ({ ...t, id: genId(), label: nextLabel(t.label), x: t.x + dx + lx, y: t.y + dy + ly, level }));
+    const objects = clip.objects.map(o => ({ ...o, id: genId(), x: o.x + dx + lx, y: o.y + dy + ly, ...(o.x2 != null && { x2: o.x2 + dx + lx, y2: o.y2 + dy + ly }), level }));
     patch({ loading: true });
     try {
       const data = await seatingMutate("save-items", { tables, objects });
@@ -4345,7 +4624,10 @@ export default function App() {
   function downloadFloorPlan() {
     const occupancy = {};
     Object.values(state.seatingAssignments).forEach(a => { occupancy[a.tableId] = (occupancy[a.tableId] || 0) + 1; });
-    exportFloorPlanPNG(state.seatingTables, state.seatingObjects, occupancy, `${CONFIG.coupleNames} — Reception Floor Plan`, state.seatingChairColor, roomOf(state.seatingRoom));
+    const loft = currentLoft(), here = it => (it.level || null) === (loft?.id || null);
+    exportFloorPlanPNG(state.seatingTables.filter(here), state.seatingObjects.filter(here), occupancy,
+      `${CONFIG.coupleNames} — Reception Floor Plan${loft ? ` · ${loft.name}` : ""}`, state.seatingChairColor, roomOf(state.seatingRoom),
+      { levels: state.seatingLevels, currentLevel: loft, ghostTables: loft ? state.seatingTables.filter(t => !t.level) : [], ghostObjects: loft ? state.seatingObjects.filter(o => !o.level) : [] });
   }
   function armGuest(memberId, inviteCode) {
     patch({ armedGuest: state.armedGuest?.memberId === memberId ? null : { memberId, inviteCode } });
@@ -4496,6 +4778,7 @@ export default function App() {
     setTableShape, downloadFloorPlan, saveSeatingReveal, saveChairColor, styleAllTables, saveRoom, undoRoomGrow,
     currentSelection, describeSelection, toggleSelect, boxSelect, selectAll, clearSelection, moveGroup, nudgeSelection,
     deleteSelection, copySelection, pasteClipboard, duplicateSelection,
+    selectLevel, addLevel, editLevel, renameLevel, deleteLevel,
     saveSettings, loadRegistry, registryAdmin, fetchProductLink
   };
 
